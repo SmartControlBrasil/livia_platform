@@ -74,3 +74,23 @@ Nunca logar:
 - Manter envio real desligado por padrão.
 - Validar contrato real com o endpoint do Smart360 Growth Engine.
 - Adicionar testes para modo real usando mock HTTP.
+
+## Configuração por ambiente
+
+Variáveis previstas:
+
+- SMART360_BASE_URL
+- SMART360_M2M_TOKEN
+- SMART360_LEAD_DISPATCH_ENABLED
+- SMART360_LEAD_DISPATCH_DRY_RUN
+
+Comportamento seguro atual:
+
+- Se SMART360_LEAD_DISPATCH_DRY_RUN=True, o envio continua simulado.
+- Se SMART360_LEAD_DISPATCH_ENABLED=False, o envio real não acontece.
+- O modo real só deve avançar quando:
+  - SMART360_LEAD_DISPATCH_ENABLED=True
+  - SMART360_LEAD_DISPATCH_DRY_RUN=False
+  - SMART360_BASE_URL estiver preenchido
+  - SMART360_M2M_TOKEN estiver preenchido
+- Se a configuração real estiver incompleta, o lead falha de forma segura e nenhum token é exposto em log.
