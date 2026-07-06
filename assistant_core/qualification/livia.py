@@ -63,7 +63,11 @@ def _extract_name(text: str) -> str:
 
 
 def _extract_company(text: str) -> str:
-    match = re.search(r"(?:empresa|companhia|companhia é|empresa é)\s*[:\-]?\s*(.+)$", text, re.IGNORECASE)
+    match = re.search(
+        r"(?:empresa|companhia)\s*(?:é|:)\s*(.+)$",
+        text,
+        re.IGNORECASE,
+    )
     if match:
         return re.split(r"[,;]", match.group(1).strip(), maxsplit=1)[0].strip()
     return ""

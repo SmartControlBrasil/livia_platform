@@ -14,7 +14,7 @@ GREETING_PATTERNS = (
     "oii",
 )
 
-BUDGET_PATTERNS = (
+QUOTE_PATTERNS = (
     "orcamento",
     "orçamento",
     "preco",
@@ -24,6 +24,29 @@ BUDGET_PATTERNS = (
     "cotacao",
     "cotação",
     "proposta",
+)
+
+COMMERCIAL_PATTERNS = (
+    "contratar",
+    "comprar",
+    "servico",
+    "serviço",
+    "solucao",
+    "solução",
+    "plataforma",
+    "projeto",
+    "desenvolver",
+    "desenvolvimento",
+    "implantar",
+    "implantacao",
+    "implantação",
+    "especialista",
+    "visita",
+    "atendimento",
+    "preciso de uma solucao",
+    "preciso de uma solução",
+    "quero uma solucao",
+    "quero uma solução",
 )
 
 TECHNICAL_PATTERNS = (
@@ -38,23 +61,36 @@ TECHNICAL_PATTERNS = (
     "integrar",
     "tecnico",
     "técnico",
-    "suporte",
 )
 
-COMMERCIAL_PATTERNS = (
-    "contratar",
-    "comprar",
-    "servico",
-    "serviço",
-    "solucao",
-    "solução",
-    "sistema",
-    "plataforma",
-    "projeto",
-    "especialista",
-    "visita",
+SUPPORT_PATTERNS = (
+    "suporte",
+    "ajuda",
     "atendimento",
-    "interesse comercial",
+    "assistencia",
+    "assistência",
+    "meu sistema caiu",
+    "nao consigo",
+    "não consigo",
+    "sem acesso",
+    "parou",
+    "fora do ar",
+    "pós-venda",
+    "pos-venda",
+)
+
+CONTACT_PATTERNS = (
+    "meu nome",
+    "sou ",
+    "empresa",
+    "telefone",
+    "whatsapp",
+    "celular",
+    "email",
+    "e-mail",
+    "mail",
+    "cidade",
+    "sou de",
 )
 
 
@@ -65,20 +101,61 @@ def normalize_text(text: str) -> str:
 
 
 def detect_intent(text: str) -> str:
+    classification = classify_message(text)
+    return classification["intent"]
+
+
+def classify_message(text: str) -> dict[str, object]:
     normalized = normalize_text(text)
     if not normalized:
-        return "default"
-    if _matches_any(normalized, GREETING_PATTERNS) and len(normalized.split()) <= 5:
-        return "greeting"
-    if _matches_any(normalized, BUDGET_PATTERNS):
-        return "budget"
-    if _matches_any(normalized, TECHNICAL_PATTERNS):
-        return "technical"
-    if _matches_any(normalized, COMMERCIAL_PATTERNS):
-        return "commercial"
-    if _looks_like_contact(normalized):
-        return "contact"
-    return "default"
+        return _result("unknown", normalized)
+
+    has_greeting = _is_greeting(normalized)
+    has_quote = _matches_any(normalized, QUOTE_PATTERNS)
+    has_support = _matches_any(normalized, SUPPORT_PATTERNS)
+    has_technical = _matches_any(normalized, TECHNICAL_PATTERNS)
+    has_commercial = _matches_any(normalized, COMMERCIAL_PATTERNS)
+    has_contact = _looks_like_contact(normalized)
+
+    if has_quote:
+        return _result("quote_request", normalized, has_contact, has_quote, has_commercial, has_technical, has_support, has_greeting)
+    if has_support:
+        return _result("support_request", normalized, has_contact, has_quote, has_commercial, has_technical, has_support, has_greeting)
+    if has_technical:
+        return _result("technical_question", normalized, has_contact, has_quote, has_commercial, has_technical, has_support, has_greeting)
+    if has_commercial:
+        return _result("commercial_interest", normalized, has_contact, has_quote, has_commercial, has_technical, has_support, has_greeting)
+    if has_contact:
+        return _result("contact_data", normalized, has_contact, has_quote, has_commercial, has_technical, has_support, has_greeting)
+    if has_greeting:
+        return _result("greeting", normalized, has_contact, has_quote, has_commercial, has_technical, has_support, has_greeting)
+    return _result("unknown", normalized, has_contact, has_quote, has_commercial, has_technical, has_support, has_greeting)
+
+
+def _result(
+    intent: str,
+    normalized_text: str,
+    has_contact_data: bool = False,
+    has_quote_request: bool = False,
+    has_commercial_interest: bool = False,
+    has_technical_question: bool = False,
+    has_support_request: bool = False,
+    has_greeting: bool = False,
+) -> dict[str, object]:
+    return {
+        "intent": intent,
+        "normalized_text": normalized_text,
+        "has_contact_data": has_contact_data,
+        "has_quote_request": has_quote_request,
+        "has_commercial_interest": has_commercial_interest,
+        "has_technical_question": has_technical_question,
+        "has_support_request": has_support_request,
+        "has_greeting": has_greeting,
+    }
+
+
+def _is_greeting(normalized_text: str) -> bool:
+    return _matches_any(normalized_text, GREETING_PATTERNS) and len(normalized_text.split()) <= 5
 
 
 def _matches_any(normalized_text: str, patterns: tuple[str, ...]) -> bool:
@@ -91,12 +168,4 @@ def _looks_like_contact(normalized_text: str) -> bool:
     digits = re.sub(r"\D", "", normalized_text)
     if len(digits) >= 10:
         return True
-    return bool(re.search(r"\b(?:meu nome|sou|empresa|telefone|whatsapp|celular|email|e-mail)\b", normalized_text))
-
-
-def classify_message(text: str) -> dict[str, str]:
-    intent = detect_intent(text)
-    return {
-        "intent": intent,
-        "normalized_text": normalize_text(text),
-    }
+    return bool(re.search(r"\b(?:meu nome|sou|empresa|telefone|whatsapp|celular|email|e-mail|cidade)\b", normalized_text))

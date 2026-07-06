@@ -70,28 +70,32 @@ def qualified_reply() -> str:
 
 def build_contextual_reply(*, intent: str, missing_fields: list[str] | None = None) -> str:
     if missing_fields is None:
-        if intent == "budget":
+        if intent == "quote_request":
             return budget_started_reply()
-        if intent == "commercial":
+        if intent == "commercial_interest":
             return commercial_started_reply()
-        if intent == "contact":
+        if intent == "contact_data":
             return contact_started_reply()
         missing_fields = []
     missing_fields = list(missing_fields or [])
 
     if intent == "greeting":
         return GREETING_REPLY
-    if intent == "technical":
+    if intent == "technical_question":
         return TECHNICAL_REPLY
-    if intent == "budget":
+    if intent == "support_request":
+        return (
+            "Posso te ajudar a entender o caso. Me conta o que está acontecendo e qual comportamento você esperava."
+        )
+    if intent == "quote_request":
         if not missing_fields:
             return qualified_reply()
         return _reply_for_missing_fields(missing_fields)
-    if intent == "commercial":
+    if intent == "commercial_interest":
         if not missing_fields:
             return qualified_reply()
         return _reply_for_missing_fields(missing_fields)
-    if intent == "contact":
+    if intent == "contact_data":
         if not missing_fields:
             return qualified_reply()
         return _reply_for_missing_fields(missing_fields)
