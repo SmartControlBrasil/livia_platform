@@ -3,6 +3,21 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+try:
+    import requests
+except ImportError:  # pragma: no cover - fallback leve para ambientes sem requests
+    class _RequestsUnavailableError(Exception):
+        pass
+
+    class _RequestsShim:
+        RequestException = _RequestsUnavailableError
+
+        @staticmethod
+        def post(*args, **kwargs):
+            raise _RequestsUnavailableError("requests não está instalado.")
+
+    requests = _RequestsShim()
+
 from .contracts import LeadIngestPayload, LeadIngestResponse
 
 
@@ -39,16 +54,11 @@ class Smart360GrowthClient:
     def _lead_ingest_url(self) -> str:
         if not self.base_url:
             return ""
-        return f"{self.base_url}/api/smart360/leads/ingest/"
+        return f"{self.base_url}/api/v1/growth/leads/ingest/"
 
     def _post_lead(self, payload: dict[str, Any]) -> LeadIngestResponse:
         if not self.base_url:
             raise ValueError("base_url é obrigatório quando dry_run=False.")
-
-        try:
-            import requests
-        except ImportError as exc:  # pragma: no cover - caminho futuro
-            raise RuntimeError("requests não está instalado.") from exc
 
         headers = {
             "Authorization": f"Bearer {self.token}" if self.token else "",
@@ -56,17 +66,33 @@ class Smart360GrowthClient:
         }
         headers = {key: value for key, value in headers.items() if value}
 
-        response = requests.post(self._lead_ingest_url(), json=payload, headers=headers, timeout=15)
         try:
-            response_data = response.json()
-        except ValueError:
-            response_data = {"detail": response.text}
+            response = requests.post(self._lead_ingest_url(), json=payload, headers=headers, timeout=10)
+            try:
+                response_data = response.json()
+            except ValueError:
+                return LeadIngestResponse(
+                    success=False,
+                    dry_run=False,
+                    message="Resposta JSON inválida do Smart360.",
+                    status_code=response.status_code,
+                    data={"detail": response.text},
+                )
 
-        return LeadIngestResponse(
-            success=response.ok,
-            dry_run=False,
-            message=str(response_data.get("message") or response_data.get("detail") or "ok"),
-            status_code=response.status_code,
-            external_id=response_data.get("external_id") or response_data.get("id"),
-            data=response_data,
-        )
+            success = response.ok and isinstance(response_data, dict)
+            return LeadIngestResponse(
+                success=success,
+                dry_run=False,
+                message=str(response_data.get("message") or response_data.get("detail") or "ok"),
+                status_code=response.status_code,
+                external_id=response_data.get("external_id") or response_data.get("id"),
+                data=response_data,
+            )
+        except requests.RequestException as exc:
+            return LeadIngestResponse(
+                success=False,
+                dry_run=False,
+                message=f"Falha ao enviar lead para o Smart360: {exc.__class__.__name__}.",
+                status_code=503,
+                data={"detail": "request_error"},
+            )

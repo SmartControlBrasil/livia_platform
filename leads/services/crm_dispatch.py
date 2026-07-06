@@ -28,6 +28,11 @@ class CRMDispatchService:
     def __init__(self, client: Smart360GrowthClient | None = None):
         self.client = client
 
+    def _current_dry_run(self) -> bool:
+        if self.client is not None:
+            return bool(getattr(self.client, "dry_run", True))
+        return bool(getattr(settings, "SMART360_LEAD_DISPATCH_DRY_RUN", True))
+
     def dispatch_if_qualified(self, lead_draft: LeadDraft) -> CRMDispatchResult:
         if lead_draft.status == LeadDraft.Status.SENT_TO_CRM:
             self._log_event(
@@ -37,7 +42,7 @@ class CRMDispatchService:
             return CRMDispatchResult(
                 attempted=False,
                 success=True,
-                dry_run=self.client.dry_run,
+                dry_run=self._current_dry_run(),
                 lead_draft=lead_draft,
                 external_id=lead_draft.crm_external_id,
                 message="Lead já enviado ao CRM.",
@@ -51,7 +56,7 @@ class CRMDispatchService:
             return CRMDispatchResult(
                 attempted=False,
                 success=False,
-                dry_run=self.client.dry_run,
+                dry_run=self._current_dry_run(),
                 lead_draft=lead_draft,
                 message="Lead ainda não qualificado.",
             )
