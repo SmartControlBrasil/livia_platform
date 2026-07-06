@@ -22,6 +22,35 @@ class LeadCaptureResult:
 
 class LeadCaptureService:
     REQUIRED_FIELDS = ("name_or_company", "phone_or_email", "need_summary")
+    GENERIC_NEED_PHRASES = (
+        "quero orcamento",
+        "quero orçamento",
+        "preciso de orcamento",
+        "preciso de orçamento",
+        "quanto custa",
+        "valor",
+        "proposta",
+        "orcamento",
+        "orçamento",
+    )
+    NEED_CONTEXT_KEYWORDS = (
+        "preciso",
+        "quero",
+        "orçamento",
+        "orcamento",
+        "problema",
+        "erro",
+        "falha",
+        "automação",
+        "automacao",
+        "sistema",
+        "plataforma",
+        "suporte",
+        "manutenção",
+        "manutencao",
+        "integração",
+        "integracao",
+    )
 
     def get_or_create_lead_draft(self, conversation: Conversation) -> LeadDraft:
         lead_draft, _ = LeadDraft.objects.get_or_create(
@@ -39,14 +68,17 @@ class LeadCaptureService:
     ) -> LeadCaptureResult:
         lead_draft = self.get_or_create_lead_draft(conversation)
         corpus = self._build_corpus(history=history, message=message)
-        snapshot = extract_contact_snapshot(message)
+        snapshot = extract_contact_snapshot(corpus)
 
         lead_draft.name = self._merge_text(lead_draft.name, snapshot.name)
         lead_draft.company = self._merge_text(lead_draft.company, snapshot.company)
         lead_draft.email = self._merge_text(lead_draft.email, snapshot.email)
         lead_draft.phone = self._merge_text(lead_draft.phone, snapshot.phone)
         lead_draft.city = self._merge_text(lead_draft.city, snapshot.city)
-        lead_draft.need_summary = self._merge_text(lead_draft.need_summary, self._extract_need_summary(corpus, message))
+        lead_draft.need_summary = self._merge_text(
+            lead_draft.need_summary,
+            self._extract_need_summary(history=history, message=message),
+        )
 
         missing_fields = self.calculate_missing_fields(lead_draft)
         lead_draft.status = (
@@ -65,24 +97,27 @@ class LeadCaptureService:
 
     def calculate_missing_fields(self, lead_draft: LeadDraft) -> list[str]:
         missing: list[str] = []
-        if not self._has_name_or_company(lead_draft):
-            missing.append("nome")
-        if not self._has_phone_or_email(lead_draft):
-            missing.append("telefone ou e-mail")
         if not self._has_need_summary(lead_draft):
-            missing.append("resumo da necessidade")
+            missing.append("need_summary")
+        if not self._has_name_or_company(lead_draft):
+            missing.append("name_or_company")
+        if not self._has_phone_or_email(lead_draft):
+            missing.append("phone_or_email")
         return missing
 
-    def build_next_prompt(self, lead_draft: LeadDraft, missing_fields: list[str]) -> str:
+    def build_next_prompt(self, lead_draft: LeadDraft, missing_fields: list[str], intent: str = "") -> str:
         if not missing_fields:
-            return "Perfeito. Já tenho os dados mínimos para seguir com o atendimento."
+            return "Perfeito. Já tenho os dados essenciais para seguir com o atendimento."
+        if intent == "budget" and "need_summary" in missing_fields:
+            return "Perfeito. Antes do contato, me conta em uma frase qual é a sua necessidade principal."
+
         next_field = missing_fields[0]
-        if next_field == "nome":
-            return "Perfeito. Qual é o seu nome ou o nome da empresa?"
-        if next_field == "telefone ou e-mail":
-            return "Perfeito. Me passe seu telefone/WhatsApp ou e-mail para eu continuar."
-        if next_field == "resumo da necessidade":
-            return "Entendi. Me conte em uma frase qual é a sua necessidade principal."
+        if next_field == "need_summary":
+            return "Perfeito. Me conta em uma frase qual é a sua necessidade principal."
+        if next_field == "name_or_company":
+            return "Ótimo. Para eu dar sequência, qual é o seu nome ou o nome da empresa?"
+        if next_field == "phone_or_email":
+            return "Entendi. Me passa seu telefone/WhatsApp ou e-mail para eu continuar."
         return "Perfeito. Pode me passar mais um dado para eu continuar?"
 
     def _has_minimum_data(self, lead_draft: LeadDraft) -> bool:
@@ -106,8 +141,16 @@ class LeadCaptureService:
         parts.append(str(message or ""))
         return " ".join(part for part in parts if part.strip())
 
-    def _extract_need_summary(self, corpus: str, message: str) -> str:
-        text = self._strip_contact_noise(corpus or message)
+    def _extract_need_summary(
+        self,
+        *,
+        history: Iterable[dict[str, str]] | None,
+        message: str,
+    ) -> str:
+        candidate = self._select_need_summary_candidate(history=history, message=message)
+        text = self._strip_contact_noise(candidate)
+        if self._is_generic_need_summary(text):
+            return ""
         return text[:500].strip()
 
     def _strip_contact_noise(self, text: str) -> str:
@@ -123,3 +166,39 @@ class LeadCaptureService:
         if new_value:
             return new_value
         return current_value
+
+    def _is_generic_need_summary(self, text: str) -> bool:
+        normalized = str(text or "").strip().lower()
+        return any(phrase == normalized for phrase in self.GENERIC_NEED_PHRASES)
+
+    def _select_need_summary_candidate(
+        self,
+        *,
+        history: Iterable[dict[str, str]] | None,
+        message: str,
+    ) -> str:
+        current_message = str(message or "").strip()
+        if self._is_need_summary_candidate(current_message):
+            return current_message
+
+        for item in reversed(list(history or [])):
+            if item.get("role") != "user":
+                continue
+            content = str(item.get("content") or "").strip()
+            if self._is_need_summary_candidate(content):
+                return content
+        return ""
+
+    def _is_need_summary_candidate(self, text: str) -> bool:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return False
+        if self._is_generic_need_summary(cleaned):
+            return False
+        if len(cleaned) < 25:
+            return False
+        lowered = cleaned.lower()
+        snapshot = extract_contact_snapshot(cleaned)
+        if snapshot.has_any_contact() and not any(keyword in lowered for keyword in self.NEED_CONTEXT_KEYWORDS):
+            return False
+        return True

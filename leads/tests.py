@@ -56,10 +56,34 @@ class LeadCaptureServiceTests(TestCase):
         self.assertEqual(second.lead_draft.phone, "11999998888")
         self.assertIn("sistema de atendimento", second.lead_draft.need_summary.lower())
 
+    def test_prompt_skips_name_when_already_informed(self):
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="Sou Maria.",
+            history=[],
+        )
+
+        reply = self.service.build_next_prompt(result.lead_draft, result.missing_fields)
+
+        self.assertIn("necessidade principal", reply.lower())
+        self.assertNotIn("nome", reply.lower())
+
+    def test_prompt_asks_next_missing_field(self):
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="Sou Maria da ACME. Preciso de automação industrial.",
+            history=[],
+        )
+
+        reply = self.service.build_next_prompt(result.lead_draft, result.missing_fields)
+
+        self.assertIn("telefone/WhatsApp ou e-mail", reply)
+        self.assertNotIn("nome", reply.lower())
+
     def test_marks_qualified_with_minimum_data(self):
         result = self.service.capture_from_message(
             conversation=self.conversation,
-            message="Sou Maria, meu e-mail é maria@exemplo.com e preciso de orçamento para automação industrial.",
+            message="Sou Maria da ACME, meu telefone é 11999998888 e preciso de automação industrial.",
             history=[],
         )
 
@@ -74,5 +98,6 @@ class LeadCaptureServiceTests(TestCase):
         )
 
         self.assertFalse(result.is_qualified)
-        self.assertIn("nome", result.missing_fields)
-        self.assertIn("telefone ou e-mail", result.missing_fields)
+        self.assertIn("need_summary", result.missing_fields)
+        self.assertIn("name_or_company", result.missing_fields)
+        self.assertIn("phone_or_email", result.missing_fields)

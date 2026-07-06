@@ -22,7 +22,7 @@ class LiviaDecisionServiceTests(TestCase):
         decision = self.service.generate_reply([], "Quero orçamento para um sistema.")
 
         self.assertEqual(decision.intent, "budget")
-        self.assertIn("valor depende", decision.reply)
+        self.assertIn("necessidade principal", decision.reply)
 
     def test_technical_message(self):
         decision = self.service.generate_reply([], "Estou com um erro no painel e não funciona")
@@ -34,7 +34,7 @@ class LiviaDecisionServiceTests(TestCase):
         decision = self.service.generate_reply([], "Meu nome é Maria, meu email é maria@exemplo.com")
 
         self.assertEqual(decision.intent, "contact")
-        self.assertIn("contato", decision.reply.lower())
+        self.assertIn("atendimento", decision.reply.lower())
 
 
 class ChatApiTests(TestCase):
@@ -97,6 +97,26 @@ class ChatApiTests(TestCase):
         self.assertIn("orçamento", lead_draft.need_summary.lower())
         self.assertEqual(lead_draft.status, LeadDraft.Status.DRAFT)
         self.assertIn("nome", response.json()["reply"].lower())
+
+    def test_chat_api_confirms_when_lead_is_qualified(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-457",
+            "message": "Sou Maria da ACME, meu telefone é 11999998888 e preciso de automação industrial.",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(LeadDraft.objects.count(), 1)
+        lead_draft = LeadDraft.objects.get()
+        self.assertEqual(lead_draft.status, LeadDraft.Status.QUALIFIED)
+        self.assertIn("encaminhar", response.json()["reply"].lower())
 
     def test_chat_api_does_not_create_lead_draft_on_greeting(self):
         payload = {

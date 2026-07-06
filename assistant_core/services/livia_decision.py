@@ -5,12 +5,8 @@ from typing import Iterable
 
 from assistant_core.discovery import classify_message
 from assistant_core.prompts import (
-    BUDGET_REPLY,
-    COMMERCIAL_REPLY,
-    CONTACT_REPLY,
     DEFAULT_REPLY,
-    GREETING_REPLY,
-    TECHNICAL_REPLY,
+    build_contextual_reply,
 )
 from assistant_core.qualification import has_basic_contact
 from leads.services import LeadCaptureService
@@ -36,21 +32,21 @@ class LiviaDecisionService:
         intent = classification["intent"]
 
         if intent == "greeting":
-            return LiviaReply(intent=intent, reply=GREETING_REPLY)
+            return LiviaReply(intent=intent, reply=build_contextual_reply(intent="greeting"))
         if intent == "budget":
             return self._handle_qualification(
                 intent=intent,
-                reply_prefix=BUDGET_REPLY,
+                reply_prefix=build_contextual_reply(intent="budget"),
                 history=history,
                 current_message=current_message,
                 conversation=conversation,
             )
         if intent == "technical":
-            return LiviaReply(intent=intent, reply=TECHNICAL_REPLY)
+            return LiviaReply(intent=intent, reply=build_contextual_reply(intent="technical"))
         if intent == "commercial":
             return self._handle_qualification(
                 intent=intent,
-                reply_prefix=COMMERCIAL_REPLY,
+                reply_prefix=build_contextual_reply(intent="commercial"),
                 history=history,
                 current_message=current_message,
                 conversation=conversation,
@@ -58,7 +54,7 @@ class LiviaDecisionService:
         if intent == "contact" or has_basic_contact(current_message):
             return self._handle_qualification(
                 intent="contact",
-                reply_prefix=CONTACT_REPLY,
+                reply_prefix=build_contextual_reply(intent="contact"),
                 history=history,
                 current_message=current_message,
                 conversation=conversation,
@@ -93,10 +89,7 @@ class LiviaDecisionService:
             message=current_message,
             history=history,
         )
-        reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields)
+        reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields, intent=intent)
         if result.is_qualified:
-            reply = (
-                "Perfeito. Já tenho os dados mínimos para seguir com seu atendimento. "
-                "Se quiser, posso continuar refinando a necessidade."
-            )
+            reply = build_contextual_reply(intent=intent, missing_fields=[])
         return LiviaReply(intent=intent, reply=reply)

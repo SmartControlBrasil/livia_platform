@@ -22,23 +22,88 @@ Regras:
 
 GREETING_REPLY = "Olá! Sou a Lívia. Como posso te ajudar?"
 
-BUDGET_REPLY = (
-    "Posso te ajudar com isso. O valor depende do escopo, da configuração e da implantação. "
-    "Se quiser, me conte um pouco mais sobre o que você precisa."
-)
-
 TECHNICAL_REPLY = (
     "Posso te dar uma pré-análise. Me conta qual é o cenário, o erro ou o comportamento que você está vendo."
 )
 
-COMMERCIAL_REPLY = (
-    "Entendi. Posso te ajudar a organizar isso. Me diga rapidamente qual é a sua necessidade principal."
-)
+DEFAULT_REPLY = "Entendi. Pode me explicar um pouco mais para eu te orientar da melhor forma?"
 
-CONTACT_REPLY = (
-    "Perfeito, já registrei o contato. Se quiser, me passe também sua empresa e cidade para eu te orientar melhor."
-)
 
-DEFAULT_REPLY = (
-    "Entendi. Pode me explicar um pouco mais para eu te orientar da melhor forma?"
-)
+def budget_started_reply() -> str:
+    return (
+        "Claro. Vou te ajudar com isso de forma objetiva. "
+        "Me conta rapidamente qual é a sua necessidade principal para eu te orientar melhor."
+    )
+
+
+def commercial_started_reply() -> str:
+    return (
+        "Entendi. Vamos organizar isso com calma. "
+        "Me conta rapidamente o que você precisa para eu seguir no ponto certo."
+    )
+
+
+def contact_started_reply() -> str:
+    return (
+        "Perfeito. Vou só completar as informações essenciais para seguir com o atendimento."
+    )
+
+
+def ask_need_summary_reply() -> str:
+    return "Perfeito. Em uma frase, me conta qual é a sua necessidade principal."
+
+
+def ask_name_or_company_reply() -> str:
+    return "Ótimo. Para eu dar sequência, qual é o seu nome ou o nome da empresa?"
+
+
+def ask_phone_or_email_reply() -> str:
+    return "Entendi. Me passa seu telefone/WhatsApp ou e-mail para eu continuar."
+
+
+def qualified_reply() -> str:
+    return (
+        "Perfeito, já tenho as informações essenciais para seguir com o atendimento. "
+        "Vou encaminhar sua solicitação e sigo com o próximo passo."
+    )
+
+
+def build_contextual_reply(*, intent: str, missing_fields: list[str] | None = None) -> str:
+    if missing_fields is None:
+        if intent == "budget":
+            return budget_started_reply()
+        if intent == "commercial":
+            return commercial_started_reply()
+        if intent == "contact":
+            return contact_started_reply()
+        missing_fields = []
+    missing_fields = list(missing_fields or [])
+
+    if intent == "greeting":
+        return GREETING_REPLY
+    if intent == "technical":
+        return TECHNICAL_REPLY
+    if intent == "budget":
+        if not missing_fields:
+            return qualified_reply()
+        return _reply_for_missing_fields(missing_fields)
+    if intent == "commercial":
+        if not missing_fields:
+            return qualified_reply()
+        return _reply_for_missing_fields(missing_fields)
+    if intent == "contact":
+        if not missing_fields:
+            return qualified_reply()
+        return _reply_for_missing_fields(missing_fields)
+    return DEFAULT_REPLY
+
+
+def _reply_for_missing_fields(missing_fields: list[str]) -> str:
+    first_missing = missing_fields[0]
+    if first_missing == "need_summary":
+        return ask_need_summary_reply()
+    if first_missing == "name_or_company":
+        return ask_name_or_company_reply()
+    if first_missing == "phone_or_email":
+        return ask_phone_or_email_reply()
+    return DEFAULT_REPLY
