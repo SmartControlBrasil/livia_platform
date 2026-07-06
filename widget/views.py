@@ -40,8 +40,9 @@ def widget_js(request):
     const style = document.createElement("style");
     style.id = "livia-widget-styles";
     style.textContent = [
-      "#livia-launcher { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000; border: 0; border-radius: 999px; padding: 12px 18px; cursor: pointer; background: #0f172a; color: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, .25); font: 600 14px/1.2 Arial, sans-serif; }",
-      "#livia-panel { position: fixed; right: 20px; bottom: 76px; width: 360px; max-width: calc(100vw - 40px); height: 520px; max-height: calc(100vh - 110px); z-index: 2147483000; display: none; flex-direction: column; background: #fff; border: 1px solid rgba(15, 23, 42, .12); border-radius: 18px; box-shadow: 0 18px 45px rgba(15, 23, 42, .2); overflow: hidden; font: 14px/1.4 Arial, sans-serif; }",
+      "#livia-launcher { position: fixed; left: 20px; bottom: 20px; z-index: 2147483000; border: 0; border-radius: 999px; padding: 12px 18px; cursor: pointer; background: #0f172a; color: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, .25); font: 600 14px/1.2 Arial, sans-serif; }",
+      "#livia-panel { position: fixed; left: 20px; bottom: 76px; width: min(360px, calc(100vw - 40px)); height: 520px; max-height: calc(100vh - 110px); z-index: 2147483000; display: none; flex-direction: column; background: #fff; border: 1px solid rgba(15, 23, 42, .12); border-radius: 18px; box-shadow: 0 18px 45px rgba(15, 23, 42, .2); overflow: hidden; font: 14px/1.4 Arial, sans-serif; }",
+      "@media (max-width: 480px) { #livia-launcher { left: 16px; bottom: 16px; } #livia-panel { left: 16px; bottom: 72px; width: calc(100vw - 32px); max-height: calc(100vh - 96px); } }",
       "#livia-panel.livia-open { display: flex; }",
       "#livia-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; background: #0f172a; color: #fff; }",
       "#livia-header strong { font-size: 15px; }",
