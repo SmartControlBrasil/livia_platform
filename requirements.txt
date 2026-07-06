@@ -1,6 +1,11 @@
 asgiref==3.11.1
+certifi==2026.6.17
+charset-normalizer==3.4.8
 Django==6.0.6
 gunicorn==26.0.0
+idna==3.18
 packaging==26.2
 python-decouple==3.8
+requests==2.34.2
 sqlparse==0.5.5
+urllib3==2.7.0
