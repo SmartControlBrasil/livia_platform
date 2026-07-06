@@ -42,15 +42,18 @@ def chat_api(request):
         defaults={"source_page": source_page},
     )
 
+    history = list(conversation.messages.values("role", "content").order_by("created_at", "id"))
+    decision_service = LiviaDecisionService()
+    decision = decision_service.generate_reply(
+        history=history,
+        current_message=user_message,
+        conversation=conversation,
+    )
     Message.objects.create(
         conversation=conversation,
         role=Message.Role.USER,
         content=user_message,
     )
-
-    history = list(conversation.messages.values("role", "content").order_by("created_at", "id"))
-    decision_service = LiviaDecisionService()
-    decision = decision_service.generate_reply(history=history, current_message=user_message)
     assistant_reply = decision.reply
 
     Message.objects.create(

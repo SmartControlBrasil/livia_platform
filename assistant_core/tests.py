@@ -4,6 +4,7 @@ from django.test import TestCase
 
 from conversations.models import Conversation, Message
 from assistant_core.services import LiviaDecisionService
+from leads.models import LeadDraft
 from tenants.models import Tenant
 
 
@@ -73,3 +74,44 @@ class ChatApiTests(TestCase):
         assistant_message = Message.objects.filter(role=Message.Role.ASSISTANT).get()
         self.assertEqual(user_message.content, "Olá, quero saber mais.")
         self.assertIn("Olá! Sou a Lívia", assistant_message.content)
+
+    def test_chat_api_creates_lead_draft_on_budget_request(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-456",
+            "message": "Quero orçamento para um sistema de atendimento.",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(LeadDraft.objects.count(), 1)
+
+        lead_draft = LeadDraft.objects.get()
+        self.assertEqual(lead_draft.conversation.session_id, "session-456")
+        self.assertIn("orçamento", lead_draft.need_summary.lower())
+        self.assertEqual(lead_draft.status, LeadDraft.Status.DRAFT)
+        self.assertIn("nome", response.json()["reply"].lower())
+
+    def test_chat_api_does_not_create_lead_draft_on_greeting(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-789",
+            "message": "Olá!",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(LeadDraft.objects.count(), 0)
+        self.assertEqual(response.json()["intent"], "greeting")

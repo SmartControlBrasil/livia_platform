@@ -50,25 +50,27 @@ def _extract_phone(text: str) -> str:
 
 
 def _extract_name(text: str) -> str:
-    lowered = text.lower()
-    if lowered.startswith("meu nome e "):
-        return text[11:].strip()
-    if lowered.startswith("meu nome é "):
-        return text[11:].strip()
-    if lowered.startswith("sou "):
-        return text[4:].strip()
+    match = re.search(
+        r"(?:meu nome e|meu nome é|sou)\s*[:\-]?\s*([^,;]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if match:
+        candidate = match.group(1).strip()
+        candidate = re.split(r"\s+[eE]\s+(?:meu|minha|meus|minhas)\b", candidate, maxsplit=1)[0].strip()
+        return candidate
     return ""
 
 
 def _extract_company(text: str) -> str:
     match = re.search(r"(?:empresa|companhia|companhia é|empresa é)\s*[:\-]?\s*(.+)$", text, re.IGNORECASE)
     if match:
-        return match.group(1).strip()
+        return re.split(r"[,;]", match.group(1).strip(), maxsplit=1)[0].strip()
     return ""
 
 
 def _extract_city(text: str) -> str:
     match = re.search(r"(?:cidade|sou de)\s*[:\-]?\s*(.+)$", text, re.IGNORECASE)
     if match:
-        return match.group(1).strip()
+        return re.split(r"[,;]", match.group(1).strip(), maxsplit=1)[0].strip()
     return ""
