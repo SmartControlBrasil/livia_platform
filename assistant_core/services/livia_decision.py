@@ -9,7 +9,7 @@ from assistant_core.prompts import (
     build_contextual_reply,
 )
 from assistant_core.qualification import has_basic_contact
-from leads.services import LeadCaptureService
+from leads.services import CRMDispatchService, LeadCaptureService
 
 
 @dataclass(frozen=True)
@@ -19,8 +19,13 @@ class LiviaReply:
 
 
 class LiviaDecisionService:
-    def __init__(self, lead_capture_service: LeadCaptureService | None = None):
+    def __init__(
+        self,
+        lead_capture_service: LeadCaptureService | None = None,
+        crm_dispatch_service: CRMDispatchService | None = None,
+    ):
         self.lead_capture_service = lead_capture_service or LeadCaptureService()
+        self.crm_dispatch_service = crm_dispatch_service or CRMDispatchService()
 
     def generate_reply(
         self,
@@ -105,6 +110,8 @@ class LiviaDecisionService:
             message=current_message,
             history=history,
         )
+        if result.is_qualified:
+            self.crm_dispatch_service.dispatch_if_qualified(result.lead_draft)
         reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields, intent=intent)
         if result.is_qualified:
             reply = build_contextual_reply(intent=intent, missing_fields=[])

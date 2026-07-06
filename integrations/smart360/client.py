@@ -15,12 +15,14 @@ class Smart360GrowthClient:
     def ingest_lead(self, payload: LeadIngestPayload | dict[str, Any]) -> LeadIngestResponse:
         normalized_payload = self._normalize_payload(payload)
         if self.dry_run:
+            tenant_slug = str(normalized_payload.get("tenant_slug") or "tenant")
+            conversation_id = str(normalized_payload.get("conversation_id") or "lead")
             return LeadIngestResponse(
                 success=True,
                 dry_run=True,
                 message="dry_run ativo: lead não foi enviado ao Smart360.",
                 status_code=202,
-                external_id=None,
+                external_id=f"dry-run-{tenant_slug}-{conversation_id}",
                 data={
                     "endpoint": self._lead_ingest_url(),
                     "payload": normalized_payload,

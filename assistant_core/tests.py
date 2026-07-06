@@ -144,7 +144,9 @@ class ChatApiTests(TestCase):
         self.assertEqual(LeadDraft.objects.count(), 1)
         self.assertEqual(response.json()["intent"], "contact_data")
         lead_draft = LeadDraft.objects.get()
-        self.assertEqual(lead_draft.status, LeadDraft.Status.QUALIFIED)
+        self.assertEqual(lead_draft.status, LeadDraft.Status.SENT_TO_CRM)
+        self.assertTrue(lead_draft.crm_external_id.startswith("dry-run-smart-control-brasil-"))
+        self.assertIsNotNone(lead_draft.sent_to_crm_at)
         self.assertIn("encaminhar", response.json()["reply"].lower())
 
     def test_chat_api_does_not_create_lead_draft_on_technical_question(self):

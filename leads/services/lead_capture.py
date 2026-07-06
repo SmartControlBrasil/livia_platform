@@ -81,11 +81,12 @@ class LeadCaptureService:
         )
 
         missing_fields = self.calculate_missing_fields(lead_draft)
-        lead_draft.status = (
-            LeadDraft.Status.QUALIFIED
-            if self._has_minimum_data(lead_draft)
-            else LeadDraft.Status.DRAFT
-        )
+        if lead_draft.status not in {LeadDraft.Status.SENT_TO_CRM, LeadDraft.Status.FAILED}:
+            lead_draft.status = (
+                LeadDraft.Status.QUALIFIED
+                if self._has_minimum_data(lead_draft)
+                else LeadDraft.Status.DRAFT
+            )
         lead_draft.save()
 
         return LeadCaptureResult(
