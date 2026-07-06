@@ -1,5 +1,5 @@
-from django.test import TestCase
-from unittest.mock import Mock
+from django.test import TestCase, override_settings
+from unittest.mock import Mock, patch
 
 from conversations.models import Conversation
 from leads.models import LeadDraft
@@ -159,8 +159,12 @@ class CRMDispatchServiceTests(TestCase):
         )
         service = CRMDispatchService(client=client)
 
-        with self.assertLogs("leads.services.crm_dispatch", level="INFO") as logs:
-            result = service.dispatch_if_qualified(self.lead_draft)
+        with override_settings(
+            SMART360_LEAD_DISPATCH_ENABLED=False,
+            SMART360_LEAD_DISPATCH_DRY_RUN=True,
+        ):
+            with self.assertLogs("leads.services.crm_dispatch", level="INFO") as logs:
+                result = service.dispatch_if_qualified(self.lead_draft)
 
         self.assertTrue(result.attempted)
         self.assertTrue(result.success)
@@ -173,6 +177,27 @@ class CRMDispatchServiceTests(TestCase):
         self.assertIn("event=crm_dispatch_success_dry_run", joined_logs)
         self.assertIn("lead_draft_id=", joined_logs)
         self.assertIn("tenant_slug=smart-control-brasil", joined_logs)
+
+    def test_dispatch_disabled_does_not_send(self):
+        client = Mock()
+        client.dry_run = False
+        self.lead_draft.status = LeadDraft.Status.QUALIFIED
+        self.lead_draft.save(update_fields=["status"])
+        service = CRMDispatchService(client=client)
+
+        with override_settings(
+            SMART360_LEAD_DISPATCH_ENABLED=False,
+            SMART360_LEAD_DISPATCH_DRY_RUN=False,
+        ):
+            with self.assertLogs("leads.services.crm_dispatch", level="INFO") as logs:
+                result = service.dispatch_if_qualified(self.lead_draft)
+
+        self.assertFalse(result.attempted)
+        self.assertFalse(result.success)
+        client.ingest_lead.assert_not_called()
+        self.lead_draft.refresh_from_db()
+        self.assertEqual(self.lead_draft.status, LeadDraft.Status.QUALIFIED)
+        self.assertIn("event=crm_dispatch_ignored_disabled", "\n".join(logs.output))
 
     def test_non_qualified_lead_is_not_sent(self):
         self.lead_draft.status = LeadDraft.Status.DRAFT
@@ -229,3 +254,55 @@ class CRMDispatchServiceTests(TestCase):
         self.assertEqual(self.lead_draft.status, LeadDraft.Status.FAILED)
         self.assertEqual(self.lead_draft.crm_error, "dry run error")
         self.assertIn("event=crm_dispatch_failure_dry_run", "\n".join(logs.output))
+
+    def test_real_mode_without_base_url_or_token_fails_safe(self):
+        with override_settings(
+            SMART360_LEAD_DISPATCH_ENABLED=True,
+            SMART360_LEAD_DISPATCH_DRY_RUN=False,
+            SMART360_BASE_URL="",
+            SMART360_M2M_TOKEN="",
+        ):
+            with patch("leads.services.crm_dispatch.Smart360GrowthClient") as client_cls:
+                service = CRMDispatchService()
+                with self.assertLogs("leads.services.crm_dispatch", level="ERROR") as logs:
+                    result = service.dispatch_if_qualified(self.lead_draft)
+
+        self.assertFalse(result.attempted)
+        self.assertFalse(result.success)
+        self.lead_draft.refresh_from_db()
+        self.assertEqual(self.lead_draft.status, LeadDraft.Status.FAILED)
+        self.assertIn("configuração smart360 incompleta", self.lead_draft.crm_error.lower())
+        client_cls.assert_not_called()
+        self.assertIn("event=crm_dispatch_failure_missing_config", "\n".join(logs.output))
+
+    def test_real_mode_with_complete_config_instantiates_client(self):
+        client_instance = Mock()
+        client_instance.dry_run = False
+        client_instance.ingest_lead.return_value = LeadIngestResponse(
+            success=True,
+            dry_run=False,
+            message="ok",
+            status_code=201,
+            external_id="crm-123",
+            data={},
+        )
+
+        with override_settings(
+            SMART360_LEAD_DISPATCH_ENABLED=True,
+            SMART360_LEAD_DISPATCH_DRY_RUN=False,
+            SMART360_BASE_URL="https://smart360.example",
+            SMART360_M2M_TOKEN="token-123",
+        ):
+            with patch("leads.services.crm_dispatch.Smart360GrowthClient", return_value=client_instance) as client_cls:
+                service = CRMDispatchService()
+                result = service.dispatch_if_qualified(self.lead_draft)
+
+        client_cls.assert_called_once_with(
+            base_url="https://smart360.example",
+            token="token-123",
+            dry_run=False,
+        )
+        client_instance.ingest_lead.assert_called_once()
+        self.assertTrue(result.success)
+        self.lead_draft.refresh_from_db()
+        self.assertEqual(self.lead_draft.status, LeadDraft.Status.SENT_TO_CRM)

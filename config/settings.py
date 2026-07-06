@@ -12,6 +12,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 from pathlib import Path
 
+from decouple import config
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -125,3 +127,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+SMART360_BASE_URL = config("SMART360_BASE_URL", default="")
+SMART360_M2M_TOKEN = config("SMART360_M2M_TOKEN", default="")
+SMART360_LEAD_DISPATCH_ENABLED = config("SMART360_LEAD_DISPATCH_ENABLED", default=False, cast=bool)
+SMART360_LEAD_DISPATCH_DRY_RUN = config("SMART360_LEAD_DISPATCH_DRY_RUN", default=True, cast=bool)

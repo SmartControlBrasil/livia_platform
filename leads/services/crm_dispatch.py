@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.utils import timezone
 
 from integrations.smart360.client import Smart360GrowthClient
@@ -25,7 +26,7 @@ class CRMDispatchResult:
 
 class CRMDispatchService:
     def __init__(self, client: Smart360GrowthClient | None = None):
-        self.client = client or Smart360GrowthClient(dry_run=True)
+        self.client = client
 
     def dispatch_if_qualified(self, lead_draft: LeadDraft) -> CRMDispatchResult:
         if lead_draft.status == LeadDraft.Status.SENT_TO_CRM:
@@ -56,52 +57,56 @@ class CRMDispatchService:
             )
 
         payload = self.build_payload(lead_draft)
-        self._log_event("crm_dispatch_attempt", lead_draft=lead_draft, external_id=self._build_mock_external_id(lead_draft))
-        response = self.client.ingest_lead(payload)
-
-        if response.success:
-            external_id = response.external_id or self._build_mock_external_id(lead_draft)
-            lead_draft.status = LeadDraft.Status.SENT_TO_CRM
-            lead_draft.crm_external_id = external_id
-            lead_draft.crm_error = ""
-            lead_draft.sent_to_crm_at = timezone.now()
-            lead_draft.save(
-                update_fields=[
-                    "status",
-                    "crm_external_id",
-                    "crm_error",
-                    "sent_to_crm_at",
-                    "updated_at",
-                ]
-            )
+        if settings.SMART360_LEAD_DISPATCH_DRY_RUN:
+            client = self._get_client(dry_run=True)
             self._log_event(
-                "crm_dispatch_success_dry_run",
+                "crm_dispatch_attempt",
                 lead_draft=lead_draft,
-                external_id=external_id,
+                external_id=self._build_mock_external_id(lead_draft),
+            )
+            response = client.ingest_lead(payload)
+            return self._finalize_response(lead_draft, response)
+
+        if not settings.SMART360_LEAD_DISPATCH_ENABLED:
+            self._log_event(
+                "crm_dispatch_ignored_disabled",
+                lead_draft=lead_draft,
             )
             return CRMDispatchResult(
-                attempted=True,
-                success=True,
-                dry_run=response.dry_run,
+                attempted=False,
+                success=False,
+                dry_run=False,
                 lead_draft=lead_draft,
-                external_id=external_id,
-                message=response.message,
+                message="Despacho Smart360 desabilitado por configuração.",
             )
 
-        lead_draft.status = LeadDraft.Status.FAILED
-        lead_draft.crm_error = response.message
-        lead_draft.save(update_fields=["status", "crm_error", "updated_at"])
-        self._log_event(
-            "crm_dispatch_failure_dry_run",
-            lead_draft=lead_draft,
-        )
-        return CRMDispatchResult(
-            attempted=True,
-            success=False,
-            dry_run=response.dry_run,
-            lead_draft=lead_draft,
-            message=response.message,
-        )
+        if not self._has_real_dispatch_config():
+            error_message = "Configuração Smart360 incompleta para despacho real."
+            lead_draft.status = LeadDraft.Status.FAILED
+            lead_draft.crm_error = error_message
+            lead_draft.save(update_fields=["status", "crm_error", "updated_at"])
+            self._log_event(
+                "crm_dispatch_failure_missing_config",
+                lead_draft=lead_draft,
+            )
+            logger.error(
+                "event=crm_dispatch_failure_missing_config lead_draft_id=%s tenant_slug=%s status=%s",
+                lead_draft.id,
+                lead_draft.tenant.slug,
+                lead_draft.status,
+            )
+            return CRMDispatchResult(
+                attempted=False,
+                success=False,
+                dry_run=False,
+                lead_draft=lead_draft,
+                message=error_message,
+            )
+
+        client = self._get_client(dry_run=False)
+        self._log_event("crm_dispatch_attempt", lead_draft=lead_draft, external_id="")
+        response = client.ingest_lead(payload)
+        return self._finalize_response(lead_draft, response)
 
     def build_payload(self, lead_draft: LeadDraft) -> LeadIngestPayload:
         conversation = lead_draft.conversation
@@ -121,6 +126,65 @@ class CRMDispatchService:
         conversation = lead_draft.conversation
         conversation_id = conversation.session_id if conversation else lead_draft.id
         return f"dry-run-{lead_draft.tenant.slug}-{conversation_id}"
+
+    def _get_client(self, *, dry_run: bool) -> Smart360GrowthClient:
+        if self.client is not None:
+            return self.client
+        return Smart360GrowthClient(
+            base_url=str(getattr(settings, "SMART360_BASE_URL", "") or "").strip(),
+            token=str(getattr(settings, "SMART360_M2M_TOKEN", "") or "").strip(),
+            dry_run=dry_run,
+        )
+
+    def _has_real_dispatch_config(self) -> bool:
+        base_url = str(getattr(settings, "SMART360_BASE_URL", "") or "").strip()
+        token = str(getattr(settings, "SMART360_M2M_TOKEN", "") or "").strip()
+        return bool(base_url and token)
+
+    def _finalize_response(self, lead_draft: LeadDraft, response):
+        if response.success:
+            external_id = response.external_id or self._build_mock_external_id(lead_draft)
+            lead_draft.status = LeadDraft.Status.SENT_TO_CRM
+            lead_draft.crm_external_id = external_id
+            lead_draft.crm_error = ""
+            lead_draft.sent_to_crm_at = timezone.now()
+            lead_draft.save(
+                update_fields=[
+                    "status",
+                    "crm_external_id",
+                    "crm_error",
+                    "sent_to_crm_at",
+                    "updated_at",
+                ]
+            )
+            self._log_event(
+                "crm_dispatch_success_dry_run" if response.dry_run else "crm_dispatch_success_real",
+                lead_draft=lead_draft,
+                external_id=external_id,
+            )
+            return CRMDispatchResult(
+                attempted=True,
+                success=True,
+                dry_run=response.dry_run,
+                lead_draft=lead_draft,
+                external_id=external_id,
+                message=response.message,
+            )
+
+        lead_draft.status = LeadDraft.Status.FAILED
+        lead_draft.crm_error = response.message
+        lead_draft.save(update_fields=["status", "crm_error", "updated_at"])
+        self._log_event(
+            "crm_dispatch_failure_dry_run" if response.dry_run else "crm_dispatch_failure_real",
+            lead_draft=lead_draft,
+        )
+        return CRMDispatchResult(
+            attempted=True,
+            success=False,
+            dry_run=response.dry_run,
+            lead_draft=lead_draft,
+            message=response.message,
+        )
 
     def _log_event(self, event_type: str, *, lead_draft: LeadDraft, external_id: str = "") -> None:
         parts = [
