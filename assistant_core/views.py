@@ -6,6 +6,7 @@ from django.views.decorators.http import require_POST
 
 from conversations.models import Conversation, Message
 from tenants.models import Tenant
+from .services import LiviaDecisionService
 
 
 @csrf_exempt
@@ -47,10 +48,10 @@ def chat_api(request):
         content=user_message,
     )
 
-    assistant_reply = (
-        f"Olá! Sou a Lívia do cliente {tenant.name}. "
-        "Recebi sua mensagem. Em breve este endpoint usará o motor real de IA."
-    )
+    history = list(conversation.messages.values("role", "content").order_by("created_at", "id"))
+    decision_service = LiviaDecisionService()
+    decision = decision_service.generate_reply(history=history, current_message=user_message)
+    assistant_reply = decision.reply
 
     Message.objects.create(
         conversation=conversation,
@@ -63,5 +64,6 @@ def chat_api(request):
             "tenant": tenant.slug,
             "session_id": session_id,
             "reply": assistant_reply,
+            "intent": decision.intent,
         }
     )
