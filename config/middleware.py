@@ -1,0 +1,44 @@
+from urllib.parse import urlparse
+
+from django.conf import settings
+from django.http import HttpResponse
+from django.utils.cache import patch_vary_headers
+
+
+class LiviaWidgetCorsMiddleware:
+    CHAT_PATH = "/api/chat/"
+    ALLOWED_HEADERS = "Content-Type, Authorization"
+    ALLOWED_METHODS = "POST, OPTIONS"
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.path == self.CHAT_PATH and request.method == "OPTIONS":
+            response = HttpResponse(status=204)
+        else:
+            response = self.get_response(request)
+
+        if request.path == self.CHAT_PATH:
+            self._patch_cors_headers(request, response)
+        return response
+
+    def _patch_cors_headers(self, request, response):
+        origin = request.headers.get("Origin")
+        if not origin or not self._is_allowed_origin(origin):
+            return
+
+        response["Access-Control-Allow-Origin"] = origin
+        response["Access-Control-Allow-Methods"] = self.ALLOWED_METHODS
+        response["Access-Control-Allow-Headers"] = self.ALLOWED_HEADERS
+        response["Access-Control-Max-Age"] = "86400"
+        patch_vary_headers(response, ("Origin",))
+
+    def _is_allowed_origin(self, origin: str) -> bool:
+        allowed_origins = set(getattr(settings, "LIVIA_ALLOWED_WIDGET_ORIGINS", []))
+        if origin in allowed_origins:
+            return True
+        if getattr(settings, "DEBUG", False):
+            hostname = urlparse(origin).hostname or ""
+            return hostname in {"localhost", "127.0.0.1"}
+        return False

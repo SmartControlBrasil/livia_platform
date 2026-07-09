@@ -4,9 +4,26 @@ from django.http import HttpResponse
 def widget_js(request):
     content = """(function () {
   const currentScript = document.currentScript;
-  const tenant = currentScript ? currentScript.getAttribute("data-tenant") : "default";
+  const tenant = currentScript ? (currentScript.getAttribute("data-tenant") || "default") : "default";
   const sessionStorageKey = "livia_session_id_" + tenant;
-  const apiUrl = "/api/chat/";
+  const apiUrl = resolveApiUrl(currentScript);
+
+  function resolveApiUrl(scriptEl) {
+    if (scriptEl) {
+      const configuredUrl = scriptEl.getAttribute("data-api-url");
+      if (configuredUrl) {
+        return configuredUrl;
+      }
+      if (scriptEl.src) {
+        try {
+          return new URL("/api/chat/", scriptEl.src).href;
+        } catch (error) {
+          return "/api/chat/";
+        }
+      }
+    }
+    return "/api/chat/";
+  }
 
   function getSessionId() {
     try {
@@ -128,8 +145,23 @@ def widget_js(request):
     sendButton.type = "submit";
 
     const sessionId = getSessionId();
+    let assistantName = "Lívia";
     let typingIndicator = null;
     let isOpen = false;
+
+    function updateAssistantProfile(data) {
+      const nextName = String((data && data.assistant_name) || "").trim();
+      if (nextName && nextName !== assistantName) {
+        assistantName = nextName;
+        launcher.textContent = assistantName;
+        title.textContent = assistantName;
+      }
+      const initialMessage = String((data && data.initial_message) || "").trim();
+      const firstMessage = messages.querySelector(".livia-message.assistant");
+      if (initialMessage && firstMessage && firstMessage.textContent !== initialMessage) {
+        firstMessage.textContent = initialMessage;
+      }
+    }
 
     function openPanel() {
       panel.classList.add("livia-open");
@@ -184,6 +216,7 @@ def widget_js(request):
           },
           body: JSON.stringify({
             tenant: tenant,
+            session_key: sessionId,
             session_id: sessionId,
             message: message,
             source_page: window.location.href
@@ -195,6 +228,7 @@ def widget_js(request):
         });
 
         removeTyping();
+        updateAssistantProfile(data);
 
         if (!response.ok) {
           appendMessage(messages, "assistant", data.error || "Não consegui responder agora. Tente novamente em instantes.");

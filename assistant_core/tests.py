@@ -1,11 +1,11 @@
 import json
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from conversations.models import Conversation, Message
 from assistant_core.services import LiviaDecisionService
 from leads.models import LeadDraft
-from tenants.models import Tenant
+from tenants.models import AssistantProfile, Tenant
 
 
 class LiviaDecisionServiceTests(TestCase):
@@ -51,6 +51,65 @@ class ChatApiTests(TestCase):
             domain="smart-control-brasil.example",
             is_active=True,
         )
+
+    def test_chat_api_accepts_session_key_for_valid_tenant(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_key": "session-key-123",
+            "message": "Olá!",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["tenant"], self.tenant.slug)
+        self.assertEqual(response.json()["session_key"], "session-key-123")
+        self.assertTrue(Conversation.objects.filter(session_id="session-key-123").exists())
+
+    @override_settings(DEBUG=True, LIVIA_ALLOWED_WIDGET_ORIGINS=[])
+    def test_chat_api_options_allows_debug_localhost_origin(self):
+        response = self.client.options(
+            "/api/chat/",
+            HTTP_ORIGIN="http://localhost:3000",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type, authorization",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["Access-Control-Allow-Origin"], "http://localhost:3000")
+        self.assertIn("POST", response["Access-Control-Allow-Methods"])
+        self.assertIn("Content-Type", response["Access-Control-Allow-Headers"])
+        self.assertIn("Authorization", response["Access-Control-Allow-Headers"])
+
+    def test_chat_api_uses_active_assistant_profile(self):
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            name="Lívia Pitondo",
+            initial_message="Olá! Sou a Lívia da Pitondo. Como posso ajudar?",
+            tone="consultivo e direto",
+            primary_goal="qualificar oportunidades",
+            is_active=True,
+        )
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-profile",
+            "message": "Olá!",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["assistant_name"], "Lívia Pitondo")
+        self.assertEqual(response.json()["reply"], "Olá! Sou a Lívia da Pitondo. Como posso ajudar?")
+        self.assertEqual(response.json()["initial_message"], "Olá! Sou a Lívia da Pitondo. Como posso ajudar?")
 
     def test_chat_api_creates_conversation_and_messages(self):
         payload = {
@@ -126,6 +185,10 @@ class ChatApiTests(TestCase):
         self.assertEqual(lead_draft.status, LeadDraft.Status.DRAFT)
         self.assertIn("nome", response.json()["reply"].lower())
 
+    @override_settings(
+        SMART360_LEAD_DISPATCH_ENABLED=False,
+        SMART360_LEAD_DISPATCH_DRY_RUN=True,
+    )
     def test_chat_api_creates_lead_draft_when_contact_and_need_are_together(self):
         payload = {
             "tenant": self.tenant.slug,

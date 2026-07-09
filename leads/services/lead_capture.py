@@ -88,6 +88,7 @@ class LeadCaptureService:
                 else LeadDraft.Status.DRAFT
             )
         lead_draft.save()
+        self._sync_conversation(conversation, lead_draft)
 
         return LeadCaptureResult(
             lead_draft=lead_draft,
@@ -123,6 +124,31 @@ class LeadCaptureService:
 
     def _has_minimum_data(self, lead_draft: LeadDraft) -> bool:
         return self._has_name_or_company(lead_draft) and self._has_phone_or_email(lead_draft) and self._has_need_summary(lead_draft)
+
+    def _sync_conversation(self, conversation: Conversation, lead_draft: LeadDraft) -> None:
+        changed_fields: list[str] = []
+        field_values = {
+            "visitor_name": lead_draft.name or lead_draft.company,
+            "visitor_email": lead_draft.email,
+            "visitor_phone": lead_draft.phone,
+        }
+        for field_name, value in field_values.items():
+            if not hasattr(conversation, field_name):
+                continue
+            current_value = str(getattr(conversation, field_name, "") or "").strip()
+            next_value = str(value or "").strip()
+            if next_value and current_value != next_value:
+                setattr(conversation, field_name, next_value)
+                changed_fields.append(field_name)
+
+        if hasattr(conversation, "is_qualified"):
+            is_qualified = lead_draft.status == LeadDraft.Status.QUALIFIED
+            if conversation.is_qualified != is_qualified:
+                conversation.is_qualified = is_qualified
+                changed_fields.append("is_qualified")
+
+        if changed_fields:
+            conversation.save(update_fields=changed_fields + ["updated_at"])
 
     def _has_name_or_company(self, lead_draft: LeadDraft) -> bool:
         return bool(str(lead_draft.name or "").strip() or str(lead_draft.company or "").strip())

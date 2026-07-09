@@ -7,9 +7,13 @@ class WidgetTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/javascript; charset=utf-8")
-        self.assertIn("fetch", response.content.decode("utf-8"))
-        self.assertIn("left: 20px", response.content.decode("utf-8"))
-        self.assertNotIn("right: 20px", response.content.decode("utf-8"))
+        content = response.content.decode("utf-8")
+        self.assertIn("fetch", content)
+        self.assertIn('getAttribute("data-api-url")', content)
+        self.assertIn('new URL("/api/chat/", scriptEl.src).href', content)
+        self.assertIn("session_key: sessionId", content)
+        self.assertIn("left: 20px", content)
+        self.assertNotIn("right: 20px", content)
 
     def test_demo_page_loads_widget_script(self):
         response = self.client.get("/demo/")

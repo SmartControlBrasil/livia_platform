@@ -54,6 +54,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'config.middleware.LiviaWidgetCorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -132,3 +133,10 @@ SMART360_BASE_URL = config("SMART360_BASE_URL", default="")
 SMART360_M2M_TOKEN = config("SMART360_M2M_TOKEN", default="")
 SMART360_LEAD_DISPATCH_ENABLED = config("SMART360_LEAD_DISPATCH_ENABLED", default=False, cast=bool)
 SMART360_LEAD_DISPATCH_DRY_RUN = config("SMART360_LEAD_DISPATCH_DRY_RUN", default=True, cast=bool)
+
+
+LIVIA_ALLOWED_WIDGET_ORIGINS = [
+    origin.strip()
+    for origin in config("LIVIA_ALLOWED_WIDGET_ORIGINS", default="", cast=str).split(",")
+    if origin.strip()
+]

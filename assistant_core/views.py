@@ -1,8 +1,8 @@
 import json
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
 
 from conversations.models import Conversation, Message
 from tenants.models import Tenant
@@ -10,15 +10,20 @@ from .services import LiviaDecisionService
 
 
 @csrf_exempt
-@require_POST
 def chat_api(request):
+    if request.method == "OPTIONS":
+        return JsonResponse({}, status=204)
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+
     try:
         payload = json.loads(request.body.decode("utf-8"))
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON payload."}, status=400)
 
     tenant_slug = payload.get("tenant") or payload.get("tenant_id")
-    session_id = payload.get("session_id")
+    session_id = payload.get("session_key") or payload.get("session_id")
     user_message = payload.get("message")
     source_page = payload.get("source_page", "")
 
@@ -36,6 +41,13 @@ def chat_api(request):
     if tenant is None:
         return JsonResponse({"error": "Tenant not found or inactive."}, status=404)
 
+    try:
+        assistant_profile = tenant.assistant_profile
+    except ObjectDoesNotExist:
+        assistant_profile = None
+    if assistant_profile is not None and not assistant_profile.is_active:
+        assistant_profile = None
+
     conversation, _ = Conversation.objects.get_or_create(
         tenant=tenant,
         session_id=session_id,
@@ -48,6 +60,7 @@ def chat_api(request):
         history=history,
         current_message=user_message,
         conversation=conversation,
+        assistant_profile=assistant_profile,
     )
     Message.objects.create(
         conversation=conversation,
@@ -66,7 +79,14 @@ def chat_api(request):
         {
             "tenant": tenant.slug,
             "session_id": session_id,
+            "session_key": session_id,
             "reply": assistant_reply,
             "intent": decision.intent,
+            "assistant_name": getattr(assistant_profile, "name", "Lívia"),
+            "initial_message": getattr(
+                assistant_profile,
+                "initial_message",
+                "Olá! Sou a Lívia. Como posso te ajudar?",
+            ),
         }
     )

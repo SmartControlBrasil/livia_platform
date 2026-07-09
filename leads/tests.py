@@ -93,6 +93,19 @@ class LeadCaptureServiceTests(TestCase):
         self.assertTrue(result.is_qualified)
         self.assertEqual(result.lead_draft.status, LeadDraft.Status.QUALIFIED)
 
+    def test_updates_conversation_visitor_fields_when_data_is_captured(self):
+        self.service.capture_from_message(
+            conversation=self.conversation,
+            message="Sou Maria da ACME, meu email é maria@exemplo.com, telefone 11999998888 e preciso de automação industrial.",
+            history=[],
+        )
+
+        self.conversation.refresh_from_db()
+        self.assertEqual(self.conversation.visitor_name, "Maria da ACME")
+        self.assertEqual(self.conversation.visitor_email, "maria@exemplo.com")
+        self.assertEqual(self.conversation.visitor_phone, "11999998888")
+        self.assertTrue(self.conversation.is_qualified)
+
     def test_missing_fields_when_partial_data(self):
         result = self.service.capture_from_message(
             conversation=self.conversation,

@@ -18,6 +18,28 @@ class LiviaReply:
     reply: str
 
 
+@dataclass(frozen=True)
+class AssistantProfileContext:
+    name: str = "Lívia"
+    initial_message: str = "Olá! Sou a Lívia. Como posso te ajudar?"
+    tone: str = "consultivo, claro e profissional"
+    primary_goal: str = "qualificar leads"
+
+    @classmethod
+    def from_profile(cls, profile) -> "AssistantProfileContext":
+        if profile is None:
+            return cls()
+        return cls(
+            name=str(getattr(profile, "name", "") or "Lívia").strip() or "Lívia",
+            initial_message=str(
+                getattr(profile, "initial_message", "")
+                or "Olá! Sou a Lívia. Como posso te ajudar?"
+            ).strip(),
+            tone=str(getattr(profile, "tone", "") or cls.tone).strip(),
+            primary_goal=str(getattr(profile, "primary_goal", "") or cls.primary_goal).strip(),
+        )
+
+
 class LiviaDecisionService:
     def __init__(
         self,
@@ -32,7 +54,9 @@ class LiviaDecisionService:
         history: Iterable[dict[str, str]],
         current_message: str,
         conversation=None,
+        assistant_profile=None,
     ) -> LiviaReply:
+        profile_context = AssistantProfileContext.from_profile(assistant_profile)
         classification = classify_message(current_message)
         intent = classification["intent"]
         has_commercial_interest = bool(classification.get("has_commercial_interest"))
@@ -41,7 +65,7 @@ class LiviaDecisionService:
         has_technical_question = bool(classification.get("has_technical_question"))
 
         if intent == "greeting":
-            return LiviaReply(intent=intent, reply=build_contextual_reply(intent="greeting"))
+            return LiviaReply(intent=intent, reply=profile_context.initial_message)
         if intent == "technical_question":
             return LiviaReply(intent=intent, reply=build_contextual_reply(intent="technical_question"))
         if intent == "support_request":
