@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from assistant_core.discovery import classify_message
+from assistant_core.discovery import analyze_message
 from assistant_core.prompts import (
     DEFAULT_REPLY,
     build_contextual_reply,
 )
 from assistant_core.qualification import has_basic_contact
-from assistant_core.state import can_start_new_cycle, should_lock_lead
+from assistant_core.state import LeadState, can_start_new_cycle, set_state, should_lock_lead
 from leads.services import CRMDispatchService, LeadCaptureService
 
 
@@ -58,27 +58,27 @@ class LiviaDecisionService:
         assistant_profile=None,
     ) -> LiviaReply:
         profile_context = AssistantProfileContext.from_profile(assistant_profile)
-        classification = classify_message(current_message)
-        intent = classification["intent"]
-        has_commercial_interest = bool(classification.get("has_commercial_interest"))
-        has_quote_request = bool(classification.get("has_quote_request"))
-        has_support_request = bool(classification.get("has_support_request"))
-        has_technical_question = bool(classification.get("has_technical_question"))
+        discovery = analyze_message(current_message)
+        classification = discovery.to_dict()
+        intent = discovery.intent
+        has_commercial_interest = bool(discovery.has_commercial_interest)
+        has_quote_request = bool(discovery.has_quote_request)
+        has_support_request = bool(discovery.has_support_request)
+        has_technical_question = bool(discovery.has_technical_question)
 
         if intent == "greeting":
             return LiviaReply(intent=intent, reply=profile_context.initial_message)
         if intent == "technical_question":
+            if discovery.should_ask_discovery_question and discovery.suggested_next_question:
+                return self._ask_discovery_question(discovery, conversation)
             return LiviaReply(intent=intent, reply=build_contextual_reply(intent="technical_question"))
         if intent == "support_request":
             return LiviaReply(intent=intent, reply=build_contextual_reply(intent="support_request"))
-        if intent == "quote_request":
-            return self._handle_qualification(
-                intent=intent,
-                history=history,
-                current_message=current_message,
-                conversation=conversation,
-            )
-        if intent == "commercial_interest":
+        if intent in {"quote_request", "commercial_interest"}:
+            if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
+                return self._locked_lead_reply(intent)
+            if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
+                return self._ask_discovery_question(discovery, conversation)
             return self._handle_qualification(
                 intent=intent,
                 history=history,
@@ -98,6 +98,10 @@ class LiviaDecisionService:
                 reply=build_contextual_reply(intent="contact_data"),
             )
         if has_basic_contact(current_message) and (has_commercial_interest or has_quote_request):
+            if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
+                return self._locked_lead_reply("contact_data")
+            if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
+                return self._ask_discovery_question(discovery, conversation)
             return self._handle_qualification(
                 intent="contact_data",
                 history=history,
@@ -109,6 +113,19 @@ class LiviaDecisionService:
         if self._is_followup_from_history(history):
             return LiviaReply(intent="followup", reply="Perfeito. Me conte um pouco mais sobre o contexto para eu te orientar.")
         return LiviaReply(intent=intent, reply=DEFAULT_REPLY)
+
+    def _locked_lead_reply(self, intent: str) -> LiviaReply:
+        return LiviaReply(
+            intent=intent,
+            reply="Perfeito, já encaminhei seus dados para sequência do atendimento. Se for uma nova demanda, me diga que é um novo pedido.",
+        )
+
+    def _ask_discovery_question(self, discovery, conversation) -> LiviaReply:
+        if conversation is not None:
+            next_state = LeadState.COLLECT_NEED if discovery.intent in {"quote_request", "commercial_interest"} else LeadState.DISCOVERY
+            set_state(conversation, next_state)
+        reply = discovery.suggested_next_question or "Entendi. Me conta um pouco mais do contexto para eu te orientar melhor."
+        return LiviaReply(intent=discovery.intent, reply=reply)
 
     def _is_followup_from_history(self, history: Iterable[dict[str, str]]) -> bool:
         messages = list(history or [])

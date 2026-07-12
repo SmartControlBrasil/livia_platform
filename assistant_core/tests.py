@@ -165,6 +165,109 @@ class ChatApiTests(TestCase):
         self.assertEqual(lead_draft.status, LeadDraft.Status.DRAFT)
         self.assertIn("nome", response.json()["reply"].lower())
 
+    def test_chat_api_vague_budget_asks_area_before_contact(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-discovery-budget",
+            "message": "Quero orçamento",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(LeadDraft.objects.count(), 0)
+        self.assertIn("automação", response.json()["reply"].lower())
+        self.assertIn("robótica", response.json()["reply"].lower())
+        conversation = Conversation.objects.get(session_id="session-discovery-budget")
+        self.assertEqual(conversation.lead_state, LeadState.COLLECT_NEED)
+
+    def test_chat_api_budget_for_clp_identifies_automation_and_collects(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-clp",
+            "message": "Preciso de orçamento para CLP Mitsubishi",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["intent"], "quote_request")
+        self.assertEqual(LeadDraft.objects.count(), 1)
+        lead_draft = LeadDraft.objects.get()
+        self.assertIn("clp", lead_draft.need_summary.lower())
+        self.assertIn("nome", response.json()["reply"].lower())
+        conversation = Conversation.objects.get(session_id="session-clp")
+        self.assertEqual(conversation.lead_state, LeadState.COLLECT_NAME_COMPANY)
+
+    def test_chat_api_robotics_interest_asks_environment(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-robotics",
+            "message": "Vocês têm robô de limpeza?",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["intent"], "commercial_interest")
+        self.assertEqual(LeadDraft.objects.count(), 0)
+        self.assertIn("academia", response.json()["reply"].lower())
+        self.assertIn("hospital", response.json()["reply"].lower())
+
+    def test_chat_api_maintenance_interest_asks_technical_context(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-maintenance",
+            "message": "Preciso arrumar uma esteira",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(LeadDraft.objects.count(), 0)
+        self.assertIn("esteira", response.json()["reply"].lower())
+        self.assertIn("problema", response.json()["reply"].lower())
+
+    def test_chat_api_software_web_interest_is_identified(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-software-web",
+            "message": "Quero um site com IA",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["intent"], "commercial_interest")
+        self.assertEqual(LeadDraft.objects.count(), 1)
+        lead_draft = LeadDraft.objects.get()
+        self.assertIn("site", lead_draft.need_summary.lower())
+
     def test_chat_api_creates_lead_draft_on_commercial_interest(self):
         payload = {
             "tenant": self.tenant.slug,
@@ -287,6 +390,24 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(LeadDraft.objects.count(), 0)
         self.assertEqual(response.json()["intent"], "support_request")
+
+    def test_chat_api_login_question_is_support_and_does_not_create_lead(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-login-support",
+            "message": "Como faço login?",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["intent"], "support_request")
+        self.assertEqual(LeadDraft.objects.count(), 0)
 
     def test_chat_api_does_not_create_lead_draft_on_greeting(self):
         payload = {
