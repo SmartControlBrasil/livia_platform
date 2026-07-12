@@ -32,6 +32,7 @@ class LeadIngestContractsTests(SimpleTestCase):
                 "phone": "+5511999999999",
                 "city": "São Paulo",
                 "need_summary": "Quero melhorar o atendimento",
+                "notes": "",
                 "source_page": "https://example.com/landing",
                 "conversation_id": "conv-123",
             },
@@ -64,6 +65,7 @@ class Smart360GrowthClientTests(SimpleTestCase):
         self.assertEqual(response.status_code, 202)
         self.assertIn("dry_run ativo", response.message)
         self.assertEqual(response.data["payload"]["tenant_slug"], "smart-control-brasil")
+        self.assertIn("notes", response.data["payload"])
         self.assertEqual(
             response.data["endpoint"],
             "https://smart360.example/api/v1/growth/leads/ingest/",

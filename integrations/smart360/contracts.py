@@ -13,6 +13,7 @@ class LeadIngestPayload:
     phone: str = ""
     city: str = ""
     need_summary: str = ""
+    notes: str = ""
     source_page: str = ""
     conversation_id: str = ""
 

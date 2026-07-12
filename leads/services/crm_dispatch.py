@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from django.conf import settings
 from django.utils import timezone
 
+from assistant_core.summary import build_conversation_summary, format_conversation_summary_notes
 from integrations.smart360.client import Smart360GrowthClient
 from integrations.smart360.contracts import LeadIngestPayload
 
@@ -115,6 +116,11 @@ class CRMDispatchService:
 
     def build_payload(self, lead_draft: LeadDraft) -> LeadIngestPayload:
         conversation = lead_draft.conversation
+        summary_notes = ""
+        if conversation is not None:
+            summary_notes = format_conversation_summary_notes(
+                build_conversation_summary(conversation, lead_draft=lead_draft)
+            )
         return LeadIngestPayload(
             tenant_slug=lead_draft.tenant.slug,
             name=lead_draft.name,
@@ -123,6 +129,7 @@ class CRMDispatchService:
             phone=lead_draft.phone,
             city=lead_draft.city,
             need_summary=lead_draft.need_summary,
+            notes=summary_notes,
             source_page=conversation.source_page if conversation else "",
             conversation_id=str(conversation.session_id if conversation else lead_draft.id),
         )

@@ -1,11 +1,12 @@
 from django.test import TestCase, override_settings
 from unittest.mock import Mock, patch
 
-from conversations.models import Conversation
+from conversations.models import Conversation, Message
 from leads.models import LeadDraft
 from leads.services.crm_dispatch import CRMDispatchService
 from leads.services import LeadCaptureService
 from assistant_core.state import LeadState
+from assistant_core.summary import build_conversation_summary, format_conversation_summary_notes
 from integrations.smart360.contracts import LeadIngestResponse
 from tenants.models import Tenant
 
@@ -215,6 +216,120 @@ class LeadCaptureServiceTests(TestCase):
         self.assertEqual(self.conversation.lead_state, LeadState.QUALIFIED)
 
 
+class ConversationSummaryTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Smart Control Brasil",
+            slug="smart-control-brasil",
+            domain="smart-control-brasil.example",
+            is_active=True,
+        )
+
+    def _conversation(self, session_id="summary-session", source_page="https://example.com/origem"):
+        return Conversation.objects.create(
+            tenant=self.tenant,
+            session_id=session_id,
+            source_page=source_page,
+        )
+
+    def _lead(self, conversation, need_summary):
+        return LeadDraft.objects.create(
+            tenant=self.tenant,
+            conversation=conversation,
+            name="Maria",
+            company="ACME",
+            phone="11999998888",
+            email="maria@exemplo.com",
+            city="São Paulo",
+            need_summary=need_summary,
+            status=LeadDraft.Status.QUALIFIED,
+        )
+
+    def test_build_conversation_summary_with_automation_lead(self):
+        conversation = self._conversation()
+        Message.objects.create(conversation=conversation, role=Message.Role.USER, content="Preciso de orçamento para CLP Mitsubishi.")
+        lead = self._lead(conversation, "Preciso de orçamento para CLP Mitsubishi.")
+
+        summary = build_conversation_summary(conversation, lead)
+        notes = format_conversation_summary_notes(summary)
+
+        self.assertEqual(summary.service_area, "automation")
+        self.assertIn("CLP", summary.products_or_services)
+        self.assertIn("smart-control-brasil", notes)
+        self.assertIn("https://example.com/origem", notes)
+        self.assertIn("telefone", notes)
+        self.assertIn("e-mail", notes)
+
+    def test_build_conversation_summary_with_robotics_lead(self):
+        conversation = self._conversation("summary-robotics")
+        Message.objects.create(conversation=conversation, role=Message.Role.USER, content="Quero robô de limpeza para condomínio.")
+        lead = self._lead(conversation, "Quero robô de limpeza para condomínio.")
+
+        summary = build_conversation_summary(conversation, lead)
+
+        self.assertEqual(summary.service_area, "robotics")
+        self.assertIn("robô de limpeza", summary.products_or_services)
+        self.assertIn("ambiente", summary.recommended_next_step.lower())
+
+    def test_build_conversation_summary_with_maintenance_lead(self):
+        conversation = self._conversation("summary-maintenance")
+        Message.objects.create(conversation=conversation, role=Message.Role.USER, content="Minha esteira da academia parou e preciso de visita técnica.")
+        lead = self._lead(conversation, "Minha esteira da academia parou e preciso de visita técnica.")
+
+        summary = build_conversation_summary(conversation, lead)
+
+        self.assertEqual(summary.service_area, "maintenance")
+        self.assertEqual(summary.urgency, "alta")
+        self.assertIn("esteira", summary.products_or_services)
+        self.assertIn("visita técnica", summary.recommended_next_step.lower())
+
+    def test_build_conversation_summary_with_software_web_lead(self):
+        conversation = self._conversation("summary-software")
+        Message.objects.create(conversation=conversation, role=Message.Role.USER, content="Quero um site com IA e dashboard comercial.")
+        lead = self._lead(conversation, "Quero um site com IA e dashboard comercial.")
+
+        summary = build_conversation_summary(conversation, lead)
+
+        self.assertEqual(summary.service_area, "software_web")
+        self.assertIn("site", summary.products_or_services)
+        self.assertIn("dashboard", summary.products_or_services)
+
+    def test_summary_omits_empty_collected_fields(self):
+        conversation = self._conversation("summary-partial")
+        lead = LeadDraft.objects.create(
+            tenant=self.tenant,
+            conversation=conversation,
+            name="Maria",
+            need_summary="Quero orçamento para sistema web.",
+            status=LeadDraft.Status.DRAFT,
+        )
+
+        summary = build_conversation_summary(conversation, lead)
+        notes = format_conversation_summary_notes(summary)
+
+        self.assertIn("nome", summary.collected_fields)
+        self.assertNotIn("telefone", summary.collected_fields)
+        self.assertIn("Dados coletados: nome", notes)
+
+    def test_summary_does_not_break_without_lead_draft(self):
+        conversation = self._conversation("summary-no-lead")
+        Message.objects.create(conversation=conversation, role=Message.Role.USER, content="Tenho interesse em automação industrial.")
+
+        summary = build_conversation_summary(conversation)
+        notes = format_conversation_summary_notes(summary)
+
+        self.assertEqual(summary.tenant_slug, "smart-control-brasil")
+        self.assertIn("nenhum dado validado", notes)
+
+    def test_summary_does_not_break_with_few_messages(self):
+        conversation = self._conversation("summary-few")
+
+        summary = build_conversation_summary(conversation)
+
+        self.assertEqual(summary.need_summary, "Necessidade ainda em detalhamento com a Lívia.")
+        self.assertEqual(summary.conversation_notes, tuple())
+
+
 class CRMDispatchServiceTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(
@@ -252,6 +367,9 @@ class CRMDispatchServiceTests(TestCase):
         self.assertEqual(payload.phone, "11999998888")
         self.assertEqual(payload.city, "São Paulo")
         self.assertEqual(payload.need_summary, "Preciso de automação industrial.")
+        self.assertIn("Resumo da Lívia", payload.notes)
+        self.assertIn("Interesse: automação", payload.notes)
+        self.assertIn("smart-control-brasil", payload.notes)
         self.assertEqual(payload.source_page, "https://example.com/demo")
         self.assertEqual(payload.conversation_id, "session-crm")
 
@@ -281,6 +399,8 @@ class CRMDispatchServiceTests(TestCase):
         self.assertEqual(self.lead_draft.crm_external_id, "dry-run-smart-control-brasil-session-crm")
         self.assertIsNotNone(self.lead_draft.sent_to_crm_at)
         client.ingest_lead.assert_called_once()
+        sent_payload = client.ingest_lead.call_args.args[0]
+        self.assertIn("Resumo da Lívia", sent_payload.notes)
         joined_logs = "\n".join(logs.output)
         self.assertIn("event=crm_dispatch_attempt", joined_logs)
         self.assertIn("event=crm_dispatch_success_dry_run", joined_logs)
