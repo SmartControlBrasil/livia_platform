@@ -9,6 +9,7 @@ from assistant_core.prompts import (
     build_contextual_reply,
 )
 from assistant_core.qualification import has_basic_contact
+from assistant_core.state import can_start_new_cycle, should_lock_lead
 from leads.services import CRMDispatchService, LeadCaptureService
 
 
@@ -128,6 +129,11 @@ class LiviaDecisionService:
     ) -> LiviaReply:
         if conversation is None:
             return LiviaReply(intent=intent, reply=build_contextual_reply(intent=intent))
+        if should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
+            return LiviaReply(
+                intent=intent,
+                reply="Perfeito, já encaminhei seus dados para sequência do atendimento. Se for uma nova demanda, me diga que é um novo pedido.",
+            )
 
         result = self.lead_capture_service.capture_from_message(
             conversation=conversation,
@@ -136,7 +142,7 @@ class LiviaDecisionService:
         )
         if result.is_qualified:
             self.crm_dispatch_service.dispatch_if_qualified(result.lead_draft)
-        reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields, intent=intent)
+        reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields, intent=intent, invalid_fields=result.invalid_fields)
         if result.is_qualified:
             reply = build_contextual_reply(intent=intent, missing_fields=[])
         return LiviaReply(intent=intent, reply=reply)
@@ -150,4 +156,6 @@ class LiviaDecisionService:
         if has_commercial_interest or has_quote_request:
             return True
         text = str(current_message or "").strip().lower()
-        return bool(text and has_basic_contact(current_message) and any(marker in text for marker in ("preciso", "quero", "orçamento", "orcamento", "proposta", "sistema", "solução", "solucao")))
+        if not text or not has_basic_contact(current_message):
+            return False
+        return True

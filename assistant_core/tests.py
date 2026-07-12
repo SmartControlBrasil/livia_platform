@@ -3,6 +3,7 @@ import json
 from django.test import TestCase, override_settings
 
 from conversations.models import Conversation, Message
+from assistant_core.state import LeadState
 from assistant_core.services import LiviaDecisionService
 from leads.models import LeadDraft
 from tenants.models import AssistantProfile, Tenant
@@ -185,6 +186,45 @@ class ChatApiTests(TestCase):
         self.assertEqual(lead_draft.status, LeadDraft.Status.DRAFT)
         self.assertIn("nome", response.json()["reply"].lower())
 
+    def test_chat_api_transitions_to_collect_name_company_on_commercial_intent(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-state-1",
+            "message": "Quero orçamento para um sistema de atendimento ao cliente.",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        conversation = Conversation.objects.get(session_id="session-state-1")
+        self.assertEqual(conversation.lead_state, LeadState.COLLECT_NAME_COMPANY)
+        self.assertFalse(conversation.is_qualified)
+
+    def test_chat_api_phone_without_need_creates_draft_and_asks_need(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-phone-only",
+            "message": "11999999999",
+            "source_page": "https://example.com/pagina",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(LeadDraft.objects.count(), 1)
+        lead_draft = LeadDraft.objects.get()
+        self.assertEqual(lead_draft.phone, "11999999999")
+        self.assertIn("necessidade", response.json()["reply"].lower())
+
     @override_settings(
         SMART360_LEAD_DISPATCH_ENABLED=False,
         SMART360_LEAD_DISPATCH_DRY_RUN=True,
@@ -265,6 +305,45 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(LeadDraft.objects.count(), 0)
         self.assertEqual(response.json()["intent"], "greeting")
+
+    @override_settings(
+        SMART360_LEAD_DISPATCH_ENABLED=False,
+        SMART360_LEAD_DISPATCH_DRY_RUN=True,
+    )
+    def test_chat_api_does_not_dispatch_duplicate_for_already_qualified_lead(self):
+        first_payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-no-duplicate",
+            "message": "Sou Maria da ACME, meu telefone é 11999998888 e quero orçamento para automação industrial de atendimento.",
+            "source_page": "https://example.com/pagina",
+        }
+        first_response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(first_payload),
+            content_type="application/json",
+        )
+        self.assertEqual(first_response.status_code, 200)
+        lead_draft = LeadDraft.objects.get()
+        first_external_id = lead_draft.crm_external_id
+        self.assertEqual(lead_draft.status, LeadDraft.Status.SENT_TO_CRM)
+
+        second_payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "session-no-duplicate",
+            "message": "Quero orçamento de novo",
+            "source_page": "https://example.com/pagina",
+        }
+        second_response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(second_payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(LeadDraft.objects.count(), 1)
+        lead_draft.refresh_from_db()
+        self.assertEqual(lead_draft.crm_external_id, first_external_id)
+        self.assertIn("já encaminhei", second_response.json()["reply"].lower())
 
     def test_chat_api_does_not_force_lead_on_ambiguous_message(self):
         payload = {

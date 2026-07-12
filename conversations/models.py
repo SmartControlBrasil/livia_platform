@@ -4,6 +4,15 @@ from tenants.models import Tenant
 
 
 class Conversation(models.Model):
+    class LeadState(models.TextChoices):
+        DISCOVERY = "discovery", "Discovery"
+        OFFER_HANDOFF = "offer_handoff", "Offer handoff"
+        COLLECT_NEED = "collect_need", "Collect need"
+        COLLECT_NAME_COMPANY = "collect_name_company", "Collect name/company"
+        COLLECT_CONTACT = "collect_contact", "Collect contact"
+        QUALIFIED = "qualified", "Qualified"
+        CLOSED = "closed", "Closed"
+
     tenant = models.ForeignKey(
         Tenant,
         on_delete=models.CASCADE,
@@ -15,6 +24,11 @@ class Conversation(models.Model):
     visitor_phone = models.CharField(max_length=40, blank=True)
     source_page = models.URLField(blank=True)
     is_qualified = models.BooleanField(default=False)
+    lead_state = models.CharField(
+        max_length=40,
+        choices=LeadState.choices,
+        default=LeadState.DISCOVERY,
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

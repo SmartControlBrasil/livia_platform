@@ -5,6 +5,7 @@ from conversations.models import Conversation
 from leads.models import LeadDraft
 from leads.services.crm_dispatch import CRMDispatchService
 from leads.services import LeadCaptureService
+from assistant_core.state import LeadState
 from integrations.smart360.contracts import LeadIngestResponse
 from tenants.models import Tenant
 
@@ -27,7 +28,7 @@ class LeadCaptureServiceTests(TestCase):
     def test_extracts_email_and_phone(self):
         result = self.service.capture_from_message(
             conversation=self.conversation,
-            message="Quero orçamento. Meu email é maria@exemplo.com e meu WhatsApp é +55 (11) 99999-8888",
+            message="Quero orçamento para um sistema de atendimento. Meu email é maria@exemplo.com e meu WhatsApp é +55 (11) 99999-8888",
             history=[],
         )
 
@@ -117,6 +118,101 @@ class LeadCaptureServiceTests(TestCase):
         self.assertIn("need_summary", result.missing_fields)
         self.assertIn("name_or_company", result.missing_fields)
         self.assertIn("phone_or_email", result.missing_fields)
+
+    def test_conversation_initial_state_is_discovery(self):
+        self.assertEqual(self.conversation.lead_state, LeadState.DISCOVERY)
+
+    def test_does_not_qualify_with_vague_need(self):
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="Sou Maria, meu telefone é 11999998888 e quero orçamento.",
+            history=[],
+        )
+
+        self.assertFalse(result.is_qualified)
+        self.assertEqual(result.lead_draft.status, LeadDraft.Status.DRAFT)
+        self.assertIn("need_summary", result.missing_fields)
+
+    def test_rejects_generic_name(self):
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="Meu nome é teste",
+            history=[],
+        )
+
+        self.assertEqual(result.lead_draft.name, "")
+        self.assertIn("name", result.invalid_fields)
+        reply = self.service.build_next_prompt(result.lead_draft, result.missing_fields, invalid_fields=result.invalid_fields)
+        self.assertIn("nome real", reply.lower())
+
+    def test_rejects_generic_company(self):
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="A empresa é empresa",
+            history=[],
+        )
+
+        self.assertEqual(result.lead_draft.company, "")
+        self.assertIn("company", result.invalid_fields)
+
+    def test_rejects_short_phone(self):
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="999",
+            history=[],
+        )
+
+        self.assertEqual(result.lead_draft.phone, "")
+        self.assertIn("phone", result.invalid_fields)
+        reply = self.service.build_next_prompt(result.lead_draft, result.missing_fields, invalid_fields=result.invalid_fields)
+        self.assertIn("ddd", reply.lower())
+
+    def test_accepts_br_phone_with_ddd(self):
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="11999999999",
+            history=[],
+        )
+
+        self.assertEqual(result.lead_draft.phone, "11999999999")
+        self.assertNotIn("phone", result.invalid_fields)
+
+    def test_rejects_invalid_email(self):
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="Meu email é maria@",
+            history=[],
+        )
+
+        self.assertEqual(result.lead_draft.email, "")
+        self.assertIn("email", result.invalid_fields)
+
+    def test_does_not_overwrite_valid_data_with_invalid_data(self):
+        lead_draft = self.service.get_or_create_lead_draft(self.conversation)
+        lead_draft.name = "Maria"
+        lead_draft.phone = "11999998888"
+        lead_draft.save(update_fields=["name", "phone"])
+
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="Meu nome é teste e telefone 999",
+            history=[],
+        )
+
+        self.assertEqual(result.lead_draft.name, "Maria")
+        self.assertEqual(result.lead_draft.phone, "11999998888")
+
+    def test_marks_conversation_qualified_and_state_qualified(self):
+        result = self.service.capture_from_message(
+            conversation=self.conversation,
+            message="Sou Maria da ACME, meu telefone é 11999998888 e preciso de automação industrial para atendimento.",
+            history=[],
+        )
+
+        self.assertTrue(result.is_qualified)
+        self.conversation.refresh_from_db()
+        self.assertTrue(self.conversation.is_qualified)
+        self.assertEqual(self.conversation.lead_state, LeadState.QUALIFIED)
 
 
 class CRMDispatchServiceTests(TestCase):
