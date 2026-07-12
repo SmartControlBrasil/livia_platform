@@ -22,12 +22,39 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-i4q=-e&vp)$auv-28366wydc_pjl98w*!%0bsg_i9^y3&7@ypk'
+def _cast_env_value(value, cast):
+    if cast is bool:
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+    if cast is str:
+        return str(value)
+    return cast(value)
+
+
+def env_first(*names: str, default="", cast=str):
+    for name in names:
+        value = config(name, default="", cast=str)
+        if str(value).strip() != "":
+            return _cast_env_value(value, cast)
+    return default
+
+
+def csv_env(*names: str, default: str = "") -> list[str]:
+    raw_value = env_first(*names, default=default, cast=str)
+    return [item.strip() for item in str(raw_value or "").split(",") if item.strip()]
+
+
+SECRET_KEY = env_first(
+    "DJANGO_SECRET_KEY",
+    "SECRET_KEY",
+    default="django-insecure-local-dev-only-change-me",
+    cast=str,
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_first("DJANGO_DEBUG", "DEBUG", default=True, cast=bool)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = csv_env("DJANGO_ALLOWED_HOSTS", "ALLOWED_HOSTS", default="127.0.0.1,localhost")
+CSRF_TRUSTED_ORIGINS = csv_env("DJANGO_CSRF_TRUSTED_ORIGINS", "CSRF_TRUSTED_ORIGINS", default="")
 
 
 # Application definition
@@ -115,9 +142,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'pt-br'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'America/Sao_Paulo'
 
 USE_I18N = True
 
@@ -127,7 +154,10 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 SMART360_BASE_URL = config("SMART360_BASE_URL", default="")
 SMART360_M2M_TOKEN = config("SMART360_M2M_TOKEN", default="")
@@ -135,8 +165,25 @@ SMART360_LEAD_DISPATCH_ENABLED = config("SMART360_LEAD_DISPATCH_ENABLED", defaul
 SMART360_LEAD_DISPATCH_DRY_RUN = config("SMART360_LEAD_DISPATCH_DRY_RUN", default=True, cast=bool)
 
 
-LIVIA_ALLOWED_WIDGET_ORIGINS = [
-    origin.strip()
-    for origin in config("LIVIA_ALLOWED_WIDGET_ORIGINS", default="", cast=str).split(",")
-    if origin.strip()
-]
+LIVIA_ALLOWED_WIDGET_ORIGINS = csv_env("LIVIA_ALLOWED_WIDGET_ORIGINS", default="")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {
+            "format": "%(levelname)s %(name)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+    },
+    "loggers": {
+        "assistant_core": {"handlers": ["console"], "level": "INFO"},
+        "leads": {"handlers": ["console"], "level": "INFO"},
+        "integrations": {"handlers": ["console"], "level": "INFO"},
+    },
+}

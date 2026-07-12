@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 
 class WidgetTests(TestCase):
@@ -20,3 +20,28 @@ class WidgetTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('/widget.js" data-tenant="smart-control-brasil"', response.content.decode("utf-8"))
+
+
+class WidgetCorsMiddlewareTests(TestCase):
+    @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
+    def test_chat_options_allows_configured_origin(self):
+        response = self.client.options(
+            "/api/chat/",
+            HTTP_ORIGIN="https://www.smartcontrolbrasil.com.br",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["Access-Control-Allow-Origin"], "https://www.smartcontrolbrasil.com.br")
+        self.assertIn("POST", response["Access-Control-Allow-Methods"])
+
+    @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
+    def test_chat_options_does_not_allow_unknown_origin(self):
+        response = self.client.options(
+            "/api/chat/",
+            HTTP_ORIGIN="https://evil.example",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertNotIn("Access-Control-Allow-Origin", response)
