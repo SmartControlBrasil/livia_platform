@@ -18,7 +18,9 @@ class KnowledgeDocument(models.Model):
     title = models.CharField(max_length=180)
     slug = models.SlugField(max_length=120)
     content = models.TextField(blank=True)
+    source_type = models.CharField(max_length=40, default="manual")
     source_url = models.URLField(blank=True)
+    tags = models.JSONField(default=list, blank=True)
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
@@ -36,6 +38,10 @@ class KnowledgeDocument(models.Model):
                 name="unique_knowledge_document_per_tenant_slug",
             )
         ]
+
+    @property
+    def is_active(self):
+        return self.status == self.Status.ACTIVE
 
     def __str__(self):
         return f"{self.title} / {self.tenant.slug}"

@@ -483,3 +483,42 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(LeadDraft.objects.count(), 0)
         self.assertEqual(response.json()["intent"], "unknown")
+
+
+class LiviaDecisionKnowledgeTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Smart Control Brasil",
+            slug="smart-control-brasil",
+            domain="smartcontrolbrasil.com.br",
+        )
+        self.service = LiviaDecisionService()
+
+    def test_livia_decision_uses_knowledge_when_available(self):
+        from knowledge_base.models import KnowledgeDocument
+
+        KnowledgeDocument.objects.create(
+            tenant=self.tenant,
+            title="HygiBot / robô de limpeza",
+            slug="hygibot-robo-limpeza",
+            content="HygiBot é uma solução de robótica de limpeza para grandes áreas e ambientes profissionais.",
+            tags=["robotics", "xyron", "hygibot", "limpeza", "robo"],
+        )
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="knowledge-session")
+
+        decision = self.service.generate_reply([], "Vocês têm robô de limpeza?", conversation=conversation)
+
+        self.assertEqual(decision.intent, "commercial_interest")
+        self.assertIn("HygiBot", decision.reply)
+        self.assertIn("ambientes profissionais", decision.reply)
+        self.assertIn("ambiente", decision.reply.lower())
+
+    def test_livia_decision_keeps_current_reply_without_knowledge(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="no-knowledge-session")
+
+        decision = self.service.generate_reply([], "Vocês têm robô de limpeza?", conversation=conversation)
+
+        self.assertEqual(decision.intent, "commercial_interest")
+        self.assertNotIn("HygiBot", decision.reply)
+        self.assertIn("academia", decision.reply.lower())
+        self.assertIn("hospital", decision.reply.lower())

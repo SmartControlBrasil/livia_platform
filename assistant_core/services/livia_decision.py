@@ -11,6 +11,7 @@ from assistant_core.prompts import (
 from assistant_core.qualification import has_basic_contact
 from assistant_core.state import LeadState, can_start_new_cycle, set_state, should_lock_lead
 from leads.services import CRMDispatchService, LeadCaptureService
+from knowledge_base.rag.context_builder import build_knowledge_context
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,13 @@ class LiviaDecisionService:
         discovery = analyze_message(current_message)
         classification = discovery.to_dict()
         intent = discovery.intent
+        tenant = getattr(conversation, "tenant", None)
+        knowledge_context = build_knowledge_context(
+            tenant,
+            current_message,
+            service_area=discovery.service_area,
+            limit=2,
+        ) if tenant is not None else ""
         has_commercial_interest = bool(discovery.has_commercial_interest)
         has_quote_request = bool(discovery.has_quote_request)
         has_support_request = bool(discovery.has_support_request)
@@ -70,15 +78,16 @@ class LiviaDecisionService:
             return LiviaReply(intent=intent, reply=profile_context.initial_message)
         if intent == "technical_question":
             if discovery.should_ask_discovery_question and discovery.suggested_next_question:
-                return self._ask_discovery_question(discovery, conversation)
-            return LiviaReply(intent=intent, reply=build_contextual_reply(intent="technical_question"))
+                return self._ask_discovery_question(discovery, conversation, knowledge_context=knowledge_context)
+            reply = build_contextual_reply(intent="technical_question")
+            return LiviaReply(intent=intent, reply=self._with_knowledge(reply, knowledge_context))
         if intent == "support_request":
             return LiviaReply(intent=intent, reply=build_contextual_reply(intent="support_request"))
         if intent in {"quote_request", "commercial_interest"}:
             if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
                 return self._locked_lead_reply(intent)
             if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
-                return self._ask_discovery_question(discovery, conversation)
+                return self._ask_discovery_question(discovery, conversation, knowledge_context=knowledge_context)
             return self._handle_qualification(
                 intent=intent,
                 history=history,
@@ -101,7 +110,7 @@ class LiviaDecisionService:
             if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
                 return self._locked_lead_reply("contact_data")
             if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
-                return self._ask_discovery_question(discovery, conversation)
+                return self._ask_discovery_question(discovery, conversation, knowledge_context=knowledge_context)
             return self._handle_qualification(
                 intent="contact_data",
                 history=history,
@@ -120,12 +129,31 @@ class LiviaDecisionService:
             reply="Perfeito, já encaminhei seus dados para sequência do atendimento. Se for uma nova demanda, me diga que é um novo pedido.",
         )
 
-    def _ask_discovery_question(self, discovery, conversation) -> LiviaReply:
+    def _ask_discovery_question(self, discovery, conversation, knowledge_context: str = "") -> LiviaReply:
         if conversation is not None:
             next_state = LeadState.COLLECT_NEED if discovery.intent in {"quote_request", "commercial_interest"} else LeadState.DISCOVERY
             set_state(conversation, next_state)
         reply = discovery.suggested_next_question or "Entendi. Me conta um pouco mais do contexto para eu te orientar melhor."
-        return LiviaReply(intent=discovery.intent, reply=reply)
+        return LiviaReply(intent=discovery.intent, reply=self._with_knowledge(reply, knowledge_context))
+
+    def _with_knowledge(self, reply: str, knowledge_context: str) -> str:
+        hints = self._knowledge_hints(knowledge_context)
+        if not hints:
+            return reply
+        return f"{hints}\n\n{reply}"
+
+    def _knowledge_hints(self, knowledge_context: str) -> str:
+        lines = []
+        for line in str(knowledge_context or "").splitlines():
+            clean = line.strip()
+            if not clean or clean.lower().startswith("base de conhecimento"):
+                continue
+            if ". " in clean and clean.split(". ", 1)[0].isdigit():
+                clean = clean.split(". ", 1)[1]
+            lines.append(clean)
+            if len(lines) >= 2:
+                break
+        return " ".join(lines)
 
     def _is_followup_from_history(self, history: Iterable[dict[str, str]]) -> bool:
         messages = list(history or [])
