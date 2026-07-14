@@ -29,6 +29,7 @@ class AssistantProfile(models.Model):
     )
     tone = models.CharField(max_length=120, default="consultivo, claro e profissional")
     primary_goal = models.CharField(max_length=160, default="qualificar leads")
+    use_ai = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

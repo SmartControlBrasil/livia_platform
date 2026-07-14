@@ -5,6 +5,7 @@ from django.test import SimpleTestCase, override_settings
 from integrations.smart360 import client as smart360_client
 from integrations.smart360.client import Smart360GrowthClient
 from integrations.smart360.contracts import LeadIngestPayload
+from integrations.openai.client import OpenAIChatClient
 
 
 class LeadIngestContractsTests(SimpleTestCase):
@@ -183,3 +184,54 @@ class Smart360GrowthClientTests(SimpleTestCase):
         self.assertFalse(response.success)
         self.assertEqual(response.status_code, 503)
         self.assertIn("Falha ao enviar lead", response.message)
+
+
+class OpenAIChatClientTests(SimpleTestCase):
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=True, LIVIA_OPENAI_API_KEY="secret")
+    def test_dry_run_does_not_call_api(self):
+        client = OpenAIChatClient()
+
+        with patch("integrations.openai.client.requests.post") as post_mock:
+            result = client.create_chat_completion(messages=[{"role": "user", "content": "oi"}])
+
+        post_mock.assert_not_called()
+        self.assertFalse(result.success)
+        self.assertTrue(result.dry_run)
+
+    @override_settings(
+        LIVIA_AI_ENABLED=True,
+        LIVIA_AI_DRY_RUN=False,
+        LIVIA_OPENAI_API_KEY="secret",
+        LIVIA_OPENAI_MODEL="gpt-4.1-mini",
+        LIVIA_OPENAI_TIMEOUT_SECONDS=3,
+        LIVIA_OPENAI_MAX_OUTPUT_TOKENS=120,
+        LIVIA_OPENAI_TEMPERATURE=0.2,
+    )
+    def test_real_mode_posts_expected_payload_without_logging_secret(self):
+        response_mock = Mock()
+        response_mock.raise_for_status.return_value = None
+        response_mock.json.return_value = {"choices": [{"message": {"content": "Resposta IA"}}]}
+        client = OpenAIChatClient()
+
+        with patch("integrations.openai.client.requests.post", return_value=response_mock) as post_mock:
+            result = client.create_chat_completion(messages=[{"role": "user", "content": "oi"}])
+
+        post_mock.assert_called_once()
+        kwargs = post_mock.call_args.kwargs
+        self.assertEqual(kwargs["json"]["model"], "gpt-4.1-mini")
+        self.assertEqual(kwargs["json"]["max_tokens"], 120)
+        self.assertEqual(kwargs["json"]["temperature"], 0.2)
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret")
+        self.assertEqual(kwargs["timeout"], 3)
+        self.assertTrue(result.success)
+        self.assertEqual(result.text, "Resposta IA")
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="secret")
+    def test_timeout_returns_failure_result(self):
+        client = OpenAIChatClient()
+
+        with patch("integrations.openai.client.requests.post", side_effect=smart360_client.requests.Timeout("timeout")):
+            result = client.create_chat_completion(messages=[{"role": "user", "content": "oi"}])
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_type, "Timeout")

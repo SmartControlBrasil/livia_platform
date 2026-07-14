@@ -1,9 +1,11 @@
 import json
+from unittest.mock import patch
 
 from django.conf import settings
 from django.test import TestCase, override_settings
 
 from conversations.models import Conversation, HandoffRequest, Message
+from integrations.openai.client import OpenAIChatResult
 from assistant_core.state import LeadState
 from assistant_core.services import LiviaDecisionService
 from leads.models import LeadDraft
@@ -605,3 +607,166 @@ class LiviaHandoffWorkflowTests(TestCase):
         self.assertFalse(settings.LIVIA_HANDOFF_NOTIFICATIONS_ENABLED)
         self.assertTrue(settings.LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN)
         self.assertEqual(settings.LIVIA_HANDOFF_NOTIFICATION_EMAIL, "contato@smartcontrolbrasil.com.br")
+
+
+class FakeAIClient:
+    def __init__(self, result=None, exc=None):
+        self.result = result or OpenAIChatResult(text="", success=False, dry_run=True)
+        self.exc = exc
+        self.calls = []
+
+    def create_chat_completion(self, *, messages):
+        self.calls.append(messages)
+        if self.exc:
+            raise self.exc
+        return self.result
+
+
+class LiviaOptionalAIResponseTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Smart Control Brasil",
+            slug="smart-control-brasil-ai",
+            domain="smartcontrolbrasil.com.br",
+        )
+        self.profile = AssistantProfile.objects.create(
+            tenant=self.tenant,
+            name="Lívia Smart",
+            initial_message="Olá! Sou a Lívia Smart.",
+            tone="consultivo e direto",
+            primary_goal="qualificar oportunidades técnicas",
+            use_ai=True,
+            is_active=True,
+        )
+
+    def test_ai_disabled_by_default_keeps_deterministic_reply(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-default-off")
+        ai_client = FakeAIClient(OpenAIChatResult(text="Resposta por IA", success=True, dry_run=False))
+        service = LiviaDecisionService(ai_client=ai_client)
+
+        decision = service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
+
+        self.assertEqual(ai_client.calls, [])
+        self.assertIn("nome", decision.reply.lower())
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=True)
+    def test_ai_dry_run_keeps_deterministic_reply(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-dry-run")
+        service = LiviaDecisionService()
+
+        with patch("integrations.openai.client.requests.post") as post_mock:
+            decision = service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
+
+        post_mock.assert_not_called()
+        self.assertIn("nome", decision.reply.lower())
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="")
+    def test_without_api_key_keeps_fallback(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-no-key")
+        service = LiviaDecisionService()
+
+        with patch("integrations.openai.client.requests.post") as post_mock:
+            decision = service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
+
+        post_mock.assert_not_called()
+        self.assertIn("nome", decision.reply.lower())
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
+    def test_client_timeout_keeps_fallback(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-timeout")
+        service = LiviaDecisionService(ai_client=FakeAIClient(exc=TimeoutError("timeout")))
+
+        decision = service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
+
+        self.assertIn("nome", decision.reply.lower())
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
+    def test_valid_ai_response_replaces_only_reply_text(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-valid")
+        ai_client = FakeAIClient(OpenAIChatResult(text="Resposta mais natural da IA.", success=True, dry_run=False))
+        service = LiviaDecisionService(ai_client=ai_client)
+
+        decision = service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
+
+        self.assertEqual(decision.intent, "quote_request")
+        self.assertEqual(decision.reply, "Resposta mais natural da IA.")
+        self.assertEqual(LeadDraft.objects.count(), 1)
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
+    def test_lead_state_is_not_changed_by_ai(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-state")
+        ai_client = FakeAIClient(OpenAIChatResult(text="Claro, me conte a área principal.", success=True, dry_run=False))
+        service = LiviaDecisionService(ai_client=ai_client)
+
+        service.generate_reply([], "Quero orçamento", conversation=conversation, assistant_profile=self.profile)
+
+        conversation.refresh_from_db()
+        self.assertEqual(conversation.lead_state, LeadState.COLLECT_NEED)
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
+    def test_handoff_does_not_depend_on_ai(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-handoff")
+        ai_client = FakeAIClient(OpenAIChatResult(text="Vou te conectar com o time.", success=True, dry_run=False))
+        service = LiviaDecisionService(ai_client=ai_client)
+
+        decision = service.generate_reply([], "quero falar com um vendedor", conversation=conversation, assistant_profile=self.profile)
+
+        self.assertEqual(decision.reply, "Vou te conectar com o time.")
+        self.assertTrue(HandoffRequest.objects.filter(conversation=conversation).exists())
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
+    def test_knowledge_context_and_profile_enter_prompt(self):
+        from knowledge_base.models import KnowledgeDocument
+
+        KnowledgeDocument.objects.create(
+            tenant=self.tenant,
+            title="HygiBot",
+            slug="hygibot-ai",
+            content="HygiBot atende limpeza profissional em grandes áreas.",
+            tags=["hygibot", "limpeza"],
+        )
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-prompt")
+        ai_client = FakeAIClient(OpenAIChatResult(text="HygiBot pode ajudar nesse cenário.", success=True, dry_run=False))
+        service = LiviaDecisionService(ai_client=ai_client)
+
+        service.generate_reply([], "Vocês têm robô de limpeza HygiBot?", conversation=conversation, assistant_profile=self.profile)
+
+        prompt_text = "\n".join(message["content"] for message in ai_client.calls[0])
+        self.assertIn("HygiBot", prompt_text)
+        self.assertIn("consultivo e direto", prompt_text)
+        self.assertIn("qualificar oportunidades técnicas", prompt_text)
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
+    def test_profile_use_ai_false_blocks_ai_even_when_global_enabled(self):
+        self.profile.use_ai = False
+        self.profile.save(update_fields=["use_ai"])
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-profile-off")
+        ai_client = FakeAIClient(OpenAIChatResult(text="Resposta por IA", success=True, dry_run=False))
+        service = LiviaDecisionService(ai_client=ai_client)
+
+        decision = service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
+
+        self.assertEqual(ai_client.calls, [])
+        self.assertIn("nome", decision.reply.lower())
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
+    def test_profile_use_ai_true_allows_ai_attempt(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-profile-on")
+        ai_client = FakeAIClient(OpenAIChatResult(text="Texto refinado.", success=True, dry_run=False))
+        service = LiviaDecisionService(ai_client=ai_client)
+
+        decision = service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
+
+        self.assertEqual(len(ai_client.calls), 1)
+        self.assertEqual(decision.reply, "Texto refinado.")
+
+    @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="secret-key-123")
+    def test_prompt_does_not_contain_api_key(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-no-secret")
+        ai_client = FakeAIClient(OpenAIChatResult(text="Texto refinado.", success=True, dry_run=False))
+        service = LiviaDecisionService(ai_client=ai_client)
+
+        service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
+
+        prompt_text = "\n".join(message["content"] for message in ai_client.calls[0])
+        self.assertNotIn("secret-key-123", prompt_text)

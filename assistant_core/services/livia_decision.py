@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Iterable
+
+from django.conf import settings
 
 from assistant_core.discovery import analyze_message
 from assistant_core.prompts import (
     DEFAULT_REPLY,
     build_contextual_reply,
 )
+from assistant_core.prompts.livia_ai import build_livia_ai_prompt
 from assistant_core.qualification import has_basic_contact
 from assistant_core.state import LeadState, can_start_new_cycle, set_state, should_lock_lead
 from leads.services import CRMDispatchService, LeadCaptureService
 from leads.services.handoff import HandoffService
+from integrations.openai.client import OpenAIChatClient
 from knowledge_base.rag.context_builder import build_knowledge_context
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -49,10 +56,12 @@ class LiviaDecisionService:
         lead_capture_service: LeadCaptureService | None = None,
         crm_dispatch_service: CRMDispatchService | None = None,
         handoff_service: HandoffService | None = None,
+        ai_client: OpenAIChatClient | None = None,
     ):
         self.lead_capture_service = lead_capture_service or LeadCaptureService()
         self.crm_dispatch_service = crm_dispatch_service or CRMDispatchService()
         self.handoff_service = handoff_service or HandoffService()
+        self.ai_client = ai_client or OpenAIChatClient()
 
     def generate_reply(
         self,
@@ -78,29 +87,37 @@ class LiviaDecisionService:
         has_technical_question = bool(discovery.has_technical_question)
 
         if intent == "greeting":
-            return LiviaReply(intent=intent, reply=profile_context.initial_message)
+            decision = LiviaReply(intent=intent, reply=profile_context.initial_message)
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if intent == "technical_question":
             if discovery.should_ask_discovery_question and discovery.suggested_next_question:
                 decision = self._ask_discovery_question(discovery, conversation, knowledge_context=knowledge_context)
-                return self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             reply = build_contextual_reply(intent="technical_question")
             decision = LiviaReply(intent=intent, reply=self._with_knowledge(reply, knowledge_context))
-            return self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if intent == "support_request":
             decision = LiviaReply(intent=intent, reply=build_contextual_reply(intent="support_request"))
-            return self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if intent in {"quote_request", "commercial_interest"}:
             if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
-                return self._locked_lead_reply(intent)
+                decision = self._locked_lead_reply(intent)
+                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
                 decision = self._ask_discovery_question(discovery, conversation, knowledge_context=knowledge_context)
-                return self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             return self._handle_qualification(
                 intent=intent,
                 history=history,
                 current_message=current_message,
                 conversation=conversation,
                 discovery=discovery,
+                assistant_profile=assistant_profile,
+                knowledge_context=knowledge_context,
             )
         if intent == "contact_data":
             if self._should_start_lead_from_contact(current_message, has_commercial_interest, has_quote_request):
@@ -110,33 +127,81 @@ class LiviaDecisionService:
                     current_message=current_message,
                     conversation=conversation,
                     discovery=discovery,
+                    assistant_profile=assistant_profile,
+                    knowledge_context=knowledge_context,
                 )
             decision = LiviaReply(
                 intent=intent,
                 reply=build_contextual_reply(intent="contact_data"),
             )
-            return self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if has_basic_contact(current_message) and (has_commercial_interest or has_quote_request):
             if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
-                return self._locked_lead_reply("contact_data")
+                decision = self._locked_lead_reply("contact_data")
+                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
                 decision = self._ask_discovery_question(discovery, conversation, knowledge_context=knowledge_context)
-                return self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             return self._handle_qualification(
                 intent="contact_data",
                 history=history,
                 current_message=current_message,
                 conversation=conversation,
                 discovery=discovery,
+                assistant_profile=assistant_profile,
+                knowledge_context=knowledge_context,
             )
         if has_support_request or has_technical_question:
             decision = LiviaReply(intent=intent, reply=build_contextual_reply(intent=intent))
-            return self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if self._is_followup_from_history(history):
             decision = LiviaReply(intent="followup", reply="Perfeito. Me conte um pouco mais sobre o contexto para eu te orientar.")
-            return self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         decision = LiviaReply(intent=intent, reply=DEFAULT_REPLY)
-        return self._finalize_handoff(decision, conversation, None, discovery, current_message)
+        decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+        return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+
+
+    def _finalize_ai_response(
+        self,
+        decision: LiviaReply,
+        conversation,
+        assistant_profile,
+        discovery,
+        current_message: str,
+        history: Iterable[dict[str, str]],
+        knowledge_context: str,
+    ) -> LiviaReply:
+        if not self._should_try_ai(assistant_profile):
+            return decision
+        tenant = getattr(conversation, "tenant", None)
+        lead_state = str(getattr(conversation, "lead_state", "") or "")
+        try:
+            messages = build_livia_ai_prompt(
+                tenant=tenant,
+                assistant_profile=assistant_profile,
+                message=current_message,
+                conversation=conversation,
+                discovery_result=discovery,
+                lead_state=lead_state,
+                knowledge_context=knowledge_context,
+                deterministic_reply=decision.reply,
+                history=list(history or []),
+            )
+            result = self.ai_client.create_chat_completion(messages=messages)
+        except Exception as exc:  # pragma: no cover - defensive local guard
+            logger.warning("livia_ai_finalize_failed error_type=%s", exc.__class__.__name__)
+            return decision
+        if result.success and result.text:
+            return LiviaReply(intent=decision.intent, reply=result.text)
+        return decision
+
+    def _should_try_ai(self, assistant_profile) -> bool:
+        return bool(getattr(settings, "LIVIA_AI_ENABLED", False)) and bool(getattr(assistant_profile, "use_ai", False))
 
 
     def _finalize_handoff(self, decision: LiviaReply, conversation, lead_draft, discovery, current_message: str) -> LiviaReply:
@@ -211,14 +276,18 @@ class LiviaDecisionService:
         current_message: str,
         conversation,
         discovery=None,
+        assistant_profile=None,
+        knowledge_context: str = "",
     ) -> LiviaReply:
         if conversation is None:
-            return LiviaReply(intent=intent, reply=build_contextual_reply(intent=intent))
+            decision = LiviaReply(intent=intent, reply=build_contextual_reply(intent=intent))
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
-            return LiviaReply(
+            decision = LiviaReply(
                 intent=intent,
                 reply="Perfeito, já encaminhei seus dados para sequência do atendimento. Se for uma nova demanda, me diga que é um novo pedido.",
             )
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
 
         result = self.lead_capture_service.capture_from_message(
             conversation=conversation,
@@ -231,7 +300,8 @@ class LiviaDecisionService:
         if result.is_qualified:
             reply = build_contextual_reply(intent=intent, missing_fields=[])
         decision = LiviaReply(intent=intent, reply=reply)
-        return self._finalize_handoff(decision, conversation, result.lead_draft, discovery, current_message)
+        decision = self._finalize_handoff(decision, conversation, result.lead_draft, discovery, current_message)
+        return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
 
     def _should_start_lead_from_contact(
         self,
