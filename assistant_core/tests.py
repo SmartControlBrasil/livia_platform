@@ -1,8 +1,9 @@
 import json
 
+from django.conf import settings
 from django.test import TestCase, override_settings
 
-from conversations.models import Conversation, Message
+from conversations.models import Conversation, HandoffRequest, Message
 from assistant_core.state import LeadState
 from assistant_core.services import LiviaDecisionService
 from leads.models import LeadDraft
@@ -522,3 +523,85 @@ class LiviaDecisionKnowledgeTests(TestCase):
         self.assertNotIn("HygiBot", decision.reply)
         self.assertIn("academia", decision.reply.lower())
         self.assertIn("hospital", decision.reply.lower())
+
+
+class LiviaHandoffWorkflowTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Smart Control Brasil",
+            slug="smart-control-brasil",
+            domain="smartcontrolbrasil.com.br",
+        )
+        self.service = LiviaDecisionService()
+
+    def test_explicit_human_request_creates_handoff(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="handoff-human")
+
+        decision = self.service.generate_reply([], "quero falar com um vendedor", conversation=conversation)
+
+        handoff = HandoffRequest.objects.get(conversation=conversation)
+        self.assertEqual(handoff.reason, HandoffRequest.Reason.EXPLICIT_REQUEST)
+        self.assertEqual(handoff.status, HandoffRequest.Status.PENDING)
+        self.assertIn("atendimento humano", decision.reply.lower())
+
+    def test_call_me_request_with_phone_creates_handoff_with_contact(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="handoff-call")
+
+        decision = self.service.generate_reply([], "me liga, sou Marcelo, telefone 11999999999", conversation=conversation)
+
+        handoff = HandoffRequest.objects.get(conversation=conversation)
+        self.assertEqual(handoff.visitor_name, "Marcelo")
+        self.assertEqual(handoff.visitor_phone, "11999999999")
+        self.assertIn("Marcelo", decision.reply)
+        self.assertIn("Registrei o pedido de contato", decision.reply)
+
+    @override_settings(SMART360_LEAD_DISPATCH_ENABLED=False, SMART360_LEAD_DISPATCH_DRY_RUN=True)
+    def test_qualified_lead_creates_handoff_without_duplicate(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="handoff-qualified")
+        message = "Sou Maria da ACME, meu telefone é 11999998888 e preciso de automação industrial."
+
+        self.service.generate_reply([], message, conversation=conversation)
+        self.service.generate_reply([], message, conversation=conversation)
+
+        self.assertEqual(HandoffRequest.objects.filter(conversation=conversation).count(), 1)
+        handoff = HandoffRequest.objects.get(conversation=conversation)
+        self.assertEqual(handoff.reason, HandoffRequest.Reason.QUALIFIED_LEAD)
+        self.assertIn("automação", handoff.summary.lower())
+
+    def test_urgent_technical_conversation_creates_high_priority_handoff(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="handoff-urgent")
+
+        self.service.generate_reply([], "CLP parou e a máquina está parada urgente", conversation=conversation)
+
+        handoff = HandoffRequest.objects.get(conversation=conversation)
+        self.assertEqual(handoff.priority, HandoffRequest.Priority.HIGH)
+        self.assertIn(handoff.reason, {
+            HandoffRequest.Reason.EMERGENCY_OR_URGENT,
+            HandoffRequest.Reason.TECHNICAL_COMPLEXITY,
+        })
+
+    def test_simple_support_request_does_not_create_urgent_handoff(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="handoff-support-simple")
+
+        self.service.generate_reply([], "Preciso de suporte no sistema", conversation=conversation)
+
+        self.assertFalse(HandoffRequest.objects.filter(conversation=conversation).exists())
+
+    def test_handoff_summary_and_source_page_are_filled(self):
+        conversation = Conversation.objects.create(
+            tenant=self.tenant,
+            session_id="handoff-source",
+            source_page="https://example.com/origem",
+        )
+
+        self.service.generate_reply([], "quero falar com alguém sobre robô de limpeza", conversation=conversation)
+
+        handoff = HandoffRequest.objects.get(conversation=conversation)
+        self.assertEqual(handoff.source_page, "https://example.com/origem")
+        self.assertIn("Resumo da Lívia", handoff.summary)
+        self.assertIn("Última mensagem", handoff.summary)
+
+    def test_default_handoff_notification_settings_are_safe(self):
+        self.assertFalse(settings.LIVIA_HANDOFF_NOTIFICATIONS_ENABLED)
+        self.assertTrue(settings.LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN)
+        self.assertEqual(settings.LIVIA_HANDOFF_NOTIFICATION_EMAIL, "contato@smartcontrolbrasil.com.br")

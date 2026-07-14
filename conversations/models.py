@@ -70,3 +70,66 @@ class Message(models.Model):
 
     def __str__(self):
         return f"{self.role}: {self.content[:40]}"
+
+
+class HandoffRequest(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SENT = "sent", "Sent"
+        RESOLVED = "resolved", "Resolved"
+        CANCELLED = "cancelled", "Cancelled"
+
+    class Reason(models.TextChoices):
+        EXPLICIT_REQUEST = "explicit_request", "Explicit request"
+        QUALIFIED_LEAD = "qualified_lead", "Qualified lead"
+        TECHNICAL_COMPLEXITY = "technical_complexity", "Technical complexity"
+        SUPPORT_REQUEST = "support_request", "Support request"
+        EMERGENCY_OR_URGENT = "emergency_or_urgent", "Emergency or urgent"
+        MANUAL = "manual", "Manual"
+
+    class Priority(models.TextChoices):
+        LOW = "low", "Low"
+        NORMAL = "normal", "Normal"
+        HIGH = "high", "High"
+        URGENT = "urgent", "Urgent"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="handoff_requests",
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name="handoff_requests",
+    )
+    lead_draft = models.ForeignKey(
+        "leads.LeadDraft",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="handoff_requests",
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    reason = models.CharField(max_length=40, choices=Reason.choices, default=Reason.MANUAL)
+    priority = models.CharField(max_length=20, choices=Priority.choices, default=Priority.NORMAL)
+    visitor_name = models.CharField(max_length=120, blank=True)
+    visitor_company = models.CharField(max_length=160, blank=True)
+    visitor_phone = models.CharField(max_length=40, blank=True)
+    visitor_email = models.EmailField(blank=True)
+    summary = models.TextField(blank=True)
+    source_page = models.URLField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["tenant", "status"]),
+            models.Index(fields=["conversation", "status"]),
+        ]
+
+    def __str__(self):
+        return f"Handoff #{self.pk} / {self.tenant.slug} / {self.status}"

@@ -535,3 +535,40 @@ class CRMDispatchServiceTests(TestCase):
         self.assertTrue(result.success)
         self.lead_draft.refresh_from_db()
         self.assertEqual(self.lead_draft.status, LeadDraft.Status.SENT_TO_CRM)
+
+from django.test import override_settings
+
+from conversations.models import Conversation, HandoffRequest
+from leads.services.handoff import HandoffService
+from leads.services.handoff_notification import HandoffNotificationService
+from tenants.models import Tenant
+
+
+class HandoffServiceTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil")
+        self.conversation = Conversation.objects.create(tenant=self.tenant, session_id="handoff-service")
+
+    def test_duplicate_pending_handoff_is_not_created_for_same_conversation(self):
+        service = HandoffService()
+
+        first = service.create_or_update_handoff(self.conversation, message="quero falar com um vendedor")
+        second = service.create_or_update_handoff(self.conversation, message="me liga")
+
+        self.assertTrue(first.created)
+        self.assertFalse(second.created)
+        self.assertEqual(HandoffRequest.objects.filter(conversation=self.conversation).count(), 1)
+
+    @override_settings(LIVIA_HANDOFF_NOTIFICATIONS_ENABLED=False, LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN=True)
+    def test_notification_dry_run_returns_success_without_real_send(self):
+        handoff = HandoffRequest.objects.create(
+            tenant=self.tenant,
+            conversation=self.conversation,
+            reason=HandoffRequest.Reason.EXPLICIT_REQUEST,
+        )
+
+        result = HandoffNotificationService().notify(handoff)
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.dry_run)
+        self.assertEqual(result.channel, "email")
