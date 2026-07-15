@@ -1,10 +1,12 @@
 from io import StringIO
 
+from django.contrib import admin
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from knowledge_base.models import KnowledgeDocument
 from tenants.models import AssistantProfile, Tenant
+from tenants.services.install_package import TenantInstallPackageService
 from tenants.services.onboarding import (
     TenantOnboardingService,
     build_widget_snippet,
@@ -172,3 +174,109 @@ class OnboardTenantCommandTests(TestCase):
         self.assertIn("Snippet do widget:", content)
         self.assertIn('data-tenant="command-tenant"', content)
         self.assertIn("Tenant: command-tenant (criado)", content)
+
+
+
+class TenantInstallPackageTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Granimármores Pitondo",
+            slug="granimarmores-pitondo",
+            domain="www.granimarmorespitondo.com.br/",
+            is_active=True,
+        )
+        AssistantProfile.objects.create(tenant=self.tenant, name="Lívia")
+
+    def test_install_page_returns_200_for_existing_tenant(self):
+        response = self.client.get("/install/granimarmores-pitondo/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Instalação da Lívia")
+        self.assertContains(response, "Granimármores Pitondo")
+
+    def test_install_html_contains_widget_snippet_and_data_tenant(self):
+        response = self.client.get("/install/granimarmores-pitondo/")
+
+        self.assertContains(response, "https://livia.smartcontrolbrasil.com.br/widget.js")
+        self.assertContains(response, 'data-tenant="granimarmores-pitondo"')
+        self.assertContains(response, 'data-api-url="https://livia.smartcontrolbrasil.com.br/api/chat/"')
+
+    def test_install_html_does_not_contain_secrets(self):
+        from integrations.models import TenantWebhookConfig
+
+        TenantWebhookConfig.objects.create(
+            tenant=self.tenant,
+            name="N8N",
+            target_url="https://n8n.example/webhook",
+            secret_token="super-secret-token",
+        )
+
+        response = self.client.get("/install/granimarmores-pitondo/")
+        content = response.content.decode()
+
+        self.assertNotIn("super-secret-token", content)
+        self.assertNotIn("secret_token", content)
+
+    def test_install_json_returns_expected_payload(self):
+        response = self.client.get("/install/granimarmores-pitondo.json")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["tenant"], "granimarmores-pitondo")
+        self.assertEqual(data["name"], "Granimármores Pitondo")
+        self.assertTrue(data["is_active"])
+        self.assertEqual(data["allowed_origin"], "https://www.granimarmorespitondo.com.br")
+        self.assertIn('data-tenant="granimarmores-pitondo"', data["snippet"])
+
+    def test_install_json_does_not_contain_secrets(self):
+        from integrations.models import TenantWebhookConfig
+
+        TenantWebhookConfig.objects.create(
+            tenant=self.tenant,
+            name="N8N",
+            target_url="https://n8n.example/webhook",
+            secret_token="super-secret-token",
+        )
+
+        response = self.client.get("/install/granimarmores-pitondo.json")
+        payload_text = str(response.json())
+
+        self.assertNotIn("super-secret-token", payload_text)
+        self.assertNotIn("secret_token", payload_text)
+
+    def test_install_missing_tenant_returns_404(self):
+        html_response = self.client.get("/install/tenant-inexistente/")
+        json_response = self.client.get("/install/tenant-inexistente.json")
+
+        self.assertEqual(html_response.status_code, 404)
+        self.assertContains(html_response, "Tenant não encontrado", status_code=404)
+        self.assertEqual(json_response.status_code, 404)
+        self.assertEqual(json_response.json()["error"], "Tenant not found.")
+
+    def test_inactive_tenant_shows_warning(self):
+        self.tenant.is_active = False
+        self.tenant.save(update_fields=["is_active"])
+
+        response = self.client.get("/install/granimarmores-pitondo/")
+
+        self.assertContains(response, "inativo")
+        self.assertContains(response, "widget não processará atendimentos")
+
+    @override_settings(LIVIA_ALLOWED_WIDGET_ORIGINS=["https://outro.example"])
+    def test_install_package_warns_when_origin_is_not_allowed(self):
+        response = self.client.get("/install/granimarmores-pitondo.json")
+
+        self.assertIn("não está em LIVIA_ALLOWED_WIDGET_ORIGINS", " ".join(response.json()["warnings"]))
+
+    def test_tenant_admin_exposes_install_url_and_widget_snippet_readonly(self):
+        tenant_admin = admin.site._registry[Tenant]
+
+        self.assertIn("install_url", tenant_admin.readonly_fields)
+        self.assertIn("widget_snippet_preview", tenant_admin.readonly_fields)
+        self.assertIn("/install/granimarmores-pitondo/", tenant_admin.install_url(self.tenant))
+        self.assertIn('data-tenant="granimarmores-pitondo"', tenant_admin.widget_snippet_preview(self.tenant))
+
+    def test_install_package_reuses_normalized_domain(self):
+        package = TenantInstallPackageService().build_for_tenant(self.tenant)
+
+        self.assertEqual(package.allowed_origin, "https://www.granimarmorespitondo.com.br")

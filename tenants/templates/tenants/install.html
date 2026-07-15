@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Instalação da Lívia - {{ package.tenant.name }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.5; max-width: 920px; margin: 32px auto; padding: 0 18px; color: #172033; }
+    code, pre { background: #f4f6f8; border: 1px solid #d9e0e8; border-radius: 6px; }
+    pre { padding: 16px; overflow-x: auto; white-space: pre-wrap; }
+    code { padding: 2px 4px; }
+    .status { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 13px; background: #e8f5e9; color: #1b5e20; }
+    .status.inactive { background: #fff3e0; color: #9a4b00; }
+    .warning { background: #fff8e1; border: 1px solid #f0d27a; border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
+    section { margin-top: 28px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Instalação da Lívia</h1>
+    <p>Pacote de instalação para <strong>{{ package.tenant.name }}</strong>.</p>
+    <p>
+      Status:
+      <span class="status{% if not package.tenant.is_active %} inactive{% endif %}">
+        {% if package.tenant.is_active %}ativo{% else %}inativo{% endif %}
+      </span>
+    </p>
+    <p>Tenant: <code>{{ package.tenant.slug }}</code></p>
+    <p>Domínio/origin configurado: <code>{{ package.allowed_origin|default:package.tenant.domain|default:"não configurado" }}</code></p>
+
+    {% if package.warnings %}
+      <section>
+        <h2>Alertas</h2>
+        {% for warning in package.warnings %}
+          <div class="warning">{{ warning }}</div>
+        {% endfor %}
+      </section>
+    {% endif %}
+
+    <section>
+      <h2>Snippet do widget</h2>
+      <pre><code>{{ package.snippet|safe }}</code></pre>
+    </section>
+
+    <section>
+      <h2>Instruções</h2>
+      <ol>
+        {% for instruction in package.install_instructions %}
+          <li>{{ instruction }}</li>
+        {% endfor %}
+      </ol>
+    </section>
+
+    <section>
+      <h2>Endpoint da API</h2>
+      <p><code>{{ package.api_url }}</code></p>
+    </section>
+
+    <section>
+      <h2>Teste via curl</h2>
+      <pre><code>curl -i {{ package.api_url }} -H &quot;Content-Type: application/json&quot; -d '{&quot;tenant&quot;:&quot;{{ package.tenant.slug }}&quot;,&quot;session_id&quot;:&quot;install-test&quot;,&quot;message&quot;:&quot;Olá&quot;}'</code></pre>
+    </section>
+
+    <section>
+      <h2>JSON</h2>
+      <p><a href="/install/{{ package.tenant.slug }}.json">Abrir pacote JSON</a></p>
+    </section>
+  </main>
+</body>
+</html>
