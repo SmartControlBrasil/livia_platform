@@ -1,8 +1,11 @@
+import logging
 from urllib.parse import urlparse
 
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils.cache import patch_vary_headers
+
+logger = logging.getLogger(__name__)
 
 
 class LiviaWidgetCorsMiddleware:
@@ -25,7 +28,11 @@ class LiviaWidgetCorsMiddleware:
 
     def _patch_cors_headers(self, request, response):
         origin = request.headers.get("Origin")
-        if not origin or not self._is_allowed_origin(origin):
+        if not origin:
+            return
+
+        if not self._is_allowed_origin(origin):
+            logger.info("livia_chat_origin_blocked origin_host=%s", urlparse(origin).hostname or "unknown")
             return
 
         response["Access-Control-Allow-Origin"] = origin
@@ -36,6 +43,8 @@ class LiviaWidgetCorsMiddleware:
 
     def _is_allowed_origin(self, origin: str) -> bool:
         allowed_origins = set(getattr(settings, "LIVIA_ALLOWED_WIDGET_ORIGINS", []))
+        if not allowed_origins:
+            return True
         if origin in allowed_origins:
             return True
         if getattr(settings, "DEBUG", False):

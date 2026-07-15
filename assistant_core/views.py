@@ -1,12 +1,29 @@
 import json
+import logging
 
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from conversations.models import Conversation, Message
 from tenants.models import Tenant
+from .security.ip import get_client_ip
+from .security.rate_limit import check_chat_rate_limit
+from .security.spam_guard import check_message_spam
 from .services import LiviaDecisionService
+
+logger = logging.getLogger(__name__)
+
+INACTIVE_TENANT_REPLY = "Este atendimento não está disponível no momento."
+LONG_MESSAGE_REPLY = "Sua mensagem está muito longa. Envie uma versão mais curta para eu conseguir te ajudar melhor."
+RATE_LIMIT_REPLY = "Recebi muitas mensagens em pouco tempo. Aguarde alguns minutos e tente novamente."
+SPAM_REPLY = "Não consegui processar essa mensagem. Envie uma solicitação objetiva sobre atendimento, orçamento ou suporte."
+EMPTY_MESSAGE_ERROR = "message is required."
+
+
+def _safe_reply_response(reply, *, status=200, code="blocked"):
+    return JsonResponse({"error": code, "reply": reply}, status=status)
 
 
 @csrf_exempt
@@ -24,7 +41,7 @@ def chat_api(request):
 
     tenant_slug = payload.get("tenant") or payload.get("tenant_id")
     session_id = payload.get("session_key") or payload.get("session_id")
-    user_message = payload.get("message")
+    user_message_raw = payload.get("message")
     source_page = payload.get("source_page", "")
 
     if not tenant_slug:
@@ -33,13 +50,54 @@ def chat_api(request):
     if not session_id:
         return JsonResponse({"error": "session_id is required."}, status=400)
 
-    if not user_message:
-        return JsonResponse({"error": "message is required."}, status=400)
+    if not isinstance(user_message_raw, str):
+        return JsonResponse({"error": EMPTY_MESSAGE_ERROR}, status=400)
 
-    tenant = Tenant.objects.filter(slug=tenant_slug, is_active=True).first()
+    user_message = user_message_raw.strip()
+    if not user_message:
+        return JsonResponse({"error": EMPTY_MESSAGE_ERROR}, status=400)
+
+    max_message_length = int(getattr(settings, "LIVIA_MAX_MESSAGE_LENGTH", 1200))
+    if len(user_message) > max_message_length:
+        logger.info(
+            "livia_chat_message_too_long tenant_slug=%s message_length=%s max_length=%s",
+            tenant_slug,
+            len(user_message),
+            max_message_length,
+        )
+        return _safe_reply_response(LONG_MESSAGE_REPLY, status=400, code="message_too_long")
+
+    tenant = Tenant.objects.filter(slug=tenant_slug).first()
 
     if tenant is None:
-        return JsonResponse({"error": "Tenant not found or inactive."}, status=404)
+        return _safe_reply_response(INACTIVE_TENANT_REPLY, status=404, code="tenant_unavailable")
+
+    if not tenant.is_active:
+        logger.info("livia_chat_inactive_tenant tenant_slug=%s", tenant_slug)
+        return _safe_reply_response(INACTIVE_TENANT_REPLY, status=403, code="tenant_unavailable")
+
+    client_ip = get_client_ip(request)
+    rate_limit = check_chat_rate_limit(tenant.slug, client_ip)
+    if not rate_limit.allowed:
+        logger.info(
+            "livia_chat_rate_limited tenant_slug=%s ip=%s limit=%s window_seconds=%s",
+            tenant.slug,
+            client_ip,
+            rate_limit.limit,
+            rate_limit.window_seconds,
+        )
+        return _safe_reply_response(RATE_LIMIT_REPLY, status=429, code="rate_limited")
+
+    spam_check = check_message_spam(user_message)
+    if spam_check.is_spam:
+        logger.info(
+            "livia_chat_spam_blocked tenant_slug=%s ip=%s reason=%s message_length=%s",
+            tenant.slug,
+            client_ip,
+            spam_check.reason,
+            len(user_message),
+        )
+        return _safe_reply_response(SPAM_REPLY, status=400, code="spam_blocked")
 
     try:
         assistant_profile = tenant.assistant_profile

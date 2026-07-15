@@ -2,6 +2,7 @@ import json
 from unittest.mock import patch
 
 from django.conf import settings
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 from conversations.models import Conversation, HandoffRequest, Message
@@ -49,12 +50,152 @@ class LiviaDecisionServiceTests(TestCase):
 
 class ChatApiTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.tenant = Tenant.objects.create(
             name="Smart Control Brasil",
             slug="smart-control-brasil",
             domain="smart-control-brasil.example",
             is_active=True,
         )
+
+    def test_chat_api_inactive_tenant_does_not_process_message(self):
+        self.tenant.is_active = False
+        self.tenant.save(update_fields=["is_active"])
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "inactive-session",
+            "message": "Olá, quero atendimento.",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["reply"], "Este atendimento não está disponível no momento.")
+        self.assertEqual(Conversation.objects.count(), 0)
+        self.assertEqual(Message.objects.count(), 0)
+        self.assertEqual(LeadDraft.objects.count(), 0)
+        self.assertEqual(HandoffRequest.objects.count(), 0)
+
+    def test_chat_api_missing_tenant_returns_safe_response(self):
+        payload = {
+            "tenant": "tenant-inexistente",
+            "session_id": "missing-tenant-session",
+            "message": "Olá",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["reply"], "Este atendimento não está disponível no momento.")
+        self.assertEqual(Conversation.objects.count(), 0)
+
+    def test_chat_api_rejects_empty_message(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "empty-message-session",
+            "message": "   ",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "message is required.")
+        self.assertEqual(Conversation.objects.count(), 0)
+
+    @override_settings(LIVIA_MAX_MESSAGE_LENGTH=12)
+    def test_chat_api_rejects_long_message(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "long-message-session",
+            "message": "Mensagem longa demais",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "message_too_long")
+        self.assertIn("muito longa", response.json()["reply"])
+        self.assertEqual(Conversation.objects.count(), 0)
+
+    @override_settings(LIVIA_CHAT_RATE_LIMIT_ENABLED=True, LIVIA_CHAT_RATE_LIMIT_REQUESTS=1, LIVIA_CHAT_RATE_LIMIT_WINDOW_SECONDS=300)
+    def test_chat_api_rate_limit_blocks_above_limit(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "rate-limit-session",
+            "message": "Olá!",
+        }
+
+        first_response = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json", REMOTE_ADDR="10.0.0.1")
+        second_response = self.client.post("/api/chat/", data=json.dumps({**payload, "session_id": "rate-limit-session-2"}), content_type="application/json", REMOTE_ADDR="10.0.0.1")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 429)
+        self.assertEqual(second_response.json()["error"], "rate_limited")
+
+    @override_settings(LIVIA_CHAT_RATE_LIMIT_ENABLED=True, LIVIA_CHAT_RATE_LIMIT_REQUESTS=1, LIVIA_CHAT_RATE_LIMIT_WINDOW_SECONDS=300)
+    def test_chat_api_rate_limit_uses_tenant_and_ip(self):
+        other_tenant = Tenant.objects.create(name="Outro Tenant", slug="outro-tenant", domain="outro.example")
+        payload = {"tenant": self.tenant.slug, "session_id": "tenant-ip-1", "message": "Olá!"}
+        other_payload = {"tenant": other_tenant.slug, "session_id": "tenant-ip-2", "message": "Olá!"}
+
+        first_response = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json", REMOTE_ADDR="10.0.0.2")
+        other_tenant_response = self.client.post("/api/chat/", data=json.dumps(other_payload), content_type="application/json", REMOTE_ADDR="10.0.0.2")
+        other_ip_response = self.client.post("/api/chat/", data=json.dumps({**payload, "session_id": "tenant-ip-3"}), content_type="application/json", REMOTE_ADDR="10.0.0.3")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(other_tenant_response.status_code, 200)
+        self.assertEqual(other_ip_response.status_code, 200)
+
+    def test_chat_api_blocks_many_links_as_spam_without_lead_or_handoff(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "spam-links-session",
+            "message": "Veja http://a.example www.b.example https://c.example para free money",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "spam_blocked")
+        self.assertEqual(Conversation.objects.count(), 0)
+        self.assertEqual(LeadDraft.objects.count(), 0)
+        self.assertEqual(HandoffRequest.objects.count(), 0)
+
+    def test_chat_api_allows_normal_portuguese_message(self):
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "normal-portuguese-session",
+            "message": "Olá, preciso de orçamento para automação industrial.",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(Conversation.objects.filter(session_id="normal-portuguese-session").exists())
 
     def test_chat_api_accepts_session_key_for_valid_tenant(self):
         payload = {

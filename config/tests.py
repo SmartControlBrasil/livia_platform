@@ -23,3 +23,54 @@ class DeploymentSettingsHelperTests(SimpleTestCase):
     def test_debug_true_settings_remain_valid(self):
         self.assertTrue(project_settings.DEBUG in {True, False})
         self.assertIn("django.contrib.staticfiles", project_settings.INSTALLED_APPS)
+
+
+
+class HealthcheckTests(SimpleTestCase):
+    def test_healthcheck_returns_ok(self):
+        response = self.client.get("/health/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok", "service": "livia-platform"})
+
+
+class LiviaWidgetCorsMiddlewareTests(SimpleTestCase):
+    @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
+    def test_allowed_origin_receives_cors_headers(self):
+        response = self.client.options(
+            "/api/chat/",
+            HTTP_ORIGIN="https://www.smartcontrolbrasil.com.br",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["Access-Control-Allow-Origin"], "https://www.smartcontrolbrasil.com.br")
+
+    @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
+    def test_blocked_origin_does_not_receive_cors_headers(self):
+        response = self.client.options(
+            "/api/chat/",
+            HTTP_ORIGIN="https://evil.example",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertNotIn("Access-Control-Allow-Origin", response)
+
+    @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
+    def test_request_without_origin_does_not_break(self):
+        response = self.client.options("/api/chat/")
+
+        self.assertEqual(response.status_code, 204)
+        self.assertNotIn("Access-Control-Allow-Origin", response)
+
+    @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=[])
+    def test_empty_allowed_origins_is_permissive(self):
+        response = self.client.options(
+            "/api/chat/",
+            HTTP_ORIGIN="https://www.canecadegaragem.com.br",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response["Access-Control-Allow-Origin"], "https://www.canecadegaragem.com.br")
