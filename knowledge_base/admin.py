@@ -32,7 +32,7 @@ class KnowledgeIsActiveFilter(admin.SimpleListFilter):
 class KnowledgeDocumentAdmin(admin.ModelAdmin):
     list_display = ["tenant", "title", "source_type", "is_active", "tags", "updated_at"]
     list_filter = ["tenant", KnowledgeIsActiveFilter, "source_type"]
-    search_fields = ["title", "slug", "content", "source_url", "tenant__name", "tenant__slug"]
+    search_fields = ["title", "slug", "content", "tags", "source_url", "tenant__name", "tenant__slug"]
     prepopulated_fields = {"slug": ["title"]}
     readonly_fields = ["created_at", "updated_at"]
     actions = [activate_knowledge_documents, deactivate_knowledge_documents]

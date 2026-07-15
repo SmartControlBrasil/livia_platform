@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.test import TestCase
 
-from conversations.admin import mark_handoffs_resolved
+from conversations.admin import mark_handoffs_cancelled, mark_handoffs_resolved
 from conversations.models import Conversation, HandoffRequest, Message
 from knowledge_base.admin import activate_knowledge_documents, deactivate_knowledge_documents
 from knowledge_base.models import KnowledgeDocument
@@ -29,10 +29,10 @@ class AdminRegistrationTests(TestCase):
             self.assertIn(model, admin.site._registry)
 
     def test_admin_list_displays_include_operational_fields(self):
-        self.assertEqual(admin.site._registry[Tenant].list_display, ["name", "slug", "domain", "is_active"])
+        self.assertEqual(admin.site._registry[Tenant].list_display, ["name", "slug", "domain", "is_active", "created_at", "updated_at"])
         self.assertIn("use_ai", admin.site._registry[AssistantProfile].list_display)
         self.assertIn("lead_state", admin.site._registry[Conversation].list_display)
-        self.assertIn("content_short", admin.site._registry[Message].list_display)
+        self.assertIn("short_content", admin.site._registry[Message].list_display)
         self.assertIn("service_area", admin.site._registry[LeadDraft].list_display)
         self.assertIn("is_active", admin.site._registry[KnowledgeDocument].list_display)
         self.assertIn("priority", admin.site._registry[HandoffRequest].list_display)
@@ -104,3 +104,36 @@ class AdminActionTests(TestCase):
 
         self.assertEqual(handoff.status, HandoffRequest.Status.RESOLVED)
         self.assertIsNotNone(handoff.resolved_at)
+
+    def test_handoff_action_marks_request_as_cancelled(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="admin-cancel")
+        handoff = HandoffRequest.objects.create(
+            tenant=self.tenant,
+            conversation=conversation,
+            reason=HandoffRequest.Reason.MANUAL,
+            priority=HandoffRequest.Priority.LOW,
+        )
+
+        mark_handoffs_cancelled(None, None, HandoffRequest.objects.filter(pk=handoff.pk))
+        handoff.refresh_from_db()
+
+        self.assertEqual(handoff.status, HandoffRequest.Status.CANCELLED)
+
+    def test_short_admin_text_methods_do_not_dump_large_values(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="admin-short")
+        message = Message.objects.create(
+            conversation=conversation,
+            role=Message.Role.USER,
+            content="Mensagem muito longa " * 20,
+        )
+        handoff = HandoffRequest.objects.create(
+            tenant=self.tenant,
+            conversation=conversation,
+            summary="Resumo muito longo " * 20,
+        )
+
+        message_admin = admin.site._registry[Message]
+        handoff_admin = admin.site._registry[HandoffRequest]
+
+        self.assertLessEqual(len(message_admin.short_content(message)), 90)
+        self.assertLessEqual(len(handoff_admin.short_summary(handoff)), 90)

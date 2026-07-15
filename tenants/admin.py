@@ -25,7 +25,7 @@ def disable_profile_ai(modeladmin, request, queryset):
 
 @admin.register(Tenant)
 class TenantAdmin(admin.ModelAdmin):
-    list_display = ["name", "slug", "domain", "is_active"]
+    list_display = ["name", "slug", "domain", "is_active", "created_at", "updated_at"]
     list_filter = ["is_active"]
     search_fields = ["name", "slug", "domain"]
     prepopulated_fields = {"slug": ["name"]}
@@ -35,8 +35,8 @@ class TenantAdmin(admin.ModelAdmin):
 
 @admin.register(AssistantProfile)
 class AssistantProfileAdmin(admin.ModelAdmin):
-    list_display = ["tenant", "name", "use_ai", "primary_goal", "is_active"]
-    list_filter = ["use_ai", "is_active", "tenant"]
+    list_display = ["tenant", "name", "use_ai", "primary_goal"]
+    list_filter = ["use_ai", "tenant"]
     search_fields = ["name", "tenant__name", "tenant__slug", "primary_goal"]
     readonly_fields = ["created_at", "updated_at"]
     actions = [enable_profile_ai, disable_profile_ai]

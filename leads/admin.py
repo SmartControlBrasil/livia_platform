@@ -43,8 +43,9 @@ class LeadDraftAdmin(admin.ModelAdmin):
         "status",
         "service_area",
         "created_at",
+        "updated_at",
     ]
-    list_filter = ["status", "tenant", LeadServiceAreaFilter]
+    list_filter = ["status", LeadServiceAreaFilter, "created_at"]
     search_fields = [
         "name",
         "company",

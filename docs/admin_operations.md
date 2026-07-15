@@ -61,7 +61,8 @@ Abra **Conversations > Handoff requests** para ver pedidos de atendimento humano
 
 Action disponível:
 
-- marcar handoffs selecionados como resolvidos.
+- marcar handoffs selecionados como resolvidos;
+- marcar handoffs selecionados como cancelados.
 
 Campos como `metadata`, datas de criação/atualização e `resolved_at` ficam em leitura para preservar trilha operacional.
 

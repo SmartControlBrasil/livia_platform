@@ -16,6 +16,11 @@ def mark_handoffs_resolved(modeladmin, request, queryset):
     queryset.update(status=HandoffRequest.Status.RESOLVED, resolved_at=timezone.now())
 
 
+@admin.action(description="Marcar handoffs selecionados como cancelados")
+def mark_handoffs_cancelled(modeladmin, request, queryset):
+    queryset.update(status=HandoffRequest.Status.CANCELLED)
+
+
 class MessageInline(admin.TabularInline):
     model = Message
     extra = 0
@@ -49,13 +54,13 @@ class ConversationAdmin(admin.ModelAdmin):
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    list_display = ["conversation", "role", "content_short", "created_at"]
-    list_filter = ["role", "conversation__tenant"]
+    list_display = ["conversation", "role", "short_content", "created_at"]
+    list_filter = ["role", "created_at"]
     search_fields = ["content", "conversation__session_id", "conversation__tenant__name", "conversation__tenant__slug"]
     readonly_fields = ["created_at"]
 
     @admin.display(description="Content")
-    def content_short(self, obj):
+    def short_content(self, obj):
         return _short_text(obj.content)
 
 
@@ -69,8 +74,9 @@ class HandoffRequestAdmin(admin.ModelAdmin):
         "visitor_name",
         "visitor_phone",
         "created_at",
+        "resolved_at",
     ]
-    list_filter = ["status", "reason", "priority", "tenant"]
+    list_filter = ["tenant", "status", "reason", "priority", "created_at"]
     search_fields = [
         "visitor_name",
         "visitor_company",
@@ -82,4 +88,8 @@ class HandoffRequestAdmin(admin.ModelAdmin):
         "tenant__slug",
     ]
     readonly_fields = ["created_at", "updated_at", "resolved_at", "metadata"]
-    actions = [mark_handoffs_resolved]
+    actions = [mark_handoffs_resolved, mark_handoffs_cancelled]
+
+    @admin.display(description="Summary")
+    def short_summary(self, obj):
+        return _short_text(obj.summary)
