@@ -174,6 +174,7 @@ class CRMDispatchService:
                 lead_draft=lead_draft,
                 external_id=external_id,
             )
+            self._dispatch_webhook_lead_qualified(lead_draft)
             return CRMDispatchResult(
                 attempted=True,
                 success=True,
@@ -197,6 +198,19 @@ class CRMDispatchService:
             lead_draft=lead_draft,
             message=response.message,
         )
+
+    def _dispatch_webhook_lead_qualified(self, lead_draft: LeadDraft) -> None:
+        try:
+            from integrations.webhooks.service import WebhookDispatchService
+
+            WebhookDispatchService().dispatch_lead_qualified(lead_draft)
+        except Exception as exc:
+            logger.info(
+                "livia_webhook_lead_dispatch_ignored lead_draft_id=%s tenant_slug=%s error_type=%s",
+                lead_draft.id,
+                lead_draft.tenant.slug,
+                type(exc).__name__,
+            )
 
     def _log_event(self, event_type: str, *, lead_draft: LeadDraft, external_id: str = "") -> None:
         parts = [

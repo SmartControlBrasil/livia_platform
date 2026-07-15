@@ -235,3 +235,183 @@ class OpenAIChatClientTests(SimpleTestCase):
 
         self.assertFalse(result.success)
         self.assertEqual(result.error_type, "Timeout")
+
+
+from django.contrib import admin
+from django.test import TestCase
+
+from conversations.models import Conversation, HandoffRequest
+from integrations.models import TenantWebhookConfig, WebhookDeliveryLog
+from integrations.webhooks import service as webhook_service_module
+from integrations.webhooks.service import WebhookDispatchService
+from leads.models import LeadDraft
+from tenants.models import Tenant
+
+
+class TenantWebhookConfigTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil", domain="https://example.com")
+
+    def test_webhook_config_can_be_created_for_tenant(self):
+        config = TenantWebhookConfig.objects.create(
+            tenant=self.tenant,
+            name="N8N Handoff",
+            event_type=TenantWebhookConfig.EventType.HANDOFF_CREATED,
+            target_url="https://n8n.example/webhook/livia",
+            secret_token="secret-token",
+        )
+
+        self.assertEqual(config.tenant, self.tenant)
+        self.assertTrue(config.is_active)
+        self.assertTrue(config.dry_run)
+
+    def test_webhook_models_are_registered_in_admin(self):
+        self.assertIn(TenantWebhookConfig, admin.site._registry)
+        self.assertIn(WebhookDeliveryLog, admin.site._registry)
+        self.assertNotIn("secret_token", admin.site._registry[TenantWebhookConfig].list_display)
+
+
+class WebhookDispatchServiceTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil", domain="https://example.com")
+        self.conversation = Conversation.objects.create(
+            tenant=self.tenant,
+            session_id="webhook-session",
+            source_page="https://example.com/origem",
+        )
+        self.handoff = HandoffRequest.objects.create(
+            tenant=self.tenant,
+            conversation=self.conversation,
+            reason=HandoffRequest.Reason.EXPLICIT_REQUEST,
+            priority=HandoffRequest.Priority.HIGH,
+            visitor_name="Maria",
+            visitor_company="ACME",
+            visitor_phone="11999999999",
+            visitor_email="maria@example.com",
+            summary="Resumo seguro do handoff",
+            source_page="https://example.com/origem",
+        )
+        self.lead = LeadDraft.objects.create(
+            tenant=self.tenant,
+            conversation=self.conversation,
+            name="Maria",
+            company="ACME",
+            phone="11999999999",
+            email="maria@example.com",
+            need_summary="Preciso de automação industrial para uma linha de produção",
+            status=LeadDraft.Status.QUALIFIED,
+        )
+        self.service = WebhookDispatchService()
+
+    def _create_config(self, **overrides):
+        data = {
+            "tenant": self.tenant,
+            "name": "N8N",
+            "event_type": TenantWebhookConfig.EventType.ALL,
+            "target_url": "https://n8n.example/webhook/livia",
+            "secret_token": "super-secret-token",
+            "is_active": True,
+            "dry_run": True,
+        }
+        data.update(overrides)
+        return TenantWebhookConfig.objects.create(**data)
+
+    def test_inactive_config_does_not_send_or_log(self):
+        self._create_config(is_active=False)
+
+        with patch("integrations.webhooks.service.requests.post") as post_mock:
+            logs = self.service.dispatch_handoff_created(self.handoff)
+
+        post_mock.assert_not_called()
+        self.assertEqual(logs, [])
+        self.assertEqual(WebhookDeliveryLog.objects.count(), 0)
+
+    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=True)
+    def test_global_dry_run_does_not_post_real_request(self):
+        self._create_config(dry_run=False)
+
+        with patch("integrations.webhooks.service.requests.post") as post_mock:
+            logs = self.service.dispatch_handoff_created(self.handoff)
+
+        post_mock.assert_not_called()
+        self.assertEqual(logs[0].status, WebhookDeliveryLog.Status.DRY_RUN)
+
+    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=False)
+    def test_config_dry_run_does_not_post_real_request(self):
+        self._create_config(dry_run=True)
+
+        with patch("integrations.webhooks.service.requests.post") as post_mock:
+            logs = self.service.dispatch_handoff_created(self.handoff)
+
+        post_mock.assert_not_called()
+        self.assertEqual(logs[0].status, WebhookDeliveryLog.Status.DRY_RUN)
+
+    def test_handoff_payload_contains_expected_fields(self):
+        payload = self.service.build_handoff_payload(self.handoff)
+
+        self.assertEqual(payload["tenant_slug"], self.tenant.slug)
+        self.assertEqual(payload["event_type"], TenantWebhookConfig.EventType.HANDOFF_CREATED)
+        self.assertEqual(payload["handoff_id"], self.handoff.id)
+        self.assertEqual(payload["visitor_phone"], "11999999999")
+        self.assertEqual(payload["source_page"], "https://example.com/origem")
+        self.assertIn("created_at", payload)
+
+    def test_lead_payload_contains_expected_fields(self):
+        payload = self.service.build_lead_payload(self.lead)
+
+        self.assertEqual(payload["tenant_slug"], self.tenant.slug)
+        self.assertEqual(payload["event_type"], TenantWebhookConfig.EventType.LEAD_QUALIFIED)
+        self.assertEqual(payload["lead_id"], self.lead.id)
+        self.assertEqual(payload["service_area"], "automation")
+        self.assertEqual(payload["source_page"], "https://example.com/origem")
+
+    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=True)
+    def test_secret_token_does_not_appear_in_payload_preview(self):
+        self._create_config(secret_token="super-secret-token")
+
+        self.service.dispatch_handoff_created(self.handoff)
+
+        log = WebhookDeliveryLog.objects.get()
+        self.assertNotIn("super-secret-token", str(log.payload_preview))
+        self.assertNotIn("secret_token", log.payload_preview)
+
+    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=True)
+    def test_dispatch_handoff_created_creates_delivery_log(self):
+        self._create_config(event_type=TenantWebhookConfig.EventType.HANDOFF_CREATED)
+
+        self.service.dispatch_handoff_created(self.handoff)
+
+        log = WebhookDeliveryLog.objects.get(related_handoff=self.handoff)
+        self.assertEqual(log.event_type, TenantWebhookConfig.EventType.HANDOFF_CREATED)
+        self.assertEqual(log.status, WebhookDeliveryLog.Status.DRY_RUN)
+
+    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=True)
+    def test_dispatch_lead_qualified_creates_delivery_log(self):
+        self._create_config(event_type=TenantWebhookConfig.EventType.LEAD_QUALIFIED)
+
+        self.service.dispatch_lead_qualified(self.lead)
+
+        log = WebhookDeliveryLog.objects.get(related_lead=self.lead)
+        self.assertEqual(log.event_type, TenantWebhookConfig.EventType.LEAD_QUALIFIED)
+        self.assertEqual(log.status, WebhookDeliveryLog.Status.DRY_RUN)
+
+    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=False)
+    def test_http_error_does_not_break_flow(self):
+        self._create_config(dry_run=False)
+        response = Mock(status_code=500, text="server error")
+
+        with patch("integrations.webhooks.service.requests.post", return_value=response):
+            logs = self.service.dispatch_handoff_created(self.handoff)
+
+        self.assertEqual(logs[0].status, WebhookDeliveryLog.Status.FAILED)
+        self.assertEqual(logs[0].status_code, 500)
+
+    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=False)
+    def test_timeout_does_not_break_flow(self):
+        self._create_config(dry_run=False)
+
+        with patch("integrations.webhooks.service.requests.post", side_effect=webhook_service_module.requests.Timeout("timeout")):
+            logs = self.service.dispatch_handoff_created(self.handoff)
+
+        self.assertEqual(logs[0].status, WebhookDeliveryLog.Status.FAILED)
+        self.assertIn("timeout", logs[0].error_message)

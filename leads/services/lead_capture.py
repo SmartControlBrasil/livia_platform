@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
+import logging
+
 from django.db import transaction
 
 from assistant_core.qualification import (
@@ -23,6 +25,8 @@ from assistant_core.state import LeadState, next_state_after_message
 from conversations.models import Conversation
 
 from ..models import LeadDraft
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -111,6 +115,7 @@ class LeadCaptureService:
         elif self._message_is_vague_need(message) and not is_valid_need_summary(lead_draft.need_summary):
             self._append_invalid(invalid_fields, "need_summary")
 
+        previous_status = lead_draft.status
         missing_fields = self.calculate_missing_fields(lead_draft)
         if lead_draft.status not in {LeadDraft.Status.SENT_TO_CRM, LeadDraft.Status.FAILED}:
             lead_draft.status = (
@@ -119,6 +124,8 @@ class LeadCaptureService:
                 else LeadDraft.Status.DRAFT
             )
         lead_draft.save()
+        if previous_status != lead_draft.status and lead_draft.status == LeadDraft.Status.QUALIFIED:
+            self._dispatch_webhook_lead_qualified(lead_draft)
 
         state_snapshot = next_state_after_message(
             conversation,
@@ -136,6 +143,19 @@ class LeadCaptureService:
             invalid_fields=invalid_fields,
             state=state_snapshot.state,
         )
+
+    def _dispatch_webhook_lead_qualified(self, lead_draft: LeadDraft) -> None:
+        try:
+            from integrations.webhooks.service import WebhookDispatchService
+
+            WebhookDispatchService().dispatch_lead_qualified(lead_draft)
+        except Exception as exc:
+            logger.info(
+                "livia_webhook_lead_capture_dispatch_ignored lead_draft_id=%s tenant_slug=%s error_type=%s",
+                lead_draft.id,
+                lead_draft.tenant.slug,
+                type(exc).__name__,
+            )
 
     def calculate_missing_fields(self, lead_draft: LeadDraft) -> list[str]:
         missing: list[str] = []

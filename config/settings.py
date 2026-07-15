@@ -185,6 +185,10 @@ LIVIA_CHAT_RATE_LIMIT_REQUESTS = config("LIVIA_CHAT_RATE_LIMIT_REQUESTS", defaul
 LIVIA_CHAT_RATE_LIMIT_WINDOW_SECONDS = config("LIVIA_CHAT_RATE_LIMIT_WINDOW_SECONDS", default=300, cast=int)
 LIVIA_SPAM_GUARD_ENABLED = config("LIVIA_SPAM_GUARD_ENABLED", default=True, cast=bool)
 
+LIVIA_WEBHOOKS_ENABLED = config("LIVIA_WEBHOOKS_ENABLED", default=False, cast=bool)
+LIVIA_WEBHOOKS_DRY_RUN = config("LIVIA_WEBHOOKS_DRY_RUN", default=True, cast=bool)
+LIVIA_WEBHOOK_TIMEOUT_SECONDS = config("LIVIA_WEBHOOK_TIMEOUT_SECONDS", default=6, cast=int)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
