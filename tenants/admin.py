@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import AssistantProfile, Tenant
+from .services.onboarding import build_widget_snippet
 
 
 @admin.action(description="Marcar tenants selecionados como ativos")
@@ -29,8 +30,14 @@ class TenantAdmin(admin.ModelAdmin):
     list_filter = ["is_active"]
     search_fields = ["name", "slug", "domain"]
     prepopulated_fields = {"slug": ["name"]}
-    readonly_fields = ["created_at", "updated_at"]
+    readonly_fields = ["created_at", "updated_at", "widget_snippet_preview"]
     actions = [activate_tenants, deactivate_tenants]
+
+    @admin.display(description="Widget snippet")
+    def widget_snippet_preview(self, obj):
+        if not obj or not obj.slug:
+            return ""
+        return build_widget_snippet(obj.slug)
 
 
 @admin.register(AssistantProfile)
