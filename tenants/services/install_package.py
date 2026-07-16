@@ -12,6 +12,7 @@ from tenants.services.onboarding import (
     build_widget_snippet,
     normalize_allowed_origin,
 )
+from tenants.services.widget_config import build_widget_config_for_tenant
 
 DEFAULT_INSTALL_BASE_URL = "https://livia.smartcontrolbrasil.com.br"
 
@@ -26,6 +27,7 @@ class TenantInstallPackage:
     allowed_origin: str
     warnings: list[str] = field(default_factory=list)
     install_instructions: list[str] = field(default_factory=list)
+    widget_config: dict = field(default_factory=dict)
 
     def to_dict(self):
         return {
@@ -38,6 +40,7 @@ class TenantInstallPackage:
             "snippet": self.snippet,
             "allowed_origin": self.allowed_origin,
             "warnings": self.warnings,
+            "widget_config": self.widget_config,
         }
 
 
@@ -90,4 +93,5 @@ class TenantInstallPackageService:
                 "Publique o site.",
                 "Teste abrindo a página e enviando uma mensagem curta.",
             ],
+            widget_config=build_widget_config_for_tenant(tenant),
         )

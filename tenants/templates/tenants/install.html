@@ -12,6 +12,7 @@
     .status { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 13px; background: #e8f5e9; color: #1b5e20; }
     .status.inactive { background: #fff3e0; color: #9a4b00; }
     .warning { background: #fff8e1; border: 1px solid #f0d27a; border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
+    .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid #cbd5e1; vertical-align: -2px; margin-right: 6px; }
     section { margin-top: 28px; }
   </style>
 </head>
@@ -27,6 +28,16 @@
     </p>
     <p>Tenant: <code>{{ package.tenant.slug }}</code></p>
     <p>Domínio/origin configurado: <code>{{ package.allowed_origin|default:package.tenant.domain|default:"não configurado" }}</code></p>
+
+    <section>
+      <h2>Configuração visual</h2>
+      <p>Widget: <strong>{% if package.widget_config.is_widget_enabled %}ativo{% else %}inativo{% endif %}</strong></p>
+      <p>Título: <code>{{ package.widget_config.widget_title }}</code></p>
+      <p>Botão: <code>{{ package.widget_config.launcher_label }}</code></p>
+      <p>Cor: <span class="swatch" style="background: {{ package.widget_config.primary_color }}"></span><code>{{ package.widget_config.primary_color }}</code></p>
+      <p>Posição: <code>{{ package.widget_config.position }}</code></p>
+      <p>Placeholder: <code>{{ package.widget_config.placeholder_text }}</code></p>
+    </section>
 
     {% if package.warnings %}
       <section>

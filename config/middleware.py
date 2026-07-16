@@ -9,20 +9,20 @@ logger = logging.getLogger(__name__)
 
 
 class LiviaWidgetCorsMiddleware:
-    CHAT_PATH = "/api/chat/"
+    CORS_PATHS = {"/api/chat/", "/api/widget/config/"}
     ALLOWED_HEADERS = "Content-Type, Authorization"
-    ALLOWED_METHODS = "POST, OPTIONS"
+    ALLOWED_METHODS = "GET, POST, OPTIONS"
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        if request.path == self.CHAT_PATH and request.method == "OPTIONS":
+        if request.path in self.CORS_PATHS and request.method == "OPTIONS":
             response = HttpResponse(status=204)
         else:
             response = self.get_response(request)
 
-        if request.path == self.CHAT_PATH:
+        if request.path in self.CORS_PATHS:
             self._patch_cors_headers(request, response)
         return response
 

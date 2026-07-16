@@ -49,8 +49,44 @@ class TenantAdmin(admin.ModelAdmin):
 
 @admin.register(AssistantProfile)
 class AssistantProfileAdmin(admin.ModelAdmin):
-    list_display = ["tenant", "name", "use_ai", "primary_goal"]
-    list_filter = ["use_ai", "tenant"]
-    search_fields = ["name", "tenant__name", "tenant__slug", "primary_goal"]
+    list_display = [
+        "tenant",
+        "name",
+        "widget_title",
+        "launcher_label",
+        "primary_color",
+        "position",
+        "is_widget_enabled",
+        "use_ai",
+        "primary_goal",
+    ]
+    list_filter = ["is_widget_enabled", "position", "show_branding", "use_ai", "tenant"]
+    search_fields = [
+        "name",
+        "widget_title",
+        "launcher_label",
+        "tenant__name",
+        "tenant__slug",
+        "primary_goal",
+    ]
     readonly_fields = ["created_at", "updated_at"]
+    fieldsets = (
+        (None, {"fields": ("tenant", "name", "initial_message", "tone", "primary_goal", "use_ai", "is_active")}),
+        (
+            "Widget",
+            {
+                "fields": (
+                    "widget_title",
+                    "launcher_label",
+                    "primary_color",
+                    "position",
+                    "show_branding",
+                    "collect_contact_hint",
+                    "placeholder_text",
+                    "is_widget_enabled",
+                )
+            },
+        ),
+        ("Datas", {"fields": ("created_at", "updated_at")}),
+    )
     actions = [enable_profile_ai, disable_profile_ai]

@@ -18,7 +18,7 @@ https://livia.smartcontrolbrasil.com.br/install/granimarmores-pitondo/
 https://livia.smartcontrolbrasil.com.br/install/caneca-de-garagem/
 ~~~
 
-A página mostra status do tenant, domínio/origin configurado, snippet do widget, instruções curtas e um exemplo de curl para validar a API.
+A página mostra status do tenant, domínio/origin configurado, configurações visuais atuais, snippet do widget, instruções curtas e um exemplo de curl para validar a API.
 
 ## Pacote JSON
 
@@ -40,11 +40,23 @@ Exemplo de resposta:
   "api_url": "https://livia.smartcontrolbrasil.com.br/api/chat/",
   "snippet": "<script\n  src=\"https://livia.smartcontrolbrasil.com.br/widget.js\"\n  data-tenant=\"granimarmores-pitondo\"\n  data-api-url=\"https://livia.smartcontrolbrasil.com.br/api/chat/\">\n</script>",
   "allowed_origin": "https://www.granimarmorespitondo.com.br",
-  "warnings": []
+  "warnings": [],
+  "widget_config": {
+    "tenant": "granimarmores-pitondo",
+    "assistant_name": "Lívia",
+    "widget_title": "Lívia",
+    "launcher_label": "Fale com a Lívia",
+    "initial_message": "Olá! Sou a Lívia. Como posso te ajudar?",
+    "primary_color": "#2563eb",
+    "position": "bottom_right",
+    "placeholder_text": "Digite sua mensagem...",
+    "show_branding": true,
+    "is_widget_enabled": true
+  }
 }
 ~~~
 
-O JSON não inclui tokens, secrets, API keys, webhooks ou configurações internas sensíveis.
+O JSON não inclui tokens, secrets, API keys, webhooks ou configurações internas sensíveis. O bloco `widget_config` contém apenas campos públicos seguros para renderização do widget.
 
 ## Como instalar no site
 
@@ -107,3 +119,7 @@ Verifique se `https://livia.smartcontrolbrasil.com.br/widget.js` responde 200 e 
 ### API retorna erro
 
 Confira se o snippet usa `data-api-url="https://livia.smartcontrolbrasil.com.br/api/chat/"`, se o tenant está ativo e se a mensagem de teste não está vazia, longa demais ou bloqueada por rate limit.
+
+## Personalização visual
+
+Veja `docs/widget_customization.md` para campos disponíveis, defaults, endpoint `/api/widget/config/` e exemplos de onboarding com aparência por tenant.

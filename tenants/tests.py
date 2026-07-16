@@ -1,7 +1,9 @@
 from io import StringIO
 
 from django.contrib import admin
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 
 from knowledge_base.models import KnowledgeDocument
@@ -154,6 +156,49 @@ class TenantOnboardingServiceTests(TestCase):
         self.assertEqual(AssistantProfile.objects.count(), 0)
         self.assertEqual(KnowledgeDocument.objects.count(), 0)
 
+    def test_onboard_accepts_widget_customization(self):
+        result = self.service.onboard(
+            slug="custom-widget",
+            name="Custom Widget",
+            domain="custom.example",
+            widget_title="Lívia Custom",
+            launcher_label="Chamar atendimento",
+            primary_color="#0f766e",
+            position="bottom_left",
+            placeholder_text="Como podemos ajudar?",
+            widget_enabled=False,
+        )
+
+        profile = result.assistant_profile
+        self.assertEqual(profile.widget_title, "Lívia Custom")
+        self.assertEqual(profile.launcher_label, "Chamar atendimento")
+        self.assertEqual(profile.primary_color, "#0f766e")
+        self.assertEqual(profile.position, "bottom_left")
+        self.assertEqual(profile.placeholder_text, "Como podemos ajudar?")
+        self.assertFalse(profile.is_widget_enabled)
+
+    def test_onboard_rejects_invalid_primary_color(self):
+        with self.assertRaises(ValidationError):
+            self.service.onboard(
+                slug="bad-color",
+                name="Bad Color",
+                domain="bad-color.example",
+                primary_color="blue",
+            )
+
+        self.assertFalse(AssistantProfile.objects.filter(tenant__slug="bad-color").exists())
+
+    def test_onboard_rejects_invalid_position(self):
+        with self.assertRaises(ValidationError):
+            self.service.onboard(
+                slug="bad-position",
+                name="Bad Position",
+                domain="bad-position.example",
+                position="top_right",
+            )
+
+        self.assertFalse(AssistantProfile.objects.filter(tenant__slug="bad-position").exists())
+
 
 class OnboardTenantCommandTests(TestCase):
     def test_onboard_tenant_command_prints_snippet(self):
@@ -174,6 +219,68 @@ class OnboardTenantCommandTests(TestCase):
         self.assertIn("Snippet do widget:", content)
         self.assertIn('data-tenant="command-tenant"', content)
         self.assertIn("Tenant: command-tenant (criado)", content)
+
+    def test_onboard_tenant_command_accepts_widget_fields(self):
+        output = StringIO()
+
+        call_command(
+            "onboard_tenant",
+            "--slug",
+            "command-widget",
+            "--name",
+            "Command Widget",
+            "--domain",
+            "command-widget.example",
+            "--widget-title",
+            "Lívia Command",
+            "--launcher-label",
+            "Abrir chat",
+            "--primary-color",
+            "#abc",
+            "--position",
+            "bottom_left",
+            "--placeholder-text",
+            "Digite aqui",
+            "--disable-widget",
+            stdout=output,
+        )
+
+        profile = Tenant.objects.get(slug="command-widget").assistant_profile
+        self.assertEqual(profile.widget_title, "Lívia Command")
+        self.assertEqual(profile.launcher_label, "Abrir chat")
+        self.assertEqual(profile.primary_color, "#abc")
+        self.assertEqual(profile.position, "bottom_left")
+        self.assertEqual(profile.placeholder_text, "Digite aqui")
+        self.assertFalse(profile.is_widget_enabled)
+        self.assertIn("Widget: inativo", output.getvalue())
+
+    def test_onboard_tenant_command_rejects_invalid_color(self):
+        with self.assertRaises(CommandError):
+            call_command(
+                "onboard_tenant",
+                "--slug",
+                "bad-command-color",
+                "--name",
+                "Bad Command Color",
+                "--domain",
+                "bad-command-color.example",
+                "--primary-color",
+                "not-a-color",
+            )
+
+    def test_onboard_tenant_command_rejects_invalid_position(self):
+        with self.assertRaises(CommandError):
+            call_command(
+                "onboard_tenant",
+                "--slug",
+                "bad-command-position",
+                "--name",
+                "Bad Command Position",
+                "--domain",
+                "bad-command-position.example",
+                "--position",
+                "center",
+            )
 
 
 
@@ -227,6 +334,12 @@ class TenantInstallPackageTests(TestCase):
         self.assertTrue(data["is_active"])
         self.assertEqual(data["allowed_origin"], "https://www.granimarmorespitondo.com.br")
         self.assertIn('data-tenant="granimarmores-pitondo"', data["snippet"])
+        self.assertIn("widget_config", data)
+        self.assertEqual(data["widget_config"]["tenant"], "granimarmores-pitondo")
+        self.assertEqual(data["widget_config"]["widget_title"], "Lívia")
+        self.assertEqual(data["widget_config"]["primary_color"], "#2563eb")
+        self.assertEqual(data["widget_config"]["position"], "bottom_right")
+        self.assertTrue(data["widget_config"]["is_widget_enabled"])
 
     def test_install_json_does_not_contain_secrets(self):
         from integrations.models import TenantWebhookConfig
@@ -271,10 +384,14 @@ class TenantInstallPackageTests(TestCase):
     def test_tenant_admin_exposes_install_url_and_widget_snippet_readonly(self):
         tenant_admin = admin.site._registry[Tenant]
 
+        profile_admin = admin.site._registry[AssistantProfile]
+
         self.assertIn("install_url", tenant_admin.readonly_fields)
         self.assertIn("widget_snippet_preview", tenant_admin.readonly_fields)
         self.assertIn("/install/granimarmores-pitondo/", tenant_admin.install_url(self.tenant))
         self.assertIn('data-tenant="granimarmores-pitondo"', tenant_admin.widget_snippet_preview(self.tenant))
+        self.assertIn("primary_color", profile_admin.list_display)
+        self.assertIn("is_widget_enabled", profile_admin.list_filter)
 
     def test_install_package_reuses_normalized_domain(self):
         package = TenantInstallPackageService().build_for_tenant(self.tenant)

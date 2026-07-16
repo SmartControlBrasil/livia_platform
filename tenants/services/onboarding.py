@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from django.db import transaction
 from django.db.models import Q
 
 from knowledge_base.models import KnowledgeDocument
@@ -76,6 +77,12 @@ class TenantOnboardingService:
         primary_goal="qualificar leads",
         tone="consultivo, claro e profissional",
         use_ai=False,
+        widget_title="",
+        launcher_label="Fale com a Lívia",
+        primary_color="#2563eb",
+        position="bottom_right",
+        placeholder_text="Digite sua mensagem...",
+        widget_enabled=True,
         seed_knowledge=False,
         dry_run=False,
     ):
@@ -99,33 +106,49 @@ class TenantOnboardingService:
             assistant_profile.tone = tone
             assistant_profile.primary_goal = primary_goal
             assistant_profile.use_ai = use_ai
+            assistant_profile.widget_title = widget_title
+            assistant_profile.launcher_label = launcher_label
+            assistant_profile.primary_color = primary_color
+            assistant_profile.position = position
+            assistant_profile.placeholder_text = placeholder_text
+            assistant_profile.is_widget_enabled = widget_enabled
             assistant_profile.is_active = True
+            clean_excludes = ["tenant"] if tenant.pk is None else None
+            assistant_profile.full_clean(exclude=clean_excludes)
             created_knowledge_count = 0
             if seed_knowledge and not self._knowledge_exists(existing_tenant, name):
                 created_knowledge_count = 1
         else:
-            tenant, created_tenant = Tenant.objects.update_or_create(
-                slug=slug,
-                defaults={
-                    "name": name,
-                    "domain": tenant_domain,
-                    "is_active": True,
-                },
-            )
-            assistant_profile, created_profile = AssistantProfile.objects.update_or_create(
-                tenant=tenant,
-                defaults={
-                    "name": assistant_name,
-                    "initial_message": initial_message,
-                    "tone": tone,
-                    "primary_goal": primary_goal,
-                    "use_ai": use_ai,
-                    "is_active": True,
-                },
-            )
-            created_knowledge_count = 0
-            if seed_knowledge:
-                created_knowledge_count = self._seed_base_knowledge(tenant, name, primary_goal, allowed_origin)
+            with transaction.atomic():
+                tenant, created_tenant = Tenant.objects.update_or_create(
+                    slug=slug,
+                    defaults={
+                        "name": name,
+                        "domain": tenant_domain,
+                        "is_active": True,
+                    },
+                )
+                assistant_profile = AssistantProfile.objects.filter(tenant=tenant).first()
+                created_profile = assistant_profile is None
+                if assistant_profile is None:
+                    assistant_profile = AssistantProfile(tenant=tenant)
+                assistant_profile.name = assistant_name
+                assistant_profile.initial_message = initial_message
+                assistant_profile.tone = tone
+                assistant_profile.primary_goal = primary_goal
+                assistant_profile.use_ai = use_ai
+                assistant_profile.widget_title = widget_title
+                assistant_profile.launcher_label = launcher_label
+                assistant_profile.primary_color = primary_color
+                assistant_profile.position = position
+                assistant_profile.placeholder_text = placeholder_text
+                assistant_profile.is_widget_enabled = widget_enabled
+                assistant_profile.is_active = True
+                assistant_profile.full_clean()
+                assistant_profile.save()
+                created_knowledge_count = 0
+                if seed_knowledge:
+                    created_knowledge_count = self._seed_base_knowledge(tenant, name, primary_goal, allowed_origin)
 
         if use_ai:
             warnings.append("Profile use_ai is enabled; real AI still requires LIVIA_AI_ENABLED=True globally.")

@@ -1,4 +1,6 @@
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
+
+from tenants.services.widget_config import build_widget_config_for_tenant_slug
 
 
 def widget_js(request):
@@ -7,6 +9,18 @@ def widget_js(request):
   const tenant = currentScript ? (currentScript.getAttribute("data-tenant") || "default") : "default";
   const sessionStorageKey = "livia_session_id_" + tenant;
   const apiUrl = resolveApiUrl(currentScript);
+  const configUrl = resolveConfigUrl(currentScript);
+  const defaultConfig = {
+    assistant_name: "Lívia",
+    widget_title: "Lívia",
+    launcher_label: "Fale com a Lívia",
+    initial_message: "Olá! Sou a Lívia. Como posso te ajudar?",
+    primary_color: "#2563eb",
+    position: "bottom_right",
+    placeholder_text: "Digite sua mensagem...",
+    show_branding: true,
+    is_widget_enabled: true
+  };
 
   function resolveApiUrl(scriptEl) {
     if (scriptEl) {
@@ -23,6 +37,19 @@ def widget_js(request):
       }
     }
     return "/api/chat/";
+  }
+
+  function resolveConfigUrl(scriptEl) {
+    if (scriptEl && scriptEl.src) {
+      try {
+        const url = new URL("/api/widget/config/", scriptEl.src);
+        url.searchParams.set("tenant", tenant);
+        return url.href;
+      } catch (error) {
+        return "/api/widget/config/?tenant=" + encodeURIComponent(tenant);
+      }
+    }
+    return "/api/widget/config/?tenant=" + encodeURIComponent(tenant);
   }
 
   function getSessionId() {
@@ -57,24 +84,30 @@ def widget_js(request):
     const style = document.createElement("style");
     style.id = "livia-widget-styles";
     style.textContent = [
-      "#livia-launcher { position: fixed; left: 20px; bottom: 20px; z-index: 2147483000; border: 0; border-radius: 999px; padding: 12px 18px; cursor: pointer; background: #0f172a; color: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, .25); font: 600 14px/1.2 Arial, sans-serif; }",
-      "#livia-panel { position: fixed; left: 20px; bottom: 76px; width: min(360px, calc(100vw - 40px)); height: 520px; max-height: calc(100vh - 110px); z-index: 2147483000; display: none; flex-direction: column; background: #fff; border: 1px solid rgba(15, 23, 42, .12); border-radius: 18px; box-shadow: 0 18px 45px rgba(15, 23, 42, .2); overflow: hidden; font: 14px/1.4 Arial, sans-serif; }",
-      "@media (max-width: 480px) { #livia-launcher { left: 16px; bottom: 16px; } #livia-panel { left: 16px; bottom: 72px; width: calc(100vw - 32px); max-height: calc(100vh - 96px); } }",
+      "#livia-launcher { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000; border: 0; border-radius: 999px; padding: 12px 18px; cursor: pointer; background: var(--livia-primary, #2563eb); color: #fff; box-shadow: 0 12px 30px rgba(15, 23, 42, .25); font: 600 14px/1.2 Arial, sans-serif; }",
+      "#livia-launcher.livia-hidden { display: none; }",
+      "#livia-panel { position: fixed; right: 20px; bottom: 76px; width: min(360px, calc(100vw - 40px)); height: 520px; max-height: calc(100vh - 110px); z-index: 2147483000; display: none; flex-direction: column; background: #fff; border: 1px solid rgba(15, 23, 42, .12); border-radius: 18px; box-shadow: 0 18px 45px rgba(15, 23, 42, .2); overflow: hidden; font: 14px/1.4 Arial, sans-serif; }",
       "#livia-panel.livia-open { display: flex; }",
-      "#livia-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; background: #0f172a; color: #fff; }",
+      ".livia-bottom-left#livia-launcher { left: 20px; right: auto; }",
+      ".livia-bottom-left#livia-panel { left: 20px; right: auto; }",
+      ".livia-bottom-right#livia-launcher { right: 20px; left: auto; }",
+      ".livia-bottom-right#livia-panel { right: 20px; left: auto; }",
+      "@media (max-width: 480px) { #livia-launcher { right: 16px; bottom: 16px; } #livia-panel { right: 16px; bottom: 72px; width: calc(100vw - 32px); max-height: calc(100vh - 96px); } .livia-bottom-left#livia-launcher { left: 16px; right: auto; } .livia-bottom-left#livia-panel { left: 16px; right: auto; } .livia-bottom-right#livia-launcher { right: 16px; left: auto; } .livia-bottom-right#livia-panel { right: 16px; left: auto; } }",
+      "#livia-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; background: var(--livia-primary, #2563eb); color: #fff; }",
       "#livia-header strong { font-size: 15px; }",
       "#livia-close { border: 0; background: transparent; color: #fff; font-size: 24px; line-height: 1; cursor: pointer; padding: 0; }",
       "#livia-messages { flex: 1; overflow-y: auto; padding: 14px; background: #f8fafc; display: flex; flex-direction: column; gap: 10px; }",
       ".livia-message { max-width: 85%; padding: 10px 12px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }",
-      ".livia-message.user { align-self: flex-end; background: #2563eb; color: #fff; border-bottom-right-radius: 6px; }",
+      ".livia-message.user { align-self: flex-end; background: var(--livia-primary, #2563eb); color: #fff; border-bottom-right-radius: 6px; }",
       ".livia-message.assistant { align-self: flex-start; background: #fff; color: #0f172a; border: 1px solid rgba(15, 23, 42, .08); border-bottom-left-radius: 6px; }",
       ".livia-message.system { align-self: center; background: transparent; color: #64748b; font-size: 12px; padding: 0; }",
+      "#livia-branding { color: #64748b; font-size: 11px; padding: 0 12px 10px; text-align: center; background: #fff; }",
       "#livia-footer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(15, 23, 42, .08); background: #fff; }",
-      "#livia-input { flex: 1; border: 1px solid rgba(15, 23, 42, .15); border-radius: 12px; padding: 10px 12px; outline: none; font: inherit; }",
-      "#livia-send { border: 0; border-radius: 12px; padding: 10px 14px; background: #0f172a; color: #fff; cursor: pointer; font: 600 14px/1 Arial, sans-serif; }",
+      "#livia-input { flex: 1; border: 1px solid rgba(15, 23, 42, .15); border-radius: 12px; padding: 10px 12px; outline: none; font: inherit; min-width: 0; }",
+      "#livia-send { border: 0; border-radius: 12px; padding: 10px 14px; background: var(--livia-primary, #2563eb); color: #fff; cursor: pointer; font: 600 14px/1 Arial, sans-serif; }",
       "#livia-send:disabled, #livia-input:disabled { opacity: .65; cursor: not-allowed; }",
       "#livia-typing { align-self: flex-start; color: #64748b; font-size: 12px; padding: 2px 4px; }"
-    ].join("\\n");
+    ].join("\n");
     document.head.appendChild(style);
   }
 
@@ -113,10 +146,14 @@ def widget_js(request):
     sendButton.textContent = loading ? "..." : "Enviar";
   }
 
+  function isHexColor(value) {
+    return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(value || ""));
+  }
+
   function buildWidget() {
     injectStyles();
 
-    const launcher = createButton("Lívia", "livia-launcher");
+    const launcher = createButton(defaultConfig.launcher_label, "livia-launcher");
     const panel = document.createElement("div");
     panel.id = "livia-panel";
 
@@ -124,7 +161,7 @@ def widget_js(request):
     header.id = "livia-header";
 
     const title = document.createElement("strong");
-    title.textContent = "Lívia";
+    title.textContent = defaultConfig.widget_title;
 
     const closeButton = createButton("×", "livia-close");
 
@@ -138,32 +175,67 @@ def widget_js(request):
     const input = document.createElement("input");
     input.id = "livia-input";
     input.type = "text";
-    input.placeholder = "Digite sua mensagem...";
+    input.placeholder = defaultConfig.placeholder_text;
     input.setAttribute("aria-label", "Mensagem para a Lívia");
 
     const sendButton = createButton("Enviar", "livia-send");
     sendButton.type = "submit";
 
+    const branding = document.createElement("div");
+    branding.id = "livia-branding";
+    branding.textContent = "Atendimento por Lívia";
+
     const sessionId = getSessionId();
-    let assistantName = "Lívia";
+    let assistantName = defaultConfig.assistant_name;
     let typingIndicator = null;
     let isOpen = false;
+    let widgetEnabled = true;
+
+    function applyConfig(rawConfig) {
+      const config = Object.assign({}, defaultConfig, rawConfig || {});
+      const color = isHexColor(config.primary_color) ? config.primary_color : defaultConfig.primary_color;
+      const position = config.position === "bottom_left" ? "bottom_left" : "bottom_right";
+      const positionClass = position === "bottom_left" ? "livia-bottom-left" : "livia-bottom-right";
+      const otherPositionClass = position === "bottom_left" ? "livia-bottom-right" : "livia-bottom-left";
+
+      document.documentElement.style.setProperty("--livia-primary", color);
+      launcher.classList.remove(otherPositionClass);
+      panel.classList.remove(otherPositionClass);
+      launcher.classList.add(positionClass);
+      panel.classList.add(positionClass);
+
+      assistantName = String(config.assistant_name || defaultConfig.assistant_name).trim() || defaultConfig.assistant_name;
+      title.textContent = String(config.widget_title || assistantName).trim() || assistantName;
+      launcher.textContent = String(config.launcher_label || defaultConfig.launcher_label).trim() || defaultConfig.launcher_label;
+      input.placeholder = String(config.placeholder_text || defaultConfig.placeholder_text).trim() || defaultConfig.placeholder_text;
+
+      const firstMessage = messages.querySelector(".livia-message.assistant");
+      const initialMessage = String(config.initial_message || defaultConfig.initial_message).trim() || defaultConfig.initial_message;
+      if (firstMessage) {
+        firstMessage.textContent = initialMessage;
+      }
+
+      branding.style.display = config.show_branding === false ? "none" : "block";
+      widgetEnabled = config.is_widget_enabled !== false;
+      if (!widgetEnabled) {
+        launcher.classList.add("livia-hidden");
+        closePanel();
+      } else {
+        launcher.classList.remove("livia-hidden");
+      }
+    }
 
     function updateAssistantProfile(data) {
       const nextName = String((data && data.assistant_name) || "").trim();
-      if (nextName && nextName !== assistantName) {
+      if (nextName) {
         assistantName = nextName;
-        launcher.textContent = assistantName;
-        title.textContent = assistantName;
-      }
-      const initialMessage = String((data && data.initial_message) || "").trim();
-      const firstMessage = messages.querySelector(".livia-message.assistant");
-      if (initialMessage && firstMessage && firstMessage.textContent !== initialMessage) {
-        firstMessage.textContent = initialMessage;
       }
     }
 
     function openPanel() {
+      if (!widgetEnabled) {
+        return;
+      }
       panel.classList.add("livia-open");
       isOpen = true;
       input.focus();
@@ -197,9 +269,24 @@ def widget_js(request):
       typingIndicator = null;
     }
 
+    async function loadConfig() {
+      try {
+        const response = await fetch(configUrl, { method: "GET" });
+        if (!response.ok) {
+          return;
+        }
+        const data = await response.json().catch(function () {
+          return {};
+        });
+        applyConfig(data);
+      } catch (error) {
+        applyConfig(defaultConfig);
+      }
+    }
+
     async function sendMessage(rawMessage) {
       const message = String(rawMessage || "").trim();
-      if (!message) {
+      if (!message || !widgetEnabled) {
         return;
       }
 
@@ -263,12 +350,15 @@ def widget_js(request):
     footer.appendChild(sendButton);
     panel.appendChild(header);
     panel.appendChild(messages);
+    panel.appendChild(branding);
     panel.appendChild(footer);
 
     document.body.appendChild(launcher);
     document.body.appendChild(panel);
 
-    appendMessage(messages, "assistant", "Olá! Sou a Lívia. Como posso te ajudar?");
+    appendMessage(messages, "assistant", defaultConfig.initial_message);
+    applyConfig(defaultConfig);
+    loadConfig();
   }
 
   if (document.readyState === "loading") {
@@ -281,6 +371,11 @@ def widget_js(request):
         content,
         content_type="application/javascript; charset=utf-8",
     )
+
+
+def widget_config(request):
+    tenant_slug = request.GET.get("tenant", "").strip()
+    return JsonResponse(build_widget_config_for_tenant_slug(tenant_slug))
 
 
 def demo_page(request):
