@@ -159,6 +159,44 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Production security
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+SECURE_SSL_REDIRECT = config(
+    "DJANGO_SECURE_SSL_REDIRECT",
+    default=not DEBUG,
+    cast=bool,
+)
+SESSION_COOKIE_SECURE = config(
+    "DJANGO_SESSION_COOKIE_SECURE",
+    default=not DEBUG,
+    cast=bool,
+)
+CSRF_COOKIE_SECURE = config(
+    "DJANGO_CSRF_COOKIE_SECURE",
+    default=not DEBUG,
+    cast=bool,
+)
+
+# Começa curto e pode ser ampliado após validação em produção.
+SECURE_HSTS_SECONDS = config(
+    "DJANGO_SECURE_HSTS_SECONDS",
+    default=300 if not DEBUG else 0,
+    cast=int,
+)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = config(
+    "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS",
+    default=False,
+    cast=bool,
+)
+SECURE_HSTS_PRELOAD = config(
+    "DJANGO_SECURE_HSTS_PRELOAD",
+    default=False,
+    cast=bool,
+)
+
+
+
 SMART360_BASE_URL = config("SMART360_BASE_URL", default="")
 SMART360_M2M_TOKEN = config("SMART360_M2M_TOKEN", default="")
 SMART360_LEAD_DISPATCH_ENABLED = config("SMART360_LEAD_DISPATCH_ENABLED", default=False, cast=bool)
