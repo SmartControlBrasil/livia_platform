@@ -36,6 +36,8 @@ class ConversationAdmin(admin.ModelAdmin):
         "session_id",
         "lead_state",
         "is_qualified",
+        "lead_draft_status",
+        "handoff_status",
         "created_at",
         "updated_at",
     ]
@@ -50,6 +52,20 @@ class ConversationAdmin(admin.ModelAdmin):
     ]
     readonly_fields = ["created_at", "updated_at"]
     inlines = [MessageInline]
+
+    @admin.display(description="LeadDraft")
+    def lead_draft_status(self, obj):
+        lead_draft = getattr(obj, "lead_draft", None)
+        if lead_draft is None:
+            return "-"
+        return lead_draft.status
+
+    @admin.display(description="Handoff")
+    def handoff_status(self, obj):
+        handoff = obj.handoff_requests.order_by("-created_at").first()
+        if handoff is None:
+            return "-"
+        return f"{handoff.status} / {handoff.priority}"
 
 
 @admin.register(Message)
@@ -68,11 +84,14 @@ class MessageAdmin(admin.ModelAdmin):
 class HandoffRequestAdmin(admin.ModelAdmin):
     list_display = [
         "tenant",
+        "conversation",
+        "lead_draft",
         "status",
         "reason",
         "priority",
         "visitor_name",
         "visitor_phone",
+        "short_summary",
         "created_at",
         "resolved_at",
     ]

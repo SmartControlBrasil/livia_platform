@@ -24,6 +24,10 @@ class DeploymentSettingsHelperTests(SimpleTestCase):
         self.assertTrue(project_settings.DEBUG in {True, False})
         self.assertIn("django.contrib.staticfiles", project_settings.INSTALLED_APPS)
 
+    def test_ssl_redirect_default_is_disabled_while_running_test_command(self):
+        self.assertTrue(project_settings.RUNNING_TESTS)
+        self.assertFalse(project_settings.SECURE_SSL_REDIRECT)
+
 
 
 class HealthcheckTests(SimpleTestCase):

@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import sys
 from pathlib import Path
 
 from decouple import config
@@ -52,6 +53,7 @@ SECRET_KEY = env_first(
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_first("DJANGO_DEBUG", "DEBUG", default=True, cast=bool)
+RUNNING_TESTS = "test" in sys.argv
 
 ALLOWED_HOSTS = csv_env("DJANGO_ALLOWED_HOSTS", "ALLOWED_HOSTS", default="127.0.0.1,localhost")
 CSRF_TRUSTED_ORIGINS = csv_env("DJANGO_CSRF_TRUSTED_ORIGINS", "CSRF_TRUSTED_ORIGINS", default="")
@@ -162,7 +164,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Production security
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
-SECURE_SSL_REDIRECT = config(
+SECURE_SSL_REDIRECT = False if RUNNING_TESTS else config(
     "DJANGO_SECURE_SSL_REDIRECT",
     default=not DEBUG,
     cast=bool,

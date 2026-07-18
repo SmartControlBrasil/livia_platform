@@ -1,3 +1,5 @@
+from unittest.mock import Mock, patch
+
 from django.contrib import admin
 from django.test import TestCase
 
@@ -5,6 +7,7 @@ from conversations.admin import mark_handoffs_cancelled, mark_handoffs_resolved
 from conversations.models import Conversation, HandoffRequest, Message
 from knowledge_base.admin import activate_knowledge_documents, deactivate_knowledge_documents
 from knowledge_base.models import KnowledgeDocument
+from leads.admin import retry_failed_crm_dispatch
 from leads.models import LeadDraft
 from tenants.admin import (
     activate_tenants,
@@ -32,10 +35,15 @@ class AdminRegistrationTests(TestCase):
         self.assertEqual(admin.site._registry[Tenant].list_display, ["name", "slug", "domain", "is_active", "created_at", "updated_at"])
         self.assertIn("use_ai", admin.site._registry[AssistantProfile].list_display)
         self.assertIn("lead_state", admin.site._registry[Conversation].list_display)
+        self.assertIn("lead_draft_status", admin.site._registry[Conversation].list_display)
+        self.assertIn("handoff_status", admin.site._registry[Conversation].list_display)
         self.assertIn("short_content", admin.site._registry[Message].list_display)
         self.assertIn("service_area", admin.site._registry[LeadDraft].list_display)
+        self.assertIn("crm_dispatch_state", admin.site._registry[LeadDraft].list_display)
+        self.assertIn("sent_to_crm_at", admin.site._registry[LeadDraft].list_display)
         self.assertIn("is_active", admin.site._registry[KnowledgeDocument].list_display)
         self.assertIn("priority", admin.site._registry[HandoffRequest].list_display)
+        self.assertIn("short_summary", admin.site._registry[HandoffRequest].list_display)
 
 
 class AdminActionTests(TestCase):
@@ -118,6 +126,51 @@ class AdminActionTests(TestCase):
         handoff.refresh_from_db()
 
         self.assertEqual(handoff.status, HandoffRequest.Status.CANCELLED)
+
+    def test_retry_failed_crm_dispatch_action_reprocesses_only_failed_without_external_id(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="admin-crm-retry")
+        failed_lead = LeadDraft.objects.create(
+            tenant=self.tenant,
+            conversation=conversation,
+            name="Maria",
+            phone="11999998888",
+            need_summary="Preciso de automação industrial.",
+            status=LeadDraft.Status.FAILED,
+            crm_error="erro temporário",
+        )
+        sent_lead = LeadDraft.objects.create(
+            tenant=self.tenant,
+            name="João",
+            status=LeadDraft.Status.SENT_TO_CRM,
+            crm_external_id="crm-existing",
+        )
+        inconsistent_lead = LeadDraft.objects.create(
+            tenant=self.tenant,
+            name="Ana",
+            status=LeadDraft.Status.FAILED,
+            crm_external_id="crm-already-created",
+        )
+        result = Mock(success=True)
+        service = Mock()
+        service.dispatch_if_qualified.return_value = result
+        modeladmin = Mock()
+
+        with patch("leads.admin.CRMDispatchService", return_value=service):
+            retry_failed_crm_dispatch(
+                modeladmin,
+                Mock(),
+                LeadDraft.objects.filter(pk__in=[failed_lead.pk, sent_lead.pk, inconsistent_lead.pk]),
+            )
+
+        failed_lead.refresh_from_db()
+        sent_lead.refresh_from_db()
+        inconsistent_lead.refresh_from_db()
+        self.assertEqual(failed_lead.status, LeadDraft.Status.QUALIFIED)
+        self.assertEqual(failed_lead.crm_error, "")
+        self.assertEqual(sent_lead.status, LeadDraft.Status.SENT_TO_CRM)
+        self.assertEqual(inconsistent_lead.status, LeadDraft.Status.FAILED)
+        service.dispatch_if_qualified.assert_called_once()
+        modeladmin.message_user.assert_called_once()
 
     def test_short_admin_text_methods_do_not_dump_large_values(self):
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="admin-short")

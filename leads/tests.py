@@ -445,6 +445,26 @@ class CRMDispatchServiceTests(TestCase):
         self.assertEqual(self.lead_draft.status, LeadDraft.Status.DRAFT)
         self.assertIn("event=crm_dispatch_ignored_not_qualified", "\n".join(logs.output))
 
+    def test_lead_with_existing_crm_external_id_is_not_resent(self):
+        self.lead_draft.status = LeadDraft.Status.QUALIFIED
+        self.lead_draft.crm_external_id = "crm-existing"
+        self.lead_draft.crm_error = "erro antigo"
+        self.lead_draft.save(update_fields=["status", "crm_external_id", "crm_error"])
+        client = Mock()
+        client.dry_run = False
+        service = CRMDispatchService(client=client)
+
+        with self.assertLogs("leads.services.crm_dispatch", level="INFO") as logs:
+            result = service.dispatch_if_qualified(self.lead_draft)
+
+        self.assertFalse(result.attempted)
+        self.assertTrue(result.success)
+        client.ingest_lead.assert_not_called()
+        self.lead_draft.refresh_from_db()
+        self.assertEqual(self.lead_draft.status, LeadDraft.Status.SENT_TO_CRM)
+        self.assertEqual(self.lead_draft.crm_error, "")
+        self.assertIn("event=crm_dispatch_ignored_already_sent", "\n".join(logs.output))
+
     def test_already_sent_lead_is_not_resent(self):
         self.lead_draft.status = LeadDraft.Status.SENT_TO_CRM
         self.lead_draft.crm_external_id = "dry-run-existing"

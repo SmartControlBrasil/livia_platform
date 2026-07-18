@@ -35,7 +35,11 @@ class CRMDispatchService:
         return bool(getattr(settings, "SMART360_LEAD_DISPATCH_DRY_RUN", True))
 
     def dispatch_if_qualified(self, lead_draft: LeadDraft) -> CRMDispatchResult:
-        if lead_draft.status == LeadDraft.Status.SENT_TO_CRM:
+        if self._already_dispatched(lead_draft):
+            if lead_draft.status != LeadDraft.Status.SENT_TO_CRM:
+                lead_draft.status = LeadDraft.Status.SENT_TO_CRM
+                lead_draft.crm_error = ""
+                lead_draft.save(update_fields=["status", "crm_error", "updated_at"])
             self._log_event(
                 "crm_dispatch_ignored_already_sent",
                 lead_draft=lead_draft,
@@ -152,6 +156,13 @@ class CRMDispatchService:
         base_url = str(getattr(settings, "SMART360_BASE_URL", "") or "").strip()
         token = str(getattr(settings, "SMART360_M2M_TOKEN", "") or "").strip()
         return bool(base_url and token)
+
+    def _already_dispatched(self, lead_draft: LeadDraft) -> bool:
+        return bool(
+            lead_draft.status == LeadDraft.Status.SENT_TO_CRM
+            or lead_draft.crm_external_id
+            or lead_draft.sent_to_crm_at
+        )
 
     def _finalize_response(self, lead_draft: LeadDraft, response):
         if response.success:
