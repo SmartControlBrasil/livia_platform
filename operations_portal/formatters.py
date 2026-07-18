@@ -19,7 +19,7 @@ LEAD_STATUS_TONES = {
 
 HANDOFF_STATUS_LABELS = {
     HandoffRequest.Status.PENDING: "Pendente",
-    HandoffRequest.Status.SENT: "Enviado",
+    HandoffRequest.Status.SENT: "Notificado",
     HandoffRequest.Status.RESOLVED: "Resolvido",
     HandoffRequest.Status.CANCELLED: "Cancelado",
 }
@@ -29,6 +29,29 @@ PRIORITY_LABELS = {
     HandoffRequest.Priority.NORMAL: "Normal",
     HandoffRequest.Priority.HIGH: "Alta",
     HandoffRequest.Priority.URGENT: "Urgente",
+}
+
+HANDOFF_REASON_LABELS = {
+    HandoffRequest.Reason.EXPLICIT_REQUEST: "Pedido explícito",
+    HandoffRequest.Reason.QUALIFIED_LEAD: "Lead qualificado",
+    HandoffRequest.Reason.TECHNICAL_COMPLEXITY: "Complexidade técnica",
+    HandoffRequest.Reason.SUPPORT_REQUEST: "Suporte",
+    HandoffRequest.Reason.EMERGENCY_OR_URGENT: "Emergência ou urgência",
+    HandoffRequest.Reason.MANUAL: "Manual",
+}
+
+HANDOFF_STATUS_TONES = {
+    HandoffRequest.Status.PENDING: "warning",
+    HandoffRequest.Status.SENT: "info",
+    HandoffRequest.Status.RESOLVED: "success",
+    HandoffRequest.Status.CANCELLED: "secondary",
+}
+
+HANDOFF_PRIORITY_TONES = {
+    HandoffRequest.Priority.LOW: "secondary",
+    HandoffRequest.Priority.NORMAL: "primary",
+    HandoffRequest.Priority.HIGH: "warning",
+    HandoffRequest.Priority.URGENT: "danger",
 }
 
 
@@ -101,3 +124,31 @@ def can_retry_crm_dispatch(lead):
         and not lead.crm_external_id
         and not lead.sent_to_crm_at
     )
+
+
+def handoff_status_label(status):
+    return HANDOFF_STATUS_LABELS.get(status, status or "-")
+
+
+def handoff_status_tone(status):
+    return HANDOFF_STATUS_TONES.get(status, "secondary")
+
+
+def handoff_priority_label(priority):
+    return PRIORITY_LABELS.get(priority, priority or "-")
+
+
+def handoff_priority_tone(priority):
+    return HANDOFF_PRIORITY_TONES.get(priority, "secondary")
+
+
+def handoff_reason_label(reason):
+    return HANDOFF_REASON_LABELS.get(reason, str(reason or "-").replace("_", " ").capitalize())
+
+
+def handoff_contact_summary(handoff, *, masked=True):
+    name = handoff.visitor_name or handoff.visitor_company or "Sem identificação"
+    email = mask_email(handoff.visitor_email) if masked else str(handoff.visitor_email or "").strip()
+    phone = mask_phone(handoff.visitor_phone) if masked else str(handoff.visitor_phone or "").strip()
+    parts = [part for part in (email, phone) if part]
+    return {"name": name, "details": " / ".join(parts)}

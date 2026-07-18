@@ -1,6 +1,6 @@
 from django import forms
 
-from conversations.models import Conversation
+from conversations.models import Conversation, HandoffRequest
 from leads.models import LeadDraft
 from tenants.models import Tenant
 
@@ -19,6 +19,29 @@ LEAD_STATUS_CHOICES = [
     (LeadDraft.Status.QUALIFIED, "Qualificado"),
     (LeadDraft.Status.SENT_TO_CRM, "Enviado ao CRM"),
     (LeadDraft.Status.FAILED, "Falha"),
+]
+
+HANDOFF_STATUS_CHOICES = [
+    (HandoffRequest.Status.PENDING, "Pendente"),
+    (HandoffRequest.Status.SENT, "Notificado"),
+    (HandoffRequest.Status.RESOLVED, "Resolvido"),
+    (HandoffRequest.Status.CANCELLED, "Cancelado"),
+]
+
+HANDOFF_PRIORITY_CHOICES = [
+    (HandoffRequest.Priority.LOW, "Baixa"),
+    (HandoffRequest.Priority.NORMAL, "Normal"),
+    (HandoffRequest.Priority.HIGH, "Alta"),
+    (HandoffRequest.Priority.URGENT, "Urgente"),
+]
+
+HANDOFF_REASON_CHOICES = [
+    (HandoffRequest.Reason.EXPLICIT_REQUEST, "Pedido explícito"),
+    (HandoffRequest.Reason.QUALIFIED_LEAD, "Lead qualificado"),
+    (HandoffRequest.Reason.TECHNICAL_COMPLEXITY, "Complexidade técnica"),
+    (HandoffRequest.Reason.SUPPORT_REQUEST, "Suporte"),
+    (HandoffRequest.Reason.EMERGENCY_OR_URGENT, "Emergência ou urgência"),
+    (HandoffRequest.Reason.MANUAL, "Manual"),
 ]
 
 
@@ -48,6 +71,16 @@ class LeadFilterForm(PortalFilterForm):
     status = forms.ChoiceField(required=False, choices=[("", "Todos")] + LEAD_STATUS_CHOICES)
     crm_sent = forms.ChoiceField(required=False, choices=[("", "Todos"), ("yes", "Sim"), ("no", "Não")])
     dispatch_failed = forms.ChoiceField(required=False, choices=[("", "Todos"), ("yes", "Sim"), ("no", "Não")])
+    start_date = forms.DateField(required=False, input_formats=["%Y-%m-%d"])
+    end_date = forms.DateField(required=False, input_formats=["%Y-%m-%d"])
+    q = forms.CharField(required=False, max_length=160)
+
+
+class HandoffFilterForm(PortalFilterForm):
+    tenant = forms.ModelChoiceField(queryset=Tenant.objects.order_by("name"), required=False, empty_label="Todos")
+    status = forms.ChoiceField(required=False, choices=[("", "Todos")] + HANDOFF_STATUS_CHOICES)
+    priority = forms.ChoiceField(required=False, choices=[("", "Todas")] + HANDOFF_PRIORITY_CHOICES)
+    reason = forms.ChoiceField(required=False, choices=[("", "Todos")] + HANDOFF_REASON_CHOICES)
     start_date = forms.DateField(required=False, input_formats=["%Y-%m-%d"])
     end_date = forms.DateField(required=False, input_formats=["%Y-%m-%d"])
     q = forms.CharField(required=False, max_length=160)

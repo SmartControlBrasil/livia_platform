@@ -96,6 +96,52 @@ Os gráficos recebem dados por `json_script` do Django. Os datasets contêm apen
 
 Os assets de gráfico usam ApexCharts copiado localmente de `./hando/hando/static/libs/apexcharts/apexcharts.min.js` para `operations_portal/static/operations_portal/hando/libs/apexcharts/apexcharts.min.js`. Não há CDN nem dependência de Node/Gulp/Bun em produção.
 
+
+## Quarta fase
+
+A área `/painel/handoffs/` substitui o placeholder de Handoffs por uma gestão operacional somente para superusers.
+
+Rotas:
+
+- `/painel/handoffs/`: lista paginada de handoffs;
+- `/painel/handoffs/<id>/`: detalhe do handoff;
+- `/painel/handoffs/<id>/status/`: ação POST com CSRF para transição de status.
+
+Campos reais usados de `HandoffRequest`:
+
+- status: `pending`, `sent`, `resolved`, `cancelled`;
+- motivo: `explicit_request`, `qualified_lead`, `technical_complexity`, `support_request`, `emergency_or_urgent`, `manual`;
+- prioridade: `low`, `normal`, `high`, `urgent`;
+- contato: `visitor_name`, `visitor_company`, `visitor_email`, `visitor_phone`;
+- contexto: `summary`, `source_page`, `metadata`, conversa e lead relacionados.
+
+A listagem ordena handoffs pendentes e notificados antes dos terminais, maior prioridade primeiro, depois criação mais recente. Os filtros disponíveis são tenant, status, prioridade, motivo, período e busca por sessão, contato ou lead relacionado. Os filtros são preservados na paginação.
+
+### Fluxo de status
+
+As transições permitidas no painel são:
+
+- `pending` -> `sent`, `resolved` ou `cancelled`;
+- `sent` -> `resolved` ou `cancelled`;
+- `resolved` e `cancelled` são terminais no painel.
+
+`sent` usa o método existente `HandoffService.mark_sent`. `resolved` usa `HandoffService.mark_resolved`, preenchendo `resolved_at`. `cancelled` usa o choice existente do model, alinhado à ação já existente no Django Admin. Não há exclusão de handoff, edição de mensagens ou mudança automática de prioridade.
+
+### Notificações
+
+O painel mostra somente estados seguros das notificações de handoff:
+
+- `Desligadas`;
+- `Dry-run`;
+- `Ativas`;
+- `Configuração incompleta`.
+
+Nenhum destinatário, token, SMTP, cabeçalho ou valor de `.env` é exibido. Reenvio manual não foi implementado porque o serviço atual (`HandoffNotificationService`) não oferece operação idempotente de reenvio real.
+
+### Privacidade
+
+Na lista, e-mail e telefone ficam mascarados. O detalhe mostra contato completo apenas para superuser autenticado. Mensagens da timeline e metadata são renderizadas sem `safe`, preservando escape de HTML do usuário.
+
 ## Dados exibidos
 
 O dashboard consulta dados reais de Tenant, Conversation, rascunho de lead e HandoffRequest. Estados de CRM, OpenAI, webhooks e notificações de handoff são derivados apenas das flags de settings e nunca exibem tokens, secrets ou URLs completas de integração.

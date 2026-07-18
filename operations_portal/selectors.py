@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from django.conf import settings
 from django.core.paginator import Paginator
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Case, Count, IntegerField, Prefetch, Q, Value, When
 from django.shortcuts import get_object_or_404
 
 from conversations.models import Conversation, HandoffRequest, Message
@@ -16,6 +16,12 @@ from .formatters import (
     can_retry_crm_dispatch,
     compact_external_id,
     contact_summary,
+    handoff_contact_summary,
+    handoff_priority_label,
+    handoff_priority_tone,
+    handoff_reason_label,
+    handoff_status_label,
+    handoff_status_tone,
     lead_crm_state,
     lead_status_label,
     lead_status_tone,
@@ -106,12 +112,7 @@ def get_integration_statuses():
             bool(getattr(settings, "LIVIA_WEBHOOKS_DRY_RUN", True)),
             f"{TenantWebhookConfig.objects.filter(is_active=True).count()} config. ativas",
         ),
-        _status(
-            "Notificações de handoff",
-            bool(getattr(settings, "LIVIA_HANDOFF_NOTIFICATIONS_ENABLED", False)),
-            bool(getattr(settings, "LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN", True)),
-            "Alertas para atendimento humano",
-        ),
+        get_notification_status(),
     ]
 
 
@@ -280,9 +281,14 @@ def decorate_lead(lead):
     return lead
 
 
-def decorate_handoff(handoff):
-    handoff.status_label = HANDOFF_STATUS_LABELS.get(handoff.status, handoff.get_status_display())
-    handoff.priority_label = HANDOFF_PRIORITY_LABELS.get(handoff.priority, handoff.get_priority_display())
+def decorate_handoff(handoff, *, detail=False):
+    handoff.status_label = handoff_status_label(handoff.status)
+    handoff.status_tone = handoff_status_tone(handoff.status)
+    handoff.priority_label = handoff_priority_label(handoff.priority)
+    handoff.priority_tone = handoff_priority_tone(handoff.priority)
+    handoff.reason_label = handoff_reason_label(handoff.reason)
+    handoff.summary_short = short_text(handoff.summary, limit=100)
+    handoff.contact = handoff_contact_summary(handoff, masked=not detail)
     return handoff
 
 
@@ -337,5 +343,142 @@ def _filter_leads(queryset, form):
             | Q(email__icontains=query)
             | Q(phone__icontains=query)
             | Q(conversation__session_id__icontains=query)
+        )
+    return queryset
+
+
+HANDOFF_TRANSITIONS = {
+    HandoffRequest.Status.PENDING: [
+        (HandoffRequest.Status.SENT, "Marcar como notificado"),
+        (HandoffRequest.Status.RESOLVED, "Marcar como resolvido"),
+        (HandoffRequest.Status.CANCELLED, "Cancelar handoff"),
+    ],
+    HandoffRequest.Status.SENT: [
+        (HandoffRequest.Status.RESOLVED, "Marcar como resolvido"),
+        (HandoffRequest.Status.CANCELLED, "Cancelar handoff"),
+    ],
+}
+
+
+def get_notification_status():
+    enabled = bool(getattr(settings, "LIVIA_HANDOFF_NOTIFICATIONS_ENABLED", False))
+    dry_run = bool(getattr(settings, "LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN", True))
+    recipient = str(getattr(settings, "LIVIA_HANDOFF_NOTIFICATION_EMAIL", "") or "").strip()
+
+    if not enabled:
+        return IntegrationStatus(
+            label="Notificações de handoff",
+            state="Desligadas",
+            detail="Alertas automáticos desabilitados",
+            tone="secondary",
+        )
+    if dry_run:
+        return IntegrationStatus(
+            label="Notificações de handoff",
+            state="Dry-run",
+            detail="Alertas reais não serão enviados",
+            tone="warning",
+        )
+    if not recipient:
+        return IntegrationStatus(
+            label="Notificações de handoff",
+            state="Configuração incompleta",
+            detail="Modo real sem destinatário configurado",
+            tone="danger",
+        )
+    return IntegrationStatus(
+        label="Notificações de handoff",
+        state="Ativas",
+        detail="Alertas reais habilitados",
+        tone="success",
+    )
+
+
+def get_handoff_list(form, *, page_number=1):
+    queryset = (
+        HandoffRequest.objects.select_related("tenant", "conversation", "lead_draft")
+        .prefetch_related(Prefetch("conversation__messages", queryset=Message.objects.order_by("created_at")))
+        .annotate(
+            status_rank=Case(
+                When(status=HandoffRequest.Status.PENDING, then=Value(0)),
+                When(status=HandoffRequest.Status.SENT, then=Value(1)),
+                default=Value(2),
+                output_field=IntegerField(),
+            ),
+            priority_rank=Case(
+                When(priority=HandoffRequest.Priority.URGENT, then=Value(0)),
+                When(priority=HandoffRequest.Priority.HIGH, then=Value(1)),
+                When(priority=HandoffRequest.Priority.NORMAL, then=Value(2)),
+                When(priority=HandoffRequest.Priority.LOW, then=Value(3)),
+                default=Value(4),
+                output_field=IntegerField(),
+            ),
+        )
+        .order_by("status_rank", "priority_rank", "-created_at")
+    )
+    queryset = _filter_handoffs(queryset, form)
+    page = Paginator(queryset, PAGE_SIZE).get_page(page_number)
+    for handoff in page.object_list:
+        decorate_handoff(handoff)
+    return page
+
+
+def get_handoff_detail(pk):
+    handoff = get_object_or_404(
+        HandoffRequest.objects.select_related("tenant", "conversation", "lead_draft").prefetch_related(
+            Prefetch("conversation__messages", queryset=Message.objects.order_by("created_at"))
+        ),
+        pk=pk,
+    )
+    decorate_handoff(handoff, detail=True)
+    decorate_conversation(handoff.conversation)
+    if handoff.lead_draft is not None:
+        decorate_lead(handoff.lead_draft)
+    handoff.transition_options = get_handoff_transition_options(handoff)
+    handoff.notification_status = get_notification_status()
+    return handoff
+
+
+def get_handoff_transition_options(handoff):
+    return [
+        {"status": status, "label": label}
+        for status, label in HANDOFF_TRANSITIONS.get(handoff.status, [])
+    ]
+
+
+def is_valid_handoff_transition(handoff, target_status):
+    return target_status in {status for status, _label in HANDOFF_TRANSITIONS.get(handoff.status, [])}
+
+
+def _filter_handoffs(queryset, form):
+    if not form.is_valid():
+        return queryset
+    data = form.cleaned_data
+    if data.get("tenant"):
+        queryset = queryset.filter(tenant=data["tenant"])
+    if data.get("status"):
+        queryset = queryset.filter(status=data["status"])
+    if data.get("priority"):
+        queryset = queryset.filter(priority=data["priority"])
+    elif form.data.get("priority_group") == "high":
+        queryset = queryset.filter(priority__in=[HandoffRequest.Priority.HIGH, HandoffRequest.Priority.URGENT])
+    if data.get("reason"):
+        queryset = queryset.filter(reason=data["reason"])
+    if data.get("start_date"):
+        queryset = queryset.filter(created_at__date__gte=data["start_date"])
+    if data.get("end_date"):
+        queryset = queryset.filter(created_at__date__lte=data["end_date"])
+    if data.get("q"):
+        query = data["q"].strip()
+        queryset = queryset.filter(
+            Q(conversation__session_id__icontains=query)
+            | Q(visitor_name__icontains=query)
+            | Q(visitor_company__icontains=query)
+            | Q(visitor_phone__icontains=query)
+            | Q(visitor_email__icontains=query)
+            | Q(lead_draft__name__icontains=query)
+            | Q(lead_draft__company__icontains=query)
+            | Q(lead_draft__email__icontains=query)
+            | Q(lead_draft__phone__icontains=query)
         )
     return queryset

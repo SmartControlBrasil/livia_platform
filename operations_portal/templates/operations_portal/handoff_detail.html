@@ -1,0 +1,79 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Handoff #{{ handoff.pk }}{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column gap-3">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Handoff #{{ handoff.pk }}</h4>
+      <ol class="breadcrumb m-0 mt-1 py-0"><li class="breadcrumb-item"><a href="{% url 'operations_portal:dashboard' %}">Painel</a></li><li class="breadcrumb-item"><a href="{% url 'operations_portal:handoff_list' %}">Handoffs</a></li><li class="breadcrumb-item active">Detalhe</li></ol>
+    </div>
+    {% if handoff.transition_options %}
+    <div class="d-flex flex-wrap gap-2">
+      {% for option in handoff.transition_options %}
+      <form method="post" action="{% url 'operations_portal:handoff_update_status' handoff.pk %}">
+        {% csrf_token %}
+        <input type="hidden" name="status" value="{{ option.status }}">
+        <button class="btn {% if option.status == 'cancelled' %}btn-light border{% elif option.status == 'resolved' %}btn-success{% else %}btn-primary{% endif %}" type="submit">{{ option.label }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="row">
+    <div class="col-xl-4">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Dados do handoff</h5></div><div class="card-body">
+        <p><span class="text-muted">Tenant:</span> <strong>{{ handoff.tenant.slug }}</strong></p>
+        <p><span class="text-muted">Status:</span> <span class="badge bg-{{ handoff.status_tone }}-subtle text-{{ handoff.status_tone }}">{{ handoff.status_label }}</span></p>
+        <p><span class="text-muted">Prioridade:</span> <span class="badge bg-{{ handoff.priority_tone }}-subtle text-{{ handoff.priority_tone }}">{{ handoff.priority_label }}</span></p>
+        <p><span class="text-muted">Motivo:</span> {{ handoff.reason_label }}</p>
+        <p><span class="text-muted">Criado:</span> {{ handoff.created_at|date:"d/m/Y H:i" }}</p>
+        <p><span class="text-muted">Atualizado:</span> {{ handoff.updated_at|date:"d/m/Y H:i" }}</p>
+        <p><span class="text-muted">Resolvido:</span> {{ handoff.resolved_at|date:"d/m/Y H:i"|default:"-" }}</p>
+        <hr>
+        <p><span class="text-muted">Nome:</span> {{ handoff.visitor_name|default:"-" }}</p>
+        <p><span class="text-muted">Empresa:</span> {{ handoff.visitor_company|default:"-" }}</p>
+        <p><span class="text-muted">E-mail:</span> {{ handoff.visitor_email|default:"-" }}</p>
+        <p><span class="text-muted">Telefone:</span> {{ handoff.visitor_phone|default:"-" }}</p>
+        <p><span class="text-muted">Origem:</span> {{ handoff.source_page|default:"-" }}</p>
+      </div></div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Notificações</h5></div><div class="card-body">
+        <p><span class="text-muted">Estado:</span> <span class="badge bg-{{ handoff.notification_status.tone }}-subtle text-{{ handoff.notification_status.tone }}">{{ handoff.notification_status.state }}</span></p>
+        <p class="text-muted mb-0">{{ handoff.notification_status.detail }}</p>
+        <hr>
+        <p class="text-muted mb-0">Reenvio manual não disponível nesta fase porque não há serviço idempotente de reenvio real.</p>
+      </div></div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Relações</h5></div><div class="card-body">
+        <p><span class="text-muted">Conversa:</span> <a href="{% url 'operations_portal:conversation_detail' handoff.conversation.pk %}">{{ handoff.conversation.session_id }}</a></p>
+        {% if handoff.lead_draft %}<p><span class="text-muted">Lead:</span> <a href="{% url 'operations_portal:lead_detail' handoff.lead_draft.pk %}">#{{ handoff.lead_draft.pk }}</a></p>{% else %}<p class="text-muted">Sem lead vinculado.</p>{% endif %}
+      </div></div>
+    </div>
+
+    <div class="col-xl-8">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Resumo</h5></div><div class="card-body">
+        <div class="text-break" style="white-space: pre-wrap;">{{ handoff.summary|default:"Sem resumo registrado." }}</div>
+        {% if handoff.metadata %}<hr><h6 class="text-dark">Contexto técnico/comercial</h6><pre class="bg-light border rounded p-3 text-break mb-0" style="white-space: pre-wrap;">{{ handoff.metadata }}</pre>{% endif %}
+      </div></div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Timeline da conversa</h5></div><div class="card-body">
+        {% if handoff.conversation.messages.all %}
+        <div class="d-flex flex-column gap-3">
+          {% for message in handoff.conversation.messages.all %}
+          <div class="p-3 rounded border {% if message.role == 'assistant' %}bg-primary-subtle{% elif message.role == 'user' %}bg-light{% else %}bg-secondary-subtle{% endif %}">
+            <div class="d-flex justify-content-between mb-2"><strong>{% if message.role == 'assistant' %}Lívia{% elif message.role == 'user' %}Visitante{% else %}Sistema{% endif %}</strong><span class="text-muted fs-13">{{ message.created_at|date:"d/m/Y H:i" }}</span></div>
+            <div class="text-break" style="white-space: pre-wrap;">{{ message.content }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-5">Nenhuma mensagem registrada.</div>
+        {% endif %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

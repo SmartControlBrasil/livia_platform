@@ -15,7 +15,7 @@ from leads.services.crm_dispatch import CRMDispatchResult
 from tenants.models import Tenant
 
 from .analytics import get_dashboard_analytics
-from .selectors import get_crm_status
+from .selectors import get_crm_status, get_notification_status
 
 TEST_STORAGES = {
     "default": {
@@ -42,12 +42,15 @@ class OperationsPortalAccessTests(TestCase):
         tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil")
         conversation = Conversation.objects.create(tenant=tenant, session_id="session-access")
         lead = LeadDraft.objects.create(tenant=tenant, conversation=conversation, status=LeadDraft.Status.FAILED)
+        handoff = HandoffRequest.objects.create(tenant=tenant, conversation=conversation, lead_draft=lead)
         return [
             reverse("operations_portal:dashboard"),
             reverse("operations_portal:conversation_list"),
             reverse("operations_portal:conversation_detail", kwargs={"pk": conversation.pk}),
             reverse("operations_portal:lead_list"),
             reverse("operations_portal:lead_detail", kwargs={"pk": lead.pk}),
+            reverse("operations_portal:handoff_list"),
+            reverse("operations_portal:handoff_detail", kwargs={"pk": handoff.pk}),
         ]
 
     def test_anonymous_user_is_redirected_to_admin_login(self):
@@ -112,6 +115,8 @@ class OperationsPortalDashboardTests(PortalUserMixin, TestCase):
         self.assertContains(response, "Leads enviados ao CRM")
         self.assertContains(response, "Leads com falha")
         self.assertContains(response, "Handoffs alta prioridade")
+        self.assertContains(response, reverse("operations_portal:handoff_list") + "?status=pending")
+        self.assertContains(response, reverse("operations_portal:handoff_list") + "?status=pending&amp;priority_group=high")
         self.assertContains(response, "session-1")
         self.assertContains(response, "Maria")
         self.assertContains(response, "CRM Smart360")
@@ -126,16 +131,17 @@ class OperationsPortalDashboardTests(PortalUserMixin, TestCase):
         self.assertLessEqual(len(captured), 18)
 
     def test_placeholder_routes_do_not_break_sidebar(self):
-        response = self.client.get(reverse("operations_portal:placeholder", kwargs={"section": "handoffs"}))
+        response = self.client.get(reverse("operations_portal:placeholder", kwargs={"section": "tenants"}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Handoffs")
+        self.assertContains(response, "Tenants")
 
     def test_sidebar_links_exist(self):
         response = self.client.get(reverse("operations_portal:dashboard"))
 
         self.assertContains(response, reverse("operations_portal:conversation_list"))
         self.assertContains(response, reverse("operations_portal:lead_list"))
+        self.assertContains(response, reverse("operations_portal:handoff_list"))
         self.assertContains(response, reverse("operations_portal:placeholder", kwargs={"section": "integracoes"}))
         self.assertContains(response, reverse("admin:index"))
 
@@ -539,6 +545,238 @@ class OperationsPortalLeadTests(PortalUserMixin, TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertLessEqual(len(captured), 8)
+
+
+@override_settings(SECURE_SSL_REDIRECT=False, STORAGES=TEST_STORAGES)
+class OperationsPortalHandoffTests(PortalUserMixin, TestCase):
+    def setUp(self):
+        self.login_superuser()
+        self.tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil")
+        self.other_tenant = Tenant.objects.create(name="Caneca de Garagem", slug="caneca-de-garagem")
+        self.conversation = Conversation.objects.create(
+            tenant=self.tenant,
+            session_id="handoff-session",
+            visitor_email="visitante@example.com",
+            visitor_phone="11999998888",
+        )
+        Message.objects.create(conversation=self.conversation, role=Message.Role.USER, content="<script>alert(1)</script>")
+        Message.objects.create(conversation=self.conversation, role=Message.Role.ASSISTANT, content="Vou encaminhar para atendimento.")
+        self.lead = LeadDraft.objects.create(
+            tenant=self.tenant,
+            conversation=self.conversation,
+            status=LeadDraft.Status.QUALIFIED,
+            name="Carla Handoff",
+            company="Empresa Handoff",
+            email="carla.handoff@example.com",
+            phone="11987654321",
+        )
+        self.handoff = HandoffRequest.objects.create(
+            tenant=self.tenant,
+            conversation=self.conversation,
+            lead_draft=self.lead,
+            status=HandoffRequest.Status.PENDING,
+            reason=HandoffRequest.Reason.EXPLICIT_REQUEST,
+            priority=HandoffRequest.Priority.URGENT,
+            visitor_name="Carla Handoff",
+            visitor_company="Empresa Handoff",
+            visitor_email="carla.handoff@example.com",
+            visitor_phone="11987654321",
+            summary="Cliente pediu atendimento humano.",
+            metadata={"intent": "sales"},
+        )
+
+    def test_handoff_list_filters_orders_and_masks_contact(self):
+        sent = HandoffRequest.objects.create(
+            tenant=self.tenant,
+            conversation=self.conversation,
+            status=HandoffRequest.Status.SENT,
+            priority=HandoffRequest.Priority.URGENT,
+            visitor_name="Contato Sent",
+        )
+        pending_normal = HandoffRequest.objects.create(
+            tenant=self.tenant,
+            conversation=self.conversation,
+            status=HandoffRequest.Status.PENDING,
+            priority=HandoffRequest.Priority.NORMAL,
+            visitor_name="Contato Normal",
+        )
+        resolved = HandoffRequest.objects.create(
+            tenant=self.tenant,
+            conversation=self.conversation,
+            status=HandoffRequest.Status.RESOLVED,
+            priority=HandoffRequest.Priority.URGENT,
+            visitor_name="Contato Resolvido",
+        )
+        other_conversation = Conversation.objects.create(tenant=self.other_tenant, session_id="other-handoff")
+        HandoffRequest.objects.create(tenant=self.other_tenant, conversation=other_conversation, visitor_name="Outro")
+
+        response = self.client.get(reverse("operations_portal:handoff_list"))
+        content = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(content.index(f"#{self.handoff.pk}"), content.index(f"#{pending_normal.pk}"))
+        self.assertLess(content.index(f"#{pending_normal.pk}"), content.index(f"#{sent.pk}"))
+        self.assertLess(content.index(f"#{sent.pk}"), content.index(f"#{resolved.pk}"))
+        self.assertContains(response, "ca***@example.com")
+        self.assertContains(response, "***4321")
+        self.assertNotIn("carla.handoff@example.com", content)
+        self.assertNotIn("11987654321", content)
+
+        filtered = self.client.get(
+            reverse("operations_portal:handoff_list"),
+            {
+                "tenant": self.tenant.pk,
+                "status": HandoffRequest.Status.PENDING,
+                "priority": HandoffRequest.Priority.URGENT,
+                "reason": HandoffRequest.Reason.EXPLICIT_REQUEST,
+                "q": "Empresa Handoff",
+            },
+        )
+        self.assertContains(filtered, f"#{self.handoff.pk}")
+        self.assertNotContains(filtered, "Outro")
+
+    def test_handoff_list_paginates_and_preserves_filters(self):
+        for index in range(13):
+            conversation = Conversation.objects.create(tenant=self.tenant, session_id=f"handoff-page-{index}")
+            HandoffRequest.objects.create(tenant=self.tenant, conversation=conversation, visitor_name="Pagina")
+
+        response = self.client.get(reverse("operations_portal:handoff_list"), {"q": "Pagina"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "1 de 2")
+        self.assertContains(response, "?q=Pagina&page=2")
+
+    def test_handoff_detail_links_relations_and_escapes_messages(self):
+        response = self.client.get(reverse("operations_portal:handoff_detail", kwargs={"pk": self.handoff.pk}))
+        content = response.content.decode()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "carla.handoff@example.com")
+        self.assertContains(response, "11987654321")
+        self.assertContains(response, "Pedido explícito")
+        self.assertContains(response, reverse("operations_portal:conversation_detail", kwargs={"pk": self.conversation.pk}))
+        self.assertContains(response, reverse("operations_portal:lead_detail", kwargs={"pk": self.lead.pk}))
+        self.assertContains(response, "&lt;script&gt;alert(1)&lt;/script&gt;", html=False)
+        self.assertNotIn("<script>alert(1)</script>", content)
+        self.assertContains(response, "Reenvio manual não disponível")
+
+    def test_handoff_status_actions_require_post_and_csrf(self):
+        url = reverse("operations_portal:handoff_update_status", kwargs={"pk": self.handoff.pk})
+
+        self.assertEqual(self.client.get(url).status_code, 403)
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.user)
+        self.assertEqual(csrf_client.post(url, {"status": HandoffRequest.Status.SENT}).status_code, 403)
+
+    def test_handoff_valid_transitions(self):
+        response = self.client.post(
+            reverse("operations_portal:handoff_update_status", kwargs={"pk": self.handoff.pk}),
+            {"status": HandoffRequest.Status.SENT},
+        )
+        self.assertRedirects(response, reverse("operations_portal:handoff_detail", kwargs={"pk": self.handoff.pk}))
+        self.handoff.refresh_from_db()
+        self.assertEqual(self.handoff.status, HandoffRequest.Status.SENT)
+
+        response = self.client.post(
+            reverse("operations_portal:handoff_update_status", kwargs={"pk": self.handoff.pk}),
+            {"status": HandoffRequest.Status.RESOLVED},
+        )
+        self.assertRedirects(response, reverse("operations_portal:handoff_detail", kwargs={"pk": self.handoff.pk}))
+        self.handoff.refresh_from_db()
+        self.assertEqual(self.handoff.status, HandoffRequest.Status.RESOLVED)
+        self.assertIsNotNone(self.handoff.resolved_at)
+
+    def test_handoff_invalid_transition_is_blocked(self):
+        self.handoff.status = HandoffRequest.Status.RESOLVED
+        self.handoff.resolved_at = timezone.now()
+        self.handoff.save(update_fields=["status", "resolved_at", "updated_at"])
+
+        response = self.client.post(
+            reverse("operations_portal:handoff_update_status", kwargs={"pk": self.handoff.pk}),
+            {"status": HandoffRequest.Status.SENT},
+        )
+
+        self.assertRedirects(response, reverse("operations_portal:handoff_detail", kwargs={"pk": self.handoff.pk}))
+        self.handoff.refresh_from_db()
+        self.assertEqual(self.handoff.status, HandoffRequest.Status.RESOLVED)
+
+    def test_handoff_cancel_transition(self):
+        response = self.client.post(
+            reverse("operations_portal:handoff_update_status", kwargs={"pk": self.handoff.pk}),
+            {"status": HandoffRequest.Status.CANCELLED},
+        )
+
+        self.assertRedirects(response, reverse("operations_portal:handoff_detail", kwargs={"pk": self.handoff.pk}))
+        self.handoff.refresh_from_db()
+        self.assertEqual(self.handoff.status, HandoffRequest.Status.CANCELLED)
+
+    @override_settings(
+        LIVIA_HANDOFF_NOTIFICATIONS_ENABLED=False,
+        LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN=True,
+        LIVIA_HANDOFF_NOTIFICATION_EMAIL="secret@example.com",
+    )
+    def test_notification_status_disabled_without_secrets(self):
+        status = get_notification_status()
+
+        self.assertEqual(status.state, "Desligadas")
+        self.assertNotIn("secret@example.com", status.detail)
+
+    @override_settings(
+        LIVIA_HANDOFF_NOTIFICATIONS_ENABLED=True,
+        LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN=True,
+        LIVIA_HANDOFF_NOTIFICATION_EMAIL="secret@example.com",
+    )
+    def test_notification_status_dry_run_without_secrets(self):
+        status = get_notification_status()
+
+        self.assertEqual(status.state, "Dry-run")
+        self.assertNotIn("secret@example.com", status.detail)
+
+    @override_settings(
+        LIVIA_HANDOFF_NOTIFICATIONS_ENABLED=True,
+        LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN=False,
+        LIVIA_HANDOFF_NOTIFICATION_EMAIL="",
+    )
+    def test_notification_status_incomplete(self):
+        status = get_notification_status()
+
+        self.assertEqual(status.state, "Configuração incompleta")
+
+    @override_settings(
+        LIVIA_HANDOFF_NOTIFICATIONS_ENABLED=True,
+        LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN=False,
+        LIVIA_HANDOFF_NOTIFICATION_EMAIL="secret@example.com",
+    )
+    def test_notification_status_active_without_secrets(self):
+        status = get_notification_status()
+
+        self.assertEqual(status.state, "Ativas")
+        self.assertNotIn("secret@example.com", status.detail)
+
+    def test_dashboard_handoff_links_are_filtered(self):
+        response = self.client.get(reverse("operations_portal:dashboard"))
+
+        self.assertContains(response, reverse("operations_portal:handoff_list") + "?status=pending")
+        self.assertContains(response, reverse("operations_portal:handoff_list") + "?status=pending&amp;priority_group=high")
+
+    def test_handoff_list_uses_bounded_queries(self):
+        for index in range(5):
+            conversation = Conversation.objects.create(tenant=self.tenant, session_id=f"handoff-query-{index}")
+            HandoffRequest.objects.create(tenant=self.tenant, conversation=conversation)
+
+        with CaptureQueriesContext(connection) as captured:
+            response = self.client.get(reverse("operations_portal:handoff_list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(len(captured), 8)
+
+    def test_handoff_empty_state(self):
+        HandoffRequest.objects.all().delete()
+
+        response = self.client.get(reverse("operations_portal:handoff_list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Nenhum handoff encontrado")
 
 
 class OperationsPortalCRMStatusTests(TestCase):
