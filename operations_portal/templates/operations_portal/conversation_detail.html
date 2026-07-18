@@ -1,0 +1,62 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Conversa {{ conversation.session_id }}{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Conversa {{ conversation.session_id }}</h4>
+      <ol class="breadcrumb m-0 mt-1 py-0"><li class="breadcrumb-item"><a href="{% url 'operations_portal:dashboard' %}">Painel</a></li><li class="breadcrumb-item"><a href="{% url 'operations_portal:conversation_list' %}">Conversas</a></li><li class="breadcrumb-item active">Detalhe</li></ol>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-4">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Dados da conversa</h5></div><div class="card-body">
+        <p><span class="text-muted">Tenant:</span> <strong>{{ conversation.tenant.slug }}</strong></p>
+        <p><span class="text-muted">Origem:</span> {{ conversation.source_page|default:"-" }}</p>
+        <p><span class="text-muted">Estado:</span> <span class="badge bg-primary-subtle text-primary">{{ conversation.lead_state_label }}</span></p>
+        <p><span class="text-muted">Qualificada:</span> {% if conversation.is_qualified %}<span class="badge bg-success-subtle text-success">Sim</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Não</span>{% endif %}</p>
+        <p><span class="text-muted">Criada:</span> {{ conversation.created_at|date:"d/m/Y H:i" }}</p>
+        <p><span class="text-muted">Atualizada:</span> {{ conversation.updated_at|date:"d/m/Y H:i" }}</p>
+        <hr>
+        <p><span class="text-muted">Visitante:</span> {{ conversation.visitor_name|default:"-" }}</p>
+        <p><span class="text-muted">E-mail:</span> {{ conversation.visitor_email|default:"-" }}</p>
+        <p><span class="text-muted">Telefone:</span> {{ conversation.visitor_phone|default:"-" }}</p>
+      </div></div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Lead e handoff</h5></div><div class="card-body">
+        {% if conversation.lead_draft %}
+        <p><span class="text-muted">Lead:</span> <a href="{% url 'operations_portal:lead_detail' conversation.lead_draft.pk %}">#{{ conversation.lead_draft.pk }}</a></p>
+        <p><span class="text-muted">Status CRM:</span> <span class="badge bg-{{ conversation.lead_draft.crm_state.tone }}-subtle text-{{ conversation.lead_draft.crm_state.tone }}">{{ conversation.lead_draft.crm_state.label }}</span></p>
+        <p><span class="text-muted">Necessidade:</span> {{ conversation.lead_draft.need_summary|default:"-" }}</p>
+        {% else %}
+        <p class="text-muted">Nenhum rascunho de lead vinculado.</p>
+        {% endif %}
+        {% if conversation.latest_handoff %}
+        <hr><p><span class="text-muted">Handoff:</span> <a href="{% url 'admin:conversations_handoffrequest_change' conversation.latest_handoff.pk %}">#{{ conversation.latest_handoff.pk }}</a></p>
+        <p><span class="text-muted">Prioridade:</span> <span class="badge bg-warning-subtle text-warning">{{ conversation.latest_handoff.priority_label }}</span></p>
+        {% endif %}
+      </div></div>
+    </div>
+
+    <div class="col-xl-8">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Timeline de mensagens</h5></div><div class="card-body">
+        {% if conversation.messages.all %}
+        <div class="d-flex flex-column gap-3">
+          {% for message in conversation.messages.all %}
+          <div class="p-3 rounded border {% if message.role == 'assistant' %}bg-primary-subtle{% elif message.role == 'user' %}bg-light{% else %}bg-secondary-subtle{% endif %}">
+            <div class="d-flex justify-content-between mb-2"><strong>{% if message.role == 'assistant' %}Lívia{% elif message.role == 'user' %}Visitante{% else %}Sistema{% endif %}</strong><span class="text-muted fs-13">{{ message.created_at|date:"d/m/Y H:i" }}</span></div>
+            <div class="text-break" style="white-space: pre-wrap;">{{ message.content }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-5">Nenhuma mensagem registrada.</div>
+        {% endif %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Leads{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Leads</h4>
+      <ol class="breadcrumb m-0 mt-1 py-0"><li class="breadcrumb-item"><a href="{% url 'operations_portal:dashboard' %}">Painel</a></li><li class="breadcrumb-item active">Leads</li></ol>
+    </div>
+  </div>
+
+  <div class="card"><div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3"><label class="form-label">Tenant</label>{{ form.tenant }}</div>
+      <div class="col-md-2"><label class="form-label">Status</label>{{ form.status }}</div>
+      <div class="col-md-2"><label class="form-label">Enviado ao CRM</label>{{ form.crm_sent }}</div>
+      <div class="col-md-2"><label class="form-label">Falha dispatch</label>{{ form.dispatch_failed }}</div>
+      <div class="col-md-2"><label class="form-label">Início</label>{{ form.start_date }}</div>
+      <div class="col-md-2"><label class="form-label">Fim</label>{{ form.end_date }}</div>
+      <div class="col-md-4"><label class="form-label">Busca</label>{{ form.q }}</div>
+      <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Filtrar</button></div>
+      <div class="col-md-2"><a class="btn btn-light border w-100" href="{% url 'operations_portal:lead_list' %}">Limpar</a></div>
+    </form>
+  </div></div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Leads encontrados</h5></div>
+    <div class="card-body">
+      {% if page_obj.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover table-nowrap align-middle mb-0">
+          <thead><tr><th>ID</th><th>Tenant</th><th>Contato</th><th>Empresa</th><th>Necessidade</th><th>Status</th><th>CRM</th><th>External ID</th><th>Criado</th><th></th></tr></thead>
+          <tbody>
+            {% for lead in page_obj.object_list %}
+            <tr>
+              <td>#{{ lead.pk }}</td>
+              <td>{{ lead.tenant.slug }}</td>
+              <td><span class="fw-medium text-dark">{{ lead.contact.name }}</span>{% if lead.contact.details %}<br><small class="text-muted">{{ lead.contact.details }}</small>{% endif %}</td>
+              <td>{{ lead.company|default:"-" }}</td>
+              <td>{{ lead.need_summary_short|default:"-" }}</td>
+              <td><span class="badge bg-{{ lead.status_tone }}-subtle text-{{ lead.status_tone }}">{{ lead.status_label }}</span></td>
+              <td><span class="badge bg-{{ lead.crm_state.tone }}-subtle text-{{ lead.crm_state.tone }}">{{ lead.crm_state.label }}</span></td>
+              <td>{{ lead.crm_external_id_compact|default:"-" }}</td>
+              <td>{{ lead.created_at|date:"d/m/Y H:i" }}</td>
+              <td><a class="btn btn-sm btn-primary" href="{% url 'operations_portal:lead_detail' lead.pk %}">Ver lead</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% include 'operations_portal/partials/pagination.html' %}
+      {% else %}
+      <div class="text-center text-muted py-5">Nenhum lead encontrado para os filtros selecionados.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

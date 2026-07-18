@@ -19,6 +19,16 @@
     {% include 'operations_portal/partials/sidebar.html' %}
     <div class="content-page">
       <div class="content">
+        {% if messages %}
+        <div class="container-fluid pt-3">
+          {% for message in messages %}
+          <div class="alert {% if message.level_tag == 'error' %}alert-danger{% else %}alert-{{ message.tags|default:'info' }}{% endif %} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fechar"></button>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
         {% block page_content %}{% endblock %}
       </div>
       {% include 'operations_portal/partials/footer.html' %}

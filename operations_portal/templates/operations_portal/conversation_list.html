@@ -1,0 +1,61 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Conversas{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Conversas</h4>
+      <ol class="breadcrumb m-0 mt-1 py-0"><li class="breadcrumb-item"><a href="{% url 'operations_portal:dashboard' %}">Painel</a></li><li class="breadcrumb-item active">Conversas</li></ol>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-3"><label class="form-label">Tenant</label>{{ form.tenant }}</div>
+        <div class="col-md-2"><label class="form-label">Estado</label>{{ form.lead_state }}</div>
+        <div class="col-md-2"><label class="form-label">Qualificada</label>{{ form.qualified }}</div>
+        <div class="col-md-2"><label class="form-label">Início</label>{{ form.start_date }}</div>
+        <div class="col-md-2"><label class="form-label">Fim</label>{{ form.end_date }}</div>
+        <div class="col-md-3"><label class="form-label">Sessão</label>{{ form.q }}</div>
+        <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Filtrar</button></div>
+        <div class="col-md-2"><a class="btn btn-light border w-100" href="{% url 'operations_portal:conversation_list' %}">Limpar</a></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Conversas encontradas</h5></div>
+    <div class="card-body">
+      {% if page_obj.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover table-nowrap align-middle mb-0">
+          <thead><tr><th>Tenant</th><th>Sessão</th><th>Estado</th><th>Qualificada</th><th>Visitante</th><th>Mensagens</th><th>Lead</th><th>Handoff</th><th>Atualizada</th><th></th></tr></thead>
+          <tbody>
+            {% for conversation in page_obj.object_list %}
+            <tr>
+              <td>{{ conversation.tenant.slug }}</td>
+              <td class="fw-medium text-dark">{{ conversation.session_id }}</td>
+              <td><span class="badge bg-primary-subtle text-primary">{{ conversation.lead_state_label }}</span></td>
+              <td>{% if conversation.is_qualified %}<span class="badge bg-success-subtle text-success">Sim</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Não</span>{% endif %}</td>
+              <td>{{ conversation.visitor_name|default:conversation.visitor_email|default:conversation.visitor_phone|default:"-" }}</td>
+              <td>{{ conversation.message_count }}</td>
+              <td>{% if conversation.lead_draft %}<a href="{% url 'operations_portal:lead_detail' conversation.lead_draft.pk %}">#{{ conversation.lead_draft.pk }}</a>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+              <td>{% if conversation.latest_handoff %}<span class="badge bg-warning-subtle text-warning">{{ conversation.latest_handoff.priority_label }}</span>{% else %}<span class="text-muted">-</span>{% endif %}</td>
+              <td>{{ conversation.updated_at|date:"d/m/Y H:i" }}</td>
+              <td><a class="btn btn-sm btn-primary" href="{% url 'operations_portal:conversation_detail' conversation.pk %}">Ver conversa</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% include 'operations_portal/partials/pagination.html' %}
+      {% else %}
+      <div class="text-center text-muted py-5">Nenhuma conversa encontrada para os filtros selecionados.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

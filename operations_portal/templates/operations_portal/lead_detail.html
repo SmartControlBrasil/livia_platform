@@ -1,0 +1,58 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Lead #{{ lead.pk }}{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Lead #{{ lead.pk }}</h4>
+      <ol class="breadcrumb m-0 mt-1 py-0"><li class="breadcrumb-item"><a href="{% url 'operations_portal:dashboard' %}">Painel</a></li><li class="breadcrumb-item"><a href="{% url 'operations_portal:lead_list' %}">Leads</a></li><li class="breadcrumb-item active">Detalhe</li></ol>
+    </div>
+    {% if lead.can_retry_crm_dispatch %}
+    <form method="post" action="{% url 'operations_portal:lead_retry_crm' lead.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-warning">Reprocessar envio ao CRM</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="row">
+    <div class="col-xl-8">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Dados do lead</h5></div><div class="card-body">
+        <div class="row">
+          <div class="col-md-6"><p><span class="text-muted">Tenant:</span> <strong>{{ lead.tenant.slug }}</strong></p></div>
+          <div class="col-md-6"><p><span class="text-muted">Status:</span> <span class="badge bg-{{ lead.status_tone }}-subtle text-{{ lead.status_tone }}">{{ lead.status_label }}</span></p></div>
+          <div class="col-md-6"><p><span class="text-muted">Nome:</span> {{ lead.name|default:"-" }}</p></div>
+          <div class="col-md-6"><p><span class="text-muted">Empresa:</span> {{ lead.company|default:"-" }}</p></div>
+          <div class="col-md-6"><p><span class="text-muted">Cidade:</span> {{ lead.city|default:"-" }}</p></div>
+          <div class="col-md-6"><p><span class="text-muted">E-mail:</span> {{ lead.email|default:"-" }}</p></div>
+          <div class="col-md-6"><p><span class="text-muted">Telefone:</span> {{ lead.phone|default:"-" }}</p></div>
+        </div>
+        <hr>
+        <h6 class="text-dark">Necessidade</h6>
+        <p class="text-break" style="white-space: pre-wrap;">{{ lead.need_summary|default:"-" }}</p>
+        <h6 class="text-dark">Resumo executivo</h6>
+        <p class="text-muted">{{ lead.need_summary_short|default:"Sem resumo disponível." }}</p>
+      </div></div>
+    </div>
+
+    <div class="col-xl-4">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">CRM</h5></div><div class="card-body">
+        <p><span class="text-muted">Status CRM:</span> <span class="badge bg-{{ lead.crm_state.tone }}-subtle text-{{ lead.crm_state.tone }}">{{ lead.crm_state.label }}</span></p>
+        <p><span class="text-muted">External ID:</span> {{ lead.crm_external_id|default:"-" }}</p>
+        <p><span class="text-muted">Enviado em:</span> {{ lead.sent_to_crm_at|date:"d/m/Y H:i"|default:"-" }}</p>
+        <p><span class="text-muted">Erro:</span> {{ lead.crm_error|default:"-" }}</p>
+        {% if lead.can_retry_crm_dispatch %}<p class="text-warning mb-0">Reprocessamento disponível para este lead.</p>{% endif %}
+      </div></div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Origem e histórico</h5></div><div class="card-body">
+        <p><span class="text-muted">Criado:</span> {{ lead.created_at|date:"d/m/Y H:i" }}</p>
+        <p><span class="text-muted">Atualizado:</span> {{ lead.updated_at|date:"d/m/Y H:i" }}</p>
+        {% if lead.conversation %}<p><span class="text-muted">Conversa:</span> <a href="{% url 'operations_portal:conversation_detail' lead.conversation.pk %}">{{ lead.conversation.session_id }}</a></p>{% else %}<p class="text-muted">Sem conversa vinculada.</p>{% endif %}
+        {% if lead.latest_handoff %}<p><span class="text-muted">Handoff:</span> <a href="{% url 'admin:conversations_handoffrequest_change' lead.latest_handoff.pk %}">#{{ lead.latest_handoff.pk }}</a> <span class="badge bg-warning-subtle text-warning">{{ lead.latest_handoff.priority_label }}</span></p>{% endif %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
