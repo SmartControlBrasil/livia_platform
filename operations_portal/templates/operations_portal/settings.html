@@ -1,0 +1,91 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Configurações{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Configurações</h4>
+      <p class="text-muted mb-0 mt-1">Atendimento humano por tenant. {{ tenant_scope_note }}</p>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-xl-4">
+      <div class="card">
+        <div class="card-header">
+          <h5 class="card-title mb-0">Tenant</h5>
+        </div>
+        <div class="card-body">
+          <form method="get" action="{% url 'operations_portal:settings' %}">
+            <label class="form-label" for="tenant-select">Selecionar tenant</label>
+            <select id="tenant-select" name="tenant" class="form-select" onchange="this.form.submit()">
+              {% for tenant in tenants %}
+              <option value="{{ tenant.pk }}" {% if selected_tenant and tenant.pk == selected_tenant.pk %}selected{% endif %}>{{ tenant.name }}</option>
+              {% empty %}
+              <option value="">Nenhum tenant cadastrado</option>
+              {% endfor %}
+            </select>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-xl-8">
+      <div class="card">
+        <div class="card-header">
+          <h5 class="card-title mb-0">Atendimento humano</h5>
+        </div>
+        <div class="card-body">
+          {% if form %}
+          <form method="post" novalidate>
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}" />
+            {% if form.non_field_errors %}
+            <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+            {% endif %}
+
+            <div class="form-check form-switch mb-3">
+              {{ form.human_handoff_enabled }}
+              <label class="form-check-label" for="{{ form.human_handoff_enabled.id_for_label }}">{{ form.human_handoff_enabled.label }}</label>
+              {{ form.human_handoff_enabled.errors }}
+            </div>
+
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.human_handoff_channel.id_for_label }}">{{ form.human_handoff_channel.label }}</label>
+                {{ form.human_handoff_channel }}
+                {{ form.human_handoff_channel.errors }}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.handoff_whatsapp_number.id_for_label }}">{{ form.handoff_whatsapp_number.label }}</label>
+                {{ form.handoff_whatsapp_number }}
+                <div class="form-text">{{ form.handoff_whatsapp_number.help_text }}</div>
+                {{ form.handoff_whatsapp_number.errors }}
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="{{ form.handoff_whatsapp_label.id_for_label }}">{{ form.handoff_whatsapp_label.label }}</label>
+                {{ form.handoff_whatsapp_label }}
+                {{ form.handoff_whatsapp_label.errors }}
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="{{ form.handoff_whatsapp_message.id_for_label }}">{{ form.handoff_whatsapp_message.label }}</label>
+                {{ form.handoff_whatsapp_message }}
+                {{ form.handoff_whatsapp_message.errors }}
+              </div>
+            </div>
+
+            <div class="d-flex justify-content-end mt-4">
+              <button type="submit" class="btn btn-primary">Salvar</button>
+            </div>
+          </form>
+          {% else %}
+          <p class="text-muted mb-0">Cadastre um tenant antes de configurar atendimento humano.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

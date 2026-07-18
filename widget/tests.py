@@ -1,6 +1,8 @@
+from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 
 from tenants.models import AssistantProfile, Tenant
+from tenants.services.human_handoff import build_whatsapp_handoff_url
 
 
 class WidgetTests(TestCase):
@@ -19,6 +21,13 @@ class WidgetTests(TestCase):
         self.assertIn("primary_color", content)
         self.assertIn("bottom_left", content)
         self.assertIn("getAttribute(\"data-api-url\")", content)
+        self.assertIn("#livia-whatsapp-handoff", content)
+        self.assertIn("handleHumanHandoff(data.human_handoff)", content)
+        self.assertIn("window.sessionStorage", content)
+        self.assertIn("livia_handoff_", content)
+        self.assertIn("https:\\/\\/wa\\.me", content)
+        self.assertIn("prefers-reduced-motion", content)
+        self.assertIn("noopener noreferrer", content)
 
     def test_demo_page_loads_widget_script(self):
         response = self.client.get("/demo/")
@@ -56,6 +65,9 @@ class WidgetConfigEndpointTests(TestCase):
         self.assertEqual(data["placeholder_text"], "Digite aqui...")
         self.assertFalse(data["show_branding"])
         self.assertTrue(data["is_widget_enabled"])
+        self.assertFalse(data["human_handoff_enabled"])
+        self.assertEqual(data["human_handoff_channel"], "disabled")
+        self.assertEqual(data["handoff_whatsapp_label"], "Falar com um especialista")
 
     def test_widget_config_inactive_tenant_returns_disabled_config(self):
         tenant = Tenant.objects.create(
@@ -93,6 +105,8 @@ class WidgetConfigEndpointTests(TestCase):
         payload_text = str(data)
         self.assertNotIn("secret", payload_text.lower())
         self.assertNotIn("token", payload_text.lower())
+        self.assertNotIn("551151968525", payload_text)
+        self.assertNotIn("wa.me", payload_text)
 
 
 class WidgetCorsMiddlewareTests(TestCase):
@@ -142,3 +156,57 @@ class WidgetConfigCorsMiddlewareTests(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response["Access-Control-Allow-Origin"], "https://www.smartcontrolbrasil.com.br")
         self.assertIn("GET", response["Access-Control-Allow-Methods"])
+
+
+
+class HumanHandoffConfigTests(TestCase):
+    def test_defaults_are_disabled(self):
+        tenant = Tenant.objects.create(name="Tenant", slug="tenant")
+        profile = AssistantProfile.objects.create(tenant=tenant)
+
+        self.assertFalse(profile.human_handoff_enabled)
+        self.assertEqual(profile.human_handoff_channel, "disabled")
+        self.assertFalse(profile.has_valid_whatsapp_handoff)
+
+    def test_whatsapp_number_is_normalized_and_url_is_safe(self):
+        tenant = Tenant.objects.create(name="Tenant", slug="tenant")
+        profile = AssistantProfile.objects.create(
+            tenant=tenant,
+            human_handoff_enabled=True,
+            human_handoff_channel="whatsapp",
+            handoff_whatsapp_number="+55 (11) 51968-525",
+            handoff_whatsapp_message="Olá, Lívia & equipe",
+        )
+
+        self.assertEqual(profile.handoff_whatsapp_number, "551151968525")
+        self.assertEqual(build_whatsapp_handoff_url(profile), "https://wa.me/551151968525?text=Ol%C3%A1%2C+L%C3%ADvia+%26+equipe")
+
+    def test_invalid_number_is_rejected_when_whatsapp_enabled(self):
+        tenant = Tenant.objects.create(name="Tenant", slug="tenant")
+        profile = AssistantProfile(
+            tenant=tenant,
+            human_handoff_enabled=True,
+            human_handoff_channel="whatsapp",
+            handoff_whatsapp_number="123",
+        )
+
+        with self.assertRaises(ValidationError):
+            profile.full_clean()
+
+    def test_public_config_contains_safe_handoff_fields_only(self):
+        tenant = Tenant.objects.create(name="Tenant", slug="tenant")
+        AssistantProfile.objects.create(
+            tenant=tenant,
+            human_handoff_enabled=True,
+            human_handoff_channel="whatsapp",
+            handoff_whatsapp_number="551151968525",
+        )
+
+        response = self.client.get("/api/widget/config/?tenant=tenant")
+
+        data = response.json()
+        self.assertTrue(data["human_handoff_enabled"])
+        self.assertEqual(data["human_handoff_channel"], "whatsapp")
+        payload_text = str(data)
+        self.assertNotIn("551151968525", payload_text)
+        self.assertNotIn("wa.me", payload_text)

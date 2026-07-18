@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from django.core.exceptions import ObjectDoesNotExist
 
+from tenants.services.human_handoff import public_human_handoff_config
 from tenants.models import (
     DEFAULT_WIDGET_LAUNCHER_LABEL,
     DEFAULT_WIDGET_PLACEHOLDER_TEXT,
@@ -31,7 +32,7 @@ def build_widget_config_for_tenant(tenant):
 def build_widget_config_payload(tenant, profile):
     widget_title = profile.effective_widget_title
     enabled = bool(tenant.is_active and profile.is_active and profile.is_widget_enabled)
-    return {
+    payload = {
         "tenant": tenant.slug,
         "assistant_name": profile.name,
         "widget_title": widget_title,
@@ -43,10 +44,12 @@ def build_widget_config_payload(tenant, profile):
         "show_branding": bool(profile.show_branding),
         "is_widget_enabled": enabled,
     }
+    payload.update(public_human_handoff_config(profile if enabled else None))
+    return payload
 
 
 def build_disabled_widget_config(tenant_slug):
-    return {
+    payload = {
         "tenant": tenant_slug or "",
         "assistant_name": "Lívia",
         "widget_title": "Lívia",
@@ -58,3 +61,5 @@ def build_disabled_widget_config(tenant_slug):
         "show_branding": True,
         "is_widget_enabled": False,
     }
+    payload.update(public_human_handoff_config(None))
+    return payload

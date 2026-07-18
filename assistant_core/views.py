@@ -6,8 +6,9 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from conversations.models import Conversation, Message
+from conversations.models import Conversation, HandoffRequest, Message
 from tenants.models import Tenant
+from tenants.services.human_handoff import build_human_handoff_payload
 from .security.ip import get_client_ip
 from .security.rate_limit import check_chat_rate_limit
 from .security.spam_guard import check_message_spam
@@ -126,6 +127,16 @@ def chat_api(request):
         content=user_message,
     )
     assistant_reply = decision.reply
+    human_handoff_payload = None
+    if decision.handoff_request_id and decision.handoff_reason == HandoffRequest.Reason.EXPLICIT_REQUEST:
+        handoff = HandoffRequest.objects.filter(
+            pk=decision.handoff_request_id,
+            tenant=tenant,
+            conversation=conversation,
+        ).first()
+        human_handoff_payload = build_human_handoff_payload(assistant_profile, handoff)
+        if human_handoff_payload.get("active"):
+            assistant_reply = "Claro. Use o botão do WhatsApp que apareceu na tela para falar com nossa equipe."
 
     Message.objects.create(
         conversation=conversation,
@@ -133,18 +144,19 @@ def chat_api(request):
         content=assistant_reply,
     )
 
-    return JsonResponse(
-        {
-            "tenant": tenant.slug,
-            "session_id": session_id,
-            "session_key": session_id,
-            "reply": assistant_reply,
-            "intent": decision.intent,
-            "assistant_name": getattr(assistant_profile, "name", "Lívia"),
-            "initial_message": getattr(
-                assistant_profile,
-                "initial_message",
-                "Olá! Sou a Lívia. Como posso te ajudar?",
-            ),
-        }
-    )
+    response_payload = {
+        "tenant": tenant.slug,
+        "session_id": session_id,
+        "session_key": session_id,
+        "reply": assistant_reply,
+        "intent": decision.intent,
+        "assistant_name": getattr(assistant_profile, "name", "Lívia"),
+        "initial_message": getattr(
+            assistant_profile,
+            "initial_message",
+            "Olá! Sou a Lívia. Como posso te ajudar?",
+        ),
+    }
+    if human_handoff_payload is not None:
+        response_payload["human_handoff"] = human_handoff_payload
+    return JsonResponse(response_payload)

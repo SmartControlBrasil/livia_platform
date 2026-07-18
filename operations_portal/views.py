@@ -1,14 +1,16 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 
 from conversations.models import HandoffRequest
 from leads.models import LeadDraft
 from leads.services.crm_dispatch import CRMDispatchService
 from leads.services.handoff import HandoffService
 
-from .forms import ConversationFilterForm, HandoffFilterForm, LeadFilterForm
+from tenants.models import AssistantProfile, Tenant
+
+from .forms import ConversationFilterForm, HandoffFilterForm, HumanHandoffSettingsForm, LeadFilterForm
 from .formatters import can_retry_crm_dispatch
 from .selectors import (
     clean_querystring,
@@ -192,6 +194,40 @@ def update_handoff_status(request, pk):
         messages.success(request, "Handoff cancelado.")
     return redirect("operations_portal:handoff_detail", pk=handoff.pk)
 
+
+@login_required(login_url="/admin/login/")
+def settings_view(request):
+    _require_staff_scope(request.user)
+    _require_superuser(request.user)
+    tenants = list(Tenant.objects.order_by("name"))
+    selected_tenant = _selected_settings_tenant(request, tenants)
+    profile = None
+    form = None
+
+    if selected_tenant is not None:
+        profile, _ = AssistantProfile.objects.get_or_create(tenant=selected_tenant)
+        if request.method == "POST":
+            form = HumanHandoffSettingsForm(request.POST, instance=profile)
+            if form.is_valid():
+                form.save()
+                messages.success(request, "Configuração de atendimento humano atualizada.")
+                return redirect(f"{request.path}?tenant={selected_tenant.pk}")
+            messages.error(request, "Revise os campos destacados antes de salvar.")
+        else:
+            form = HumanHandoffSettingsForm(instance=profile)
+
+    return render(
+        request,
+        "operations_portal/settings.html",
+        {
+            "active_section": "configuracoes",
+            "tenant_scope_note": tenant_scope_note(request.user),
+            "tenants": tenants,
+            "selected_tenant": selected_tenant,
+            "form": form,
+        },
+    )
+
 @login_required(login_url="/admin/login/")
 def placeholder(request, section):
     _require_staff_scope(request.user)
@@ -207,6 +243,18 @@ def placeholder(request, section):
             "tenant_scope_note": tenant_scope_note(request.user),
         },
     )
+
+
+def _selected_settings_tenant(request, tenants):
+    tenant_id = request.POST.get("tenant") if request.method == "POST" else request.GET.get("tenant")
+    if tenant_id:
+        return get_object_or_404(Tenant, pk=tenant_id)
+    return tenants[0] if tenants else None
+
+
+def _require_superuser(user):
+    if not user.is_superuser:
+        raise PermissionDenied
 
 
 def _require_staff_scope(user):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 from django.conf import settings
@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 class LiviaReply:
     intent: str
     reply: str
+    handoff_request_id: int | None = None
+    handoff_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -197,7 +199,7 @@ class LiviaDecisionService:
             logger.warning("livia_ai_finalize_failed error_type=%s", exc.__class__.__name__)
             return decision
         if result.success and result.text:
-            return LiviaReply(intent=decision.intent, reply=result.text)
+            return replace(decision, reply=result.text)
         return decision
 
     def _should_try_ai(self, assistant_profile) -> bool:
@@ -211,12 +213,19 @@ class LiviaDecisionService:
             discovery_result=discovery,
             message=current_message,
         )
-        if result.handoff is None or not result.created:
+        if result.handoff is None:
+            return decision
+        decision = replace(
+            decision,
+            handoff_request_id=result.handoff.pk,
+            handoff_reason=result.handoff.reason,
+        )
+        if not result.created:
             return decision
         confirmation = self._handoff_confirmation(result.handoff)
         if confirmation.lower() in decision.reply.lower():
             return decision
-        return LiviaReply(intent=decision.intent, reply=f"{confirmation}\n\n{decision.reply}")
+        return replace(decision, reply=f"{confirmation}\n\n{decision.reply}")
 
     def _handoff_confirmation(self, handoff) -> str:
         has_contact = bool(handoff.visitor_phone or handoff.visitor_email)

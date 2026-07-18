@@ -12,7 +12,7 @@ from django.utils import timezone
 from conversations.models import Conversation, HandoffRequest, Message
 from leads.models import LeadDraft
 from leads.services.crm_dispatch import CRMDispatchResult
-from tenants.models import Tenant
+from tenants.models import AssistantProfile, Tenant
 
 from .analytics import get_dashboard_analytics
 from .selectors import get_crm_status, get_notification_status
@@ -51,6 +51,7 @@ class OperationsPortalAccessTests(TestCase):
             reverse("operations_portal:lead_detail", kwargs={"pk": lead.pk}),
             reverse("operations_portal:handoff_list"),
             reverse("operations_portal:handoff_detail", kwargs={"pk": handoff.pk}),
+            reverse("operations_portal:settings"),
         ]
 
     def test_anonymous_user_is_redirected_to_admin_login(self):
@@ -143,7 +144,75 @@ class OperationsPortalDashboardTests(PortalUserMixin, TestCase):
         self.assertContains(response, reverse("operations_portal:lead_list"))
         self.assertContains(response, reverse("operations_portal:handoff_list"))
         self.assertContains(response, reverse("operations_portal:placeholder", kwargs={"section": "integracoes"}))
+        self.assertContains(response, reverse("operations_portal:settings"))
         self.assertContains(response, reverse("admin:index"))
+
+
+@override_settings(SECURE_SSL_REDIRECT=False, STORAGES=TEST_STORAGES)
+class OperationsPortalSettingsTests(PortalUserMixin, TestCase):
+    def setUp(self):
+        self.login_superuser()
+        self.tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil")
+
+    def test_settings_screen_renders_for_superuser(self):
+        response = self.client.get(reverse("operations_portal:settings"), {"tenant": self.tenant.pk})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Atendimento humano")
+        self.assertContains(response, "Número do WhatsApp")
+        self.assertNotContains(response, "SMART360_M2M_TOKEN")
+
+    def test_settings_requires_superuser(self):
+        user = get_user_model().objects.create_user(username="staff-settings", password="pass", is_staff=True)
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("operations_portal:settings"))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_settings_post_requires_csrf_and_updates_only_handoff_fields(self):
+        url = reverse("operations_portal:settings")
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.user)
+        self.assertEqual(csrf_client.post(url, {"tenant": self.tenant.pk}).status_code, 403)
+
+        response = self.client.post(
+            url,
+            {
+                "tenant": self.tenant.pk,
+                "human_handoff_enabled": "on",
+                "human_handoff_channel": "whatsapp",
+                "handoff_whatsapp_number": "+55 (11) 51968-525",
+                "handoff_whatsapp_label": "Falar com um especialista",
+                "handoff_whatsapp_message": "Olá, vim pelo atendimento da Lívia.",
+                "name": "Nome indevido",
+                "use_ai": "on",
+            },
+        )
+
+        self.assertRedirects(response, f"{url}?tenant={self.tenant.pk}")
+        profile = AssistantProfile.objects.get(tenant=self.tenant)
+        self.assertTrue(profile.human_handoff_enabled)
+        self.assertEqual(profile.handoff_whatsapp_number, "551151968525")
+        self.assertEqual(profile.name, "Lívia")
+        self.assertFalse(profile.use_ai)
+
+    def test_settings_rejects_invalid_number(self):
+        response = self.client.post(
+            reverse("operations_portal:settings"),
+            {
+                "tenant": self.tenant.pk,
+                "human_handoff_enabled": "on",
+                "human_handoff_channel": "whatsapp",
+                "handoff_whatsapp_number": "123",
+                "handoff_whatsapp_label": "Falar com um especialista",
+                "handoff_whatsapp_message": "Olá",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        profile = AssistantProfile.objects.get(tenant=self.tenant)
+        self.assertFalse(profile.human_handoff_enabled)
 
 
 @override_settings(SECURE_SSL_REDIRECT=False, STORAGES=TEST_STORAGES)

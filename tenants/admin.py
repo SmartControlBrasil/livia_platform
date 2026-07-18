@@ -57,10 +57,11 @@ class AssistantProfileAdmin(admin.ModelAdmin):
         "primary_color",
         "position",
         "is_widget_enabled",
+        "human_handoff_status",
         "use_ai",
         "primary_goal",
     ]
-    list_filter = ["is_widget_enabled", "position", "show_branding", "use_ai", "tenant"]
+    list_filter = ["is_widget_enabled", "position", "show_branding", "human_handoff_enabled", "human_handoff_channel", "use_ai", "tenant"]
     search_fields = [
         "name",
         "widget_title",
@@ -87,6 +88,22 @@ class AssistantProfileAdmin(admin.ModelAdmin):
                 )
             },
         ),
+        (
+            "Atendimento humano",
+            {
+                "fields": (
+                    "human_handoff_enabled",
+                    "human_handoff_channel",
+                    "handoff_whatsapp_number",
+                    "handoff_whatsapp_label",
+                    "handoff_whatsapp_message",
+                )
+            },
+        ),
         ("Datas", {"fields": ("created_at", "updated_at")}),
     )
     actions = [enable_profile_ai, disable_profile_ai]
+
+    @admin.display(description="Atendimento humano", boolean=True)
+    def human_handoff_status(self, obj):
+        return bool(obj.human_handoff_enabled and obj.has_valid_whatsapp_handoff)

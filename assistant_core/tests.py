@@ -256,6 +256,94 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.json()["reply"], "Olá! Sou a Lívia da Pitondo. Como posso ajudar?")
         self.assertEqual(response.json()["initial_message"], "Olá! Sou a Lívia da Pitondo. Como posso ajudar?")
 
+
+    def test_chat_api_human_request_returns_whatsapp_handoff_payload(self):
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            human_handoff_enabled=True,
+            human_handoff_channel="whatsapp",
+            handoff_whatsapp_number="+55 (11) 51968-525",
+            handoff_whatsapp_label="Falar com um especialista",
+            handoff_whatsapp_message="Olá, vim pelo atendimento da Lívia.",
+        )
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "whatsapp-handoff-session",
+            "message": "quero falar com uma pessoa",
+        }
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        handoff = HandoffRequest.objects.get(conversation__session_id="whatsapp-handoff-session")
+        self.assertEqual(handoff.reason, HandoffRequest.Reason.EXPLICIT_REQUEST)
+        self.assertEqual(data["reply"], "Claro. Use o botão do WhatsApp que apareceu na tela para falar com nossa equipe.")
+        self.assertEqual(data["human_handoff"]["handoff_id"], handoff.pk)
+        self.assertEqual(data["human_handoff"]["channel"], "whatsapp")
+        self.assertEqual(data["human_handoff"]["url"], "https://wa.me/551151968525?text=Ol%C3%A1%2C+vim+pelo+atendimento+da+L%C3%ADvia.")
+        payload_text = json.dumps(data, ensure_ascii=False)
+        self.assertNotIn("token", payload_text.lower())
+        self.assertNotIn("secret", payload_text.lower())
+        self.assertNotIn("quero falar com uma pessoa", payload_text)
+
+    def test_chat_api_human_request_reuses_existing_handoff(self):
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            human_handoff_enabled=True,
+            human_handoff_channel="whatsapp",
+            handoff_whatsapp_number="551151968525",
+        )
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "reuse-handoff-session",
+            "message": "falar com atendente",
+        }
+
+        first = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json")
+        second = self.client.post("/api/chat/", data=json.dumps({**payload, "message": "me passa para um especialista"}), content_type="application/json")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(HandoffRequest.objects.filter(conversation__session_id="reuse-handoff-session").count(), 1)
+        self.assertEqual(first.json()["human_handoff"]["handoff_id"], second.json()["human_handoff"]["handoff_id"])
+
+    def test_chat_api_normal_message_does_not_return_human_handoff(self):
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            human_handoff_enabled=True,
+            human_handoff_channel="whatsapp",
+            handoff_whatsapp_number="551151968525",
+        )
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "normal-no-handoff",
+            "message": "Quero orçamento para automação",
+        }
+
+        response = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("human_handoff", response.json())
+
+    def test_chat_api_human_request_without_valid_whatsapp_keeps_contact_flow(self):
+        AssistantProfile.objects.create(tenant=self.tenant, human_handoff_enabled=False)
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "disabled-whatsapp-handoff",
+            "message": "quero atendimento humano",
+        }
+
+        response = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["human_handoff"], {"active": False})
+        self.assertIn("atendimento humano", response.json()["reply"].lower())
+
     def test_chat_api_creates_conversation_and_messages(self):
         payload = {
             "tenant": self.tenant.slug,

@@ -12,6 +12,7 @@ urlpatterns = [
     path("handoffs/", views.handoff_list, name="handoff_list"),
     path("handoffs/<int:pk>/", views.handoff_detail, name="handoff_detail"),
     path("handoffs/<int:pk>/status/", views.update_handoff_status, name="handoff_update_status"),
+    path("configuracoes/", views.settings_view, name="settings"),
     path("leads/<int:pk>/", views.lead_detail, name="lead_detail"),
     path("leads/<int:pk>/reprocessar-crm/", views.retry_lead_crm_dispatch, name="lead_retry_crm"),
     path("<slug:section>/", views.placeholder, name="placeholder"),

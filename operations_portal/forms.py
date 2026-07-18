@@ -2,7 +2,7 @@ from django import forms
 
 from conversations.models import Conversation, HandoffRequest
 from leads.models import LeadDraft
-from tenants.models import Tenant
+from tenants.models import AssistantProfile, Tenant
 
 CONVERSATION_LEAD_STATE_CHOICES = [
     (Conversation.LeadState.DISCOVERY, "Descoberta"),
@@ -84,3 +84,34 @@ class HandoffFilterForm(PortalFilterForm):
     start_date = forms.DateField(required=False, input_formats=["%Y-%m-%d"])
     end_date = forms.DateField(required=False, input_formats=["%Y-%m-%d"])
     q = forms.CharField(required=False, max_length=160)
+
+
+class HumanHandoffSettingsForm(forms.ModelForm):
+    class Meta:
+        model = AssistantProfile
+        fields = [
+            "human_handoff_enabled",
+            "human_handoff_channel",
+            "handoff_whatsapp_number",
+            "handoff_whatsapp_label",
+            "handoff_whatsapp_message",
+        ]
+        widgets = {
+            "handoff_whatsapp_message": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            elif isinstance(field.widget, forms.Select):
+                field.widget.attrs["class"] = "form-select"
+            else:
+                field.widget.attrs["class"] = "form-control"
+        self.fields["human_handoff_enabled"].label = "Ativar handoff humano"
+        self.fields["human_handoff_channel"].label = "Canal"
+        self.fields["handoff_whatsapp_number"].label = "Número do WhatsApp"
+        self.fields["handoff_whatsapp_label"].label = "Texto do botão"
+        self.fields["handoff_whatsapp_message"].label = "Mensagem pré-preenchida"
+        self.fields["handoff_whatsapp_number"].help_text = "Use telefone internacional. O valor será salvo apenas com dígitos."

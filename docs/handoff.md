@@ -63,3 +63,35 @@ O handoff usa `build_conversation_summary` e `format_conversation_summary_notes`
 - marcação de responsável;
 - sincronização M2M com Smart360 CRM;
 - histórico de notificações e tentativas.
+
+## WhatsApp no widget por tenant
+
+A Fase 5 permite mostrar um botão flutuante de WhatsApp no widget somente depois de um pedido explícito de atendimento humano confirmado pelo backend. A configuração fica em `AssistantProfile` e novos tenants continuam com `human_handoff_enabled=False`.
+
+Campos operacionais:
+
+- `human_handoff_enabled`: liga/desliga o CTA humano do tenant.
+- `human_handoff_channel`: use `disabled` ou `whatsapp`.
+- `handoff_whatsapp_number`: telefone internacional salvo apenas com dígitos. Não salve link `wa.me`.
+- `handoff_whatsapp_label`: texto acessível do botão.
+- `handoff_whatsapp_message`: texto pré-preenchido enviado ao WhatsApp. Não inclua dados pessoais nem conteúdo da conversa.
+
+A configuração pública do widget expõe apenas `human_handoff_enabled`, `human_handoff_channel` e `handoff_whatsapp_label`. O número bruto não é enviado ao navegador na configuração inicial. A URL `https://wa.me/...` é construída internamente e enviada apenas na resposta do `/api/chat/` quando houver `HandoffRequest` elegível com reason `explicit_request`.
+
+### Ativação posterior na VPS
+
+Depois do deploy e da migration, ativar o Smart Control Brasil pelo shell Django, sem editar dados de outros tenants:
+
+```bash
+cd /var/www/livia-platform
+source .venv/bin/activate
+python manage.py shell -c "from tenants.models import Tenant; t=Tenant.objects.get(slug='smart-control-brasil'); p=t.assistant_profile; p.human_handoff_enabled=True; p.human_handoff_channel='whatsapp'; p.handoff_whatsapp_number='551151968525'; p.handoff_whatsapp_label='Falar com um especialista'; p.handoff_whatsapp_message='Olá, vim pelo atendimento da Lívia e gostaria de continuar com um especialista.'; p.full_clean(); p.save(update_fields=['human_handoff_enabled','human_handoff_channel','handoff_whatsapp_number','handoff_whatsapp_label','handoff_whatsapp_message','updated_at'])"
+```
+
+Validação manual após ativar:
+
+1. Abrir uma página com o widget do tenant.
+2. Confirmar que o botão de WhatsApp inicia oculto.
+3. Enviar uma frase como “quero falar com uma pessoa”.
+4. Confirmar que o `HandoffRequest` fica pendente no Admin/painel e que a resposta JSON contém `human_handoff.active=true`.
+5. Conferir que o botão abre nova aba com `https://wa.me/551151968525?...` e mensagem pré-preenchida, sem envio automático.
