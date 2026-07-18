@@ -10,6 +10,7 @@ urlpatterns = [
     path("install/<slug:tenant_slug>/", tenant_install_page),
     path("install/<slug:tenant_slug>.json", tenant_install_json),
     path("admin/", admin.site.urls),
+    path("painel/", include("operations_portal.urls", namespace="operations_portal")),
     path("api/", include("assistant_core.urls")),
     path("", include("widget.urls")),
 ]

@@ -1,0 +1,119 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Visão geral{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Visão geral</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-md-6 col-lg-4 col-xl">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-primary border-opacity-10 bg-primary-subtle rounded-2 me-2"><div class="bg-primary rounded-circle widget-size text-center"><i data-feather="layers" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Tenants ativos</p></div>
+        <h3 class="mb-0 fs-22 text-dark">{{ kpis.active_tenants }}</h3>
+      </div></div></div>
+    </div>
+    <div class="col-md-6 col-lg-4 col-xl">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-secondary border-opacity-10 bg-secondary-subtle rounded-2 me-2"><div class="bg-secondary rounded-circle widget-size text-center"><i data-feather="message-square" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Conversas</p></div>
+        <h3 class="mb-0 fs-22 text-dark">{{ kpis.total_conversations }}</h3>
+      </div></div></div>
+    </div>
+    <div class="col-md-6 col-lg-4 col-xl">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-success border-opacity-10 bg-success-subtle rounded-2 me-2"><div class="bg-success rounded-circle widget-size text-center"><i data-feather="target" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Rascunhos de leads</p></div>
+        <h3 class="mb-0 fs-22 text-dark">{{ kpis.total_leads }}</h3>
+      </div></div></div>
+    </div>
+    <div class="col-md-6 col-lg-6 col-xl">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-warning border-opacity-10 bg-warning-subtle rounded-2 me-2"><div class="bg-warning rounded-circle widget-size text-center"><i data-feather="check-circle" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Leads qualificados</p></div>
+        <h3 class="mb-0 fs-22 text-dark">{{ kpis.qualified_leads }}</h3>
+      </div></div></div>
+    </div>
+    <div class="col-md-12 col-lg-6 col-xl">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-danger border-opacity-10 bg-danger-subtle rounded-2 me-2"><div class="bg-danger rounded-circle widget-size text-center"><i data-feather="alert-circle" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Leads com falha</p></div>
+        <h3 class="mb-0 fs-22 text-dark">{{ kpis.failed_leads }}</h3>
+      </div></div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-md-6 col-xl-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Conversas recentes</p><h3 class="text-dark mb-0">{{ kpis.recent_conversations }}</h3></div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Leads enviados ao CRM</p><h3 class="text-dark mb-0">{{ kpis.sent_to_crm }}</h3></div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Handoffs pendentes</p><h3 class="text-dark mb-0">{{ kpis.pending_handoffs }}</h3></div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Handoffs alta prioridade</p><h3 class="text-dark mb-0">{{ kpis.high_priority_handoffs }}</h3></div></div></div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-8">
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Conversas recentes</h5></div>
+        <div class="card-body">
+          {% if recent_conversations %}
+          <div class="table-responsive"><table class="table table-hover table-nowrap mb-0"><thead><tr><th>Tenant</th><th>Sessão</th><th>Estado</th><th>Qualificada</th><th>Atualizada</th></tr></thead><tbody>
+            {% for conversation in recent_conversations %}
+            <tr><td>{{ conversation.tenant.slug }}</td><td>{{ conversation.session_id }}</td><td>{{ conversation.lead_state_label }}</td><td>{% if conversation.is_qualified %}<span class="badge bg-success-subtle text-success">Sim</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Não</span>{% endif %}</td><td>{{ conversation.updated_at|date:"d/m/Y H:i" }}</td></tr>
+            {% endfor %}
+          </tbody></table></div>
+          {% else %}
+          <div class="text-center text-muted py-4">Nenhuma conversa registrada ainda.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Integrações</h5></div>
+        <div class="card-body">
+          {% for item in integration_statuses %}
+          <div class="d-flex justify-content-between align-items-start border-bottom pb-2 mb-2">
+            <div><h6 class="mb-1 text-dark">{{ item.label }}</h6><p class="text-muted mb-0 fs-13">{{ item.detail }}</p></div>
+            <span class="badge bg-{{ item.tone }}-subtle text-{{ item.tone }}">{{ item.state }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-8">
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Leads recentes</h5></div>
+        <div class="card-body">
+          {% if recent_leads %}
+          <div class="table-responsive"><table class="table table-hover table-nowrap mb-0"><thead><tr><th>Tenant</th><th>Lead</th><th>Status</th><th>CRM</th><th>Atualizado</th></tr></thead><tbody>
+            {% for lead in recent_leads %}
+            <tr><td>{{ lead.tenant.slug }}</td><td>{{ lead.name|default:lead.company|default:lead.email|default:"Sem identificação" }}</td><td>{{ lead.get_status_display }}</td><td>{% if lead.crm_external_id %}<span class="badge bg-success-subtle text-success">Enviado</span>{% elif lead.crm_error %}<span class="badge bg-danger-subtle text-danger">Falha</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Pendente</span>{% endif %}</td><td>{{ lead.updated_at|date:"d/m/Y H:i" }}</td></tr>
+            {% endfor %}
+          </tbody></table></div>
+          {% else %}
+          <div class="text-center text-muted py-4">Nenhum rascunho de lead registrado ainda.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Tenants ativos</h5></div>
+        <div class="card-body">
+          {% if active_tenants %}
+            {% for tenant in active_tenants %}
+            <div class="d-flex align-items-center justify-content-between border-bottom pb-2 mb-2"><div><h6 class="mb-0 text-dark">{{ tenant.name }}</h6><small class="text-muted">{{ tenant.slug }}</small></div><span class="badge bg-success-subtle text-success">Ativo</span></div>
+            {% endfor %}
+          {% else %}
+            <div class="text-center text-muted py-4">Nenhum tenant ativo.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

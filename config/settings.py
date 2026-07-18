@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     "knowledge_base",
     "widget",
     "integrations",
+    "operations_portal",
 ]
 
 MIDDLEWARE = [
