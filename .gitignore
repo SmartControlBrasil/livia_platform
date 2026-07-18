@@ -10,3 +10,9 @@ staticfiles/
 .idea/
 .vscode/
 /hando/
+*.sqlite3.backup
+*.sqlite3.bak
+*.dump
+*.sql
+backups/
+dumps/

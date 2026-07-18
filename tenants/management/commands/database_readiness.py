@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+from django.core.management.base import BaseCommand
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+from django.utils import timezone
+
+from tenants.services.database_validation import build_database_validation_report
+
+
+class Command(BaseCommand):
+    help = "Mostra readiness readonly do banco atual sem imprimir credenciais."
+
+    def handle(self, *args, **options):
+        ready = True
+        self.stdout.write("Database readiness")
+        config = connection.settings_dict
+        engine = str(config.get("ENGINE", ""))
+        self.stdout.write(f"engine={engine}")
+        self.stdout.write(f"type={_database_type(engine)}")
+        self.stdout.write(f"name={_safe_name(config.get('NAME'))}")
+        self.stdout.write(f"host={_safe_host(config.get('HOST'))}")
+        self.stdout.write(f"conn_max_age={config.get('CONN_MAX_AGE', 0)}")
+        self.stdout.write(f"conn_health_checks={config.get('CONN_HEALTH_CHECKS', False)}")
+        self.stdout.write(f"django_timezone={timezone.get_current_timezone_name()}")
+
+        try:
+            connection.ensure_connection()
+            self.stdout.write("connection=available")
+            self.stdout.write(f"vendor={connection.vendor}")
+            self.stdout.write(f"database_version={_database_version()}")
+            self.stdout.write(f"database_timezone={_database_timezone()}")
+        except Exception as exc:
+            ready = False
+            self.stdout.write(self.style.ERROR(f"connection=unavailable error={exc.__class__.__name__}"))
+
+        try:
+            pending = _pending_migrations()
+            self.stdout.write(f"pending_migrations={len(pending)}")
+            for migration, _backwards in pending[:20]:
+                self.stdout.write(f"pending={migration.app_label}.{migration.name}")
+            if pending:
+                ready = False
+        except Exception as exc:
+            ready = False
+            self.stdout.write(self.style.ERROR(f"migrations=unknown error={exc.__class__.__name__}"))
+
+        try:
+            report = build_database_validation_report()
+            for key, value in report.totals.items():
+                self.stdout.write(f"count_{key}={value}")
+            for key, value in report.tenant_integrity.items():
+                self.stdout.write(f"integrity_{key}={value}")
+                if value:
+                    ready = False
+        except Exception as exc:
+            ready = False
+            self.stdout.write(self.style.ERROR(f"counts=unavailable error={exc.__class__.__name__}"))
+
+        self.stdout.write(self.style.SUCCESS("READY") if ready else self.style.ERROR("NOT READY"))
+        if not ready:
+            raise SystemExit(1)
+
+
+def _database_type(engine: str) -> str:
+    if "postgresql" in engine:
+        return "PostgreSQL"
+    if "sqlite3" in engine:
+        return "SQLite"
+    return "Other"
+
+
+def _safe_name(name) -> str:
+    text = str(name or "")
+    return text.rsplit("/", 1)[-1] if text else "configured"
+
+
+def _safe_host(host) -> str:
+    return "configured" if str(host or "").strip() else "local"
+
+
+def _pending_migrations():
+    executor = MigrationExecutor(connection)
+    targets = executor.loader.graph.leaf_nodes()
+    return executor.migration_plan(targets)
+
+
+def _database_version() -> str:
+    with connection.cursor() as cursor:
+        if connection.vendor == "postgresql":
+            cursor.execute("SELECT version()")
+        elif connection.vendor == "sqlite":
+            cursor.execute("SELECT sqlite_version()")
+        else:
+            return "unknown"
+        return str(cursor.fetchone()[0]).split("\\n", 1)[0]
+
+def _database_timezone() -> str:
+    if connection.vendor != "postgresql":
+        return "not_applicable"
+    with connection.cursor() as cursor:
+        cursor.execute("SHOW TIME ZONE")
+        return str(cursor.fetchone()[0])

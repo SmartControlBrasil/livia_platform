@@ -15,6 +15,8 @@ from pathlib import Path
 
 from decouple import config
 
+from config.database import build_database_config, is_running_tests, parse_database_conn_max_age
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -53,7 +55,7 @@ SECRET_KEY = env_first(
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_first("DJANGO_DEBUG", "DEBUG", default=True, cast=bool)
-RUNNING_TESTS = "test" in sys.argv
+RUNNING_TESTS = is_running_tests(sys.argv, config("DJANGO_RUNNING_TESTS", default=""))
 
 ALLOWED_HOSTS = csv_env("DJANGO_ALLOWED_HOSTS", "ALLOWED_HOSTS", default="127.0.0.1,localhost")
 CSRF_TRUSTED_ORIGINS = csv_env("DJANGO_CSRF_TRUSTED_ORIGINS", "CSRF_TRUSTED_ORIGINS", default="")
@@ -116,12 +118,15 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
+DATABASE_CONN_MAX_AGE = parse_database_conn_max_age(config("DATABASE_CONN_MAX_AGE", default="60"))
+DATABASES = build_database_config(
+    debug=DEBUG,
+    base_dir=BASE_DIR,
+    database_url=config("DATABASE_URL", default=""),
+    conn_max_age=DATABASE_CONN_MAX_AGE,
+    running_tests=RUNNING_TESTS,
+    allow_external_test_database_url=config("DJANGO_ALLOW_EXTERNAL_TEST_DATABASE_URL", default=False, cast=bool),
+)
 
 
 # Password validation
