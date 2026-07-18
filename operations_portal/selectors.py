@@ -59,32 +59,10 @@ class IntegrationStatus:
     tone: str
 
 
-def get_dashboard_context():
-    tenant_stats = Tenant.objects.aggregate(
-        total=Count("id"),
-        active=Count("id", filter=Q(is_active=True)),
-    )
-    conversation_stats = Conversation.objects.aggregate(
-        total=Count("id"),
-        qualified=Count("id", filter=Q(is_qualified=True)),
-    )
-    lead_stats = LeadDraft.objects.aggregate(
-        total=Count("id"),
-        qualified=Count("id", filter=Q(status=LeadDraft.Status.QUALIFIED)),
-        sent_to_crm=Count("id", filter=Q(status=LeadDraft.Status.SENT_TO_CRM)),
-        failed=Count("id", filter=Q(status=LeadDraft.Status.FAILED)),
-    )
-    handoff_stats = HandoffRequest.objects.aggregate(
-        pending=Count("id", filter=Q(status=HandoffRequest.Status.PENDING)),
-        high_priority=Count(
-            "id",
-            filter=Q(
-                status=HandoffRequest.Status.PENDING,
-                priority__in=[HandoffRequest.Priority.HIGH, HandoffRequest.Priority.URGENT],
-            ),
-        ),
-    )
+def get_dashboard_context(period_value=None):
+    from .analytics import get_dashboard_analytics
 
+    analytics = get_dashboard_analytics(period_value)
     recent_conversations = list(Conversation.objects.select_related("tenant").order_by("-updated_at")[:8])
     for conversation in recent_conversations:
         decorate_conversation(conversation)
@@ -92,18 +70,20 @@ def get_dashboard_context():
     for lead in recent_leads:
         decorate_lead(lead)
 
-    return {
-        "kpis": {
-            "active_tenants": tenant_stats["active"] or 0,
-            "total_conversations": conversation_stats["total"] or 0,
+    kpis = analytics["kpis"]
+    kpis.update(
+        {
             "recent_conversations": len(recent_conversations),
-            "total_leads": lead_stats["total"] or 0,
-            "qualified_leads": lead_stats["qualified"] or 0,
-            "sent_to_crm": lead_stats["sent_to_crm"] or 0,
-            "failed_leads": lead_stats["failed"] or 0,
-            "pending_handoffs": handoff_stats["pending"] or 0,
-            "high_priority_handoffs": handoff_stats["high_priority"] or 0,
-        },
+            "qualified_leads": kpis["period_leads_qualified"],
+            "sent_to_crm": kpis["period_leads_sent"],
+            "failed_leads": kpis["period_leads_failed"],
+        }
+    )
+
+    return {
+        "period": analytics["period"],
+        "kpis": kpis,
+        "dashboard_charts": analytics,
         "recent_conversations": recent_conversations,
         "recent_leads": recent_leads,
         "integration_statuses": get_integration_statuses(),

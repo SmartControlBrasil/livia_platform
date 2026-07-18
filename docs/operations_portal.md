@@ -48,6 +48,54 @@ Fluxo operacional:
 
 A prevenção contra duplicidade permanece centralizada no serviço de CRM e é reforçada pela UI: leads já enviados, com `crm_external_id` ou com `sent_to_crm_at` não exibem a ação e não chamam o serviço se receberem POST manual.
 
+
+## Terceira fase
+
+A visão geral em `/painel/` passou a ser um dashboard analítico com dados reais e seletor de período.
+
+Períodos aceitos:
+
+- últimos 7 dias: `?period=7`;
+- últimos 30 dias: `?period=30`;
+- últimos 90 dias: `?period=90`.
+
+O padrão é 30 dias. Qualquer valor inválido volta para 30 dias. As consultas usam o timezone ativo da aplicação, configurado para `America/Sao_Paulo` em produção.
+
+### KPIs
+
+Os cards analíticos exibem:
+
+- conversas criadas no período;
+- leads criados no período;
+- leads qualificados no período, considerando leads criados no período cujo status atual é `qualified`;
+- leads enviados ao CRM no período, considerando leads criados no período cujo status atual é `sent_to_crm`;
+- leads com falha no período, considerando leads criados no período cujo status atual é `failed`;
+- handoffs pendentes atuais e handoffs pendentes criados no período;
+- tenants ativos como total geral;
+- conversas e leads totais identificados como `Total geral`.
+
+Fórmulas:
+
+- taxa de qualificação = leads qualificados / leads criados no período;
+- taxa de envio ao CRM = leads enviados ao CRM / leads criados no período;
+- quando o divisor é zero, a taxa exibida é `0%`.
+
+Não há comparação com período anterior nesta fase.
+
+### Gráficos
+
+- `Conversas por dia`: conversas novas agrupadas por `created_at`, com dias sem registro preenchidos com zero.
+- `Geração e envio de leads`: leads criados por `created_at` e envios por `sent_to_crm_at`. Como não existe campo de data exata de qualificação, o gráfico não inventa série de qualificação diária.
+- `Funil comercial`: leads criados no período agrupados pelo status atual. As categorias são mutuamente exclusivas: rascunho, qualificado, enviado ao CRM e falha de envio.
+- `Conversas por etapa`: conversas criadas no período agrupadas por `lead_state`, com rótulos traduzidos apenas na apresentação.
+- `Volume por tenant`: top 10 tenants por volume combinado de conversas e leads criados no período. Quando há mais de 10 tenants com atividade, o card indica `Top 10`.
+
+### Segurança dos datasets
+
+Os gráficos recebem dados por `json_script` do Django. Os datasets contêm apenas datas, rótulos, quantidades e estados operacionais. Não são incluídos nomes de pessoas, e-mails, telefones, mensagens ou `session_id` nos datasets dos gráficos.
+
+Os assets de gráfico usam ApexCharts copiado localmente de `./hando/hando/static/libs/apexcharts/apexcharts.min.js` para `operations_portal/static/operations_portal/hando/libs/apexcharts/apexcharts.min.js`. Não há CDN nem dependência de Node/Gulp/Bun em produção.
+
 ## Dados exibidos
 
 O dashboard consulta dados reais de Tenant, Conversation, rascunho de lead e HandoffRequest. Estados de CRM, OpenAI, webhooks e notificações de handoff são derivados apenas das flags de settings e nunca exibem tokens, secrets ou URLs completas de integração.

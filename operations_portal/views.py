@@ -31,7 +31,7 @@ PLACEHOLDERS = {
 @login_required(login_url="/admin/login/")
 def dashboard(request):
     _require_staff_scope(request.user)
-    context = get_dashboard_context()
+    context = get_dashboard_context(request.GET.get("period"))
     context.update({"active_section": "overview", "tenant_scope_note": tenant_scope_note(request.user)})
     return render(request, "operations_portal/dashboard.html", context)
 

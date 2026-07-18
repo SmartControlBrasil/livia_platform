@@ -1,54 +1,129 @@
 {% extends 'operations_portal/base.html' %}
+{% load static %}
 
 {% block title %}Visão geral{% endblock %}
 
 {% block page_content %}
 <div class="container-fluid">
-  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column gap-3">
     <div class="flex-grow-1">
       <h4 class="fs-18 fw-semibold m-0">Visão geral</h4>
       <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+      <p class="text-muted mb-0 fs-13">Período analisado: {{ period.label }}</p>
     </div>
+    <form method="get" class="d-flex align-items-center gap-2" aria-label="Selecionar período do dashboard">
+      <label for="dashboard-period" class="form-label mb-0 text-muted">Período</label>
+      <select id="dashboard-period" name="period" class="form-select" aria-label="Período analisado" onchange="this.form.submit()">
+        {% for option in period.options %}
+        <option value="{{ option }}" {% if option == period.days %}selected{% endif %}>Últimos {{ option }} dias</option>
+        {% endfor %}
+      </select>
+    </form>
   </div>
 
   <div class="row">
-    <div class="col-md-6 col-lg-4 col-xl">
+    <div class="col-md-6 col-lg-4 col-xl-3">
       <div class="card"><div class="card-body"><div class="widget-first">
-        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-primary border-opacity-10 bg-primary-subtle rounded-2 me-2"><div class="bg-primary rounded-circle widget-size text-center"><i data-feather="layers" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Tenants ativos</p></div>
-        <h3 class="mb-0 fs-22 text-dark">{{ kpis.active_tenants }}</h3>
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-primary border-opacity-10 bg-primary-subtle rounded-2 me-2"><div class="bg-primary rounded-circle widget-size text-center"><i data-feather="message-square" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Conversas no período</p></div>
+        <h3 class="mb-1 fs-22 text-dark">{{ kpis.period_conversations }}</h3><small class="text-muted">Total geral: {{ kpis.total_conversations }}</small>
       </div></div></div>
     </div>
-    <div class="col-md-6 col-lg-4 col-xl">
+    <div class="col-md-6 col-lg-4 col-xl-3">
       <div class="card"><div class="card-body"><div class="widget-first">
-        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-secondary border-opacity-10 bg-secondary-subtle rounded-2 me-2"><div class="bg-secondary rounded-circle widget-size text-center"><i data-feather="message-square" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Conversas</p></div>
-        <h3 class="mb-0 fs-22 text-dark">{{ kpis.total_conversations }}</h3>
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-success border-opacity-10 bg-success-subtle rounded-2 me-2"><div class="bg-success rounded-circle widget-size text-center"><i data-feather="target" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Leads criados no período</p></div>
+        <h3 class="mb-1 fs-22 text-dark">{{ kpis.period_leads_created }}</h3><small class="text-muted">Total geral: {{ kpis.total_leads }}</small>
       </div></div></div>
     </div>
-    <div class="col-md-6 col-lg-4 col-xl">
-      <div class="card"><div class="card-body"><div class="widget-first">
-        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-success border-opacity-10 bg-success-subtle rounded-2 me-2"><div class="bg-success rounded-circle widget-size text-center"><i data-feather="target" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Rascunhos de leads</p></div>
-        <h3 class="mb-0 fs-22 text-dark">{{ kpis.total_leads }}</h3>
-      </div></div></div>
-    </div>
-    <div class="col-md-6 col-lg-6 col-xl">
+    <div class="col-md-6 col-lg-4 col-xl-3">
       <div class="card"><div class="card-body"><div class="widget-first">
         <div class="d-flex align-items-center mb-2"><div class="p-2 border border-warning border-opacity-10 bg-warning-subtle rounded-2 me-2"><div class="bg-warning rounded-circle widget-size text-center"><i data-feather="check-circle" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Leads qualificados</p></div>
-        <h3 class="mb-0 fs-22 text-dark">{{ kpis.qualified_leads }}</h3>
+        <h3 class="mb-1 fs-22 text-dark">{{ kpis.period_leads_qualified }}</h3><small class="text-muted">Taxa: {{ kpis.qualification_rate }}%</small>
       </div></div></div>
     </div>
-    <div class="col-md-12 col-lg-6 col-xl">
+    <div class="col-md-6 col-lg-4 col-xl-3">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-info border-opacity-10 bg-info-subtle rounded-2 me-2"><div class="bg-info rounded-circle widget-size text-center"><i data-feather="send" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Leads enviados ao CRM</p></div>
+        <h3 class="mb-1 fs-22 text-dark">{{ kpis.period_leads_sent }}</h3><small class="text-muted">Taxa: {{ kpis.crm_send_rate }}%</small>
+      </div></div></div>
+    </div>
+    <div class="col-md-6 col-lg-4 col-xl-3">
       <div class="card"><div class="card-body"><div class="widget-first">
         <div class="d-flex align-items-center mb-2"><div class="p-2 border border-danger border-opacity-10 bg-danger-subtle rounded-2 me-2"><div class="bg-danger rounded-circle widget-size text-center"><i data-feather="alert-circle" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Leads com falha</p></div>
-        <h3 class="mb-0 fs-22 text-dark">{{ kpis.failed_leads }}</h3>
+        <h3 class="mb-0 fs-22 text-dark">{{ kpis.period_leads_failed }}</h3>
+      </div></div></div>
+    </div>
+    <div class="col-md-6 col-lg-4 col-xl-3">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-secondary border-opacity-10 bg-secondary-subtle rounded-2 me-2"><div class="bg-secondary rounded-circle widget-size text-center"><i data-feather="phone-call" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Handoffs pendentes</p></div>
+        <h3 class="mb-1 fs-22 text-dark">{{ kpis.pending_handoffs }}</h3><small class="text-muted">No período: {{ kpis.period_pending_handoffs }}</small>
+      </div></div></div>
+    </div>
+    <div class="col-md-6 col-lg-4 col-xl-3">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-purple border-opacity-10 bg-primary-subtle rounded-2 me-2"><div class="bg-primary rounded-circle widget-size text-center"><i data-feather="layers" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Tenants ativos</p></div>
+        <h3 class="mb-0 fs-22 text-dark">{{ kpis.active_tenants }}</h3><small class="text-muted">Total geral</small>
+      </div></div></div>
+    </div>
+    <div class="col-md-6 col-lg-4 col-xl-3">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-warning border-opacity-10 bg-warning-subtle rounded-2 me-2"><div class="bg-warning rounded-circle widget-size text-center"><i data-feather="zap" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Handoffs alta prioridade</p></div>
+        <h3 class="mb-0 fs-22 text-dark">{{ kpis.high_priority_handoffs }}</h3><small class="text-muted">Pendentes agora</small>
       </div></div></div>
     </div>
   </div>
 
   <div class="row">
-    <div class="col-md-6 col-xl-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Conversas recentes</p><h3 class="text-dark mb-0">{{ kpis.recent_conversations }}</h3></div></div></div>
-    <div class="col-md-6 col-xl-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Leads enviados ao CRM</p><h3 class="text-dark mb-0">{{ kpis.sent_to_crm }}</h3></div></div></div>
-    <div class="col-md-6 col-xl-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Handoffs pendentes</p><h3 class="text-dark mb-0">{{ kpis.pending_handoffs }}</h3></div></div></div>
-    <div class="col-md-6 col-xl-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Handoffs alta prioridade</p><h3 class="text-dark mb-0">{{ kpis.high_priority_handoffs }}</h3></div></div></div>
+    <div class="col-xl-8">
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Conversas por dia</h5></div>
+        <div class="card-body">
+          <p class="text-muted fs-13 mb-3">{{ dashboard_charts.charts.conversations_by_day.summary }}</p>
+          {% if dashboard_charts.charts.conversations_by_day.has_data %}<div id="chart-conversations-by-day" aria-label="Gráfico de conversas por dia"></div>{% else %}<div class="text-center text-muted py-5">Ainda não há dados neste período.</div>{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Funil comercial</h5></div>
+        <div class="card-body">
+          <p class="text-muted fs-13 mb-3">{{ dashboard_charts.charts.funnel.summary }}</p>
+          {% if dashboard_charts.charts.funnel.has_data %}<div id="chart-commercial-funnel" aria-label="Gráfico do funil comercial"></div>{% else %}<div class="text-center text-muted py-5">Ainda não há dados neste período.</div>{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-6">
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Geração e envio de leads</h5></div>
+        <div class="card-body">
+          <p class="text-muted fs-13 mb-3">{{ dashboard_charts.charts.leads_by_day.summary }}</p>
+          {% if dashboard_charts.charts.leads_by_day.has_data %}<div id="chart-leads-by-day" aria-label="Gráfico de geração e envio de leads"></div>{% else %}<div class="text-center text-muted py-5">Ainda não há dados neste período.</div>{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-6">
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Conversas por etapa</h5></div>
+        <div class="card-body">
+          <p class="text-muted fs-13 mb-3">{{ dashboard_charts.charts.conversation_states.summary }}</p>
+          {% if dashboard_charts.charts.conversation_states.has_data %}<div id="chart-conversation-states" aria-label="Gráfico de conversas por etapa"></div>{% else %}<div class="text-center text-muted py-5">Ainda não há dados neste período.</div>{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-12">
+      <div class="card">
+        <div class="card-header d-flex align-items-center justify-content-between"><h5 class="card-title mb-0">Volume por tenant</h5>{% if dashboard_charts.charts.tenant_volume.has_more %}<span class="badge bg-secondary-subtle text-secondary">Top 10</span>{% endif %}</div>
+        <div class="card-body">
+          <p class="text-muted fs-13 mb-3">{{ dashboard_charts.charts.tenant_volume.summary }}</p>
+          {% if dashboard_charts.charts.tenant_volume.has_data %}<div id="chart-tenant-volume" aria-label="Gráfico de volume por tenant"></div>{% else %}<div class="text-center text-muted py-5">Ainda não há dados neste período.</div>{% endif %}
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="row">
@@ -59,7 +134,7 @@
           {% if recent_conversations %}
           <div class="table-responsive"><table class="table table-hover table-nowrap mb-0"><thead><tr><th>Tenant</th><th>Sessão</th><th>Estado</th><th>Qualificada</th><th>Atualizada</th></tr></thead><tbody>
             {% for conversation in recent_conversations %}
-            <tr><td>{{ conversation.tenant.slug }}</td><td>{{ conversation.session_id }}</td><td>{{ conversation.lead_state_label }}</td><td>{% if conversation.is_qualified %}<span class="badge bg-success-subtle text-success">Sim</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Não</span>{% endif %}</td><td>{{ conversation.updated_at|date:"d/m/Y H:i" }}</td></tr>
+            <tr><td>{{ conversation.tenant.slug }}</td><td><a href="{% url 'operations_portal:conversation_detail' conversation.pk %}">{{ conversation.session_id }}</a></td><td>{{ conversation.lead_state_label }}</td><td>{% if conversation.is_qualified %}<span class="badge bg-success-subtle text-success">Sim</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Não</span>{% endif %}</td><td>{{ conversation.updated_at|date:"d/m/Y H:i" }}</td></tr>
             {% endfor %}
           </tbody></table></div>
           {% else %}
@@ -91,7 +166,7 @@
           {% if recent_leads %}
           <div class="table-responsive"><table class="table table-hover table-nowrap mb-0"><thead><tr><th>Tenant</th><th>Lead</th><th>Status</th><th>CRM</th><th>Atualizado</th></tr></thead><tbody>
             {% for lead in recent_leads %}
-            <tr><td>{{ lead.tenant.slug }}</td><td>{{ lead.name|default:lead.company|default:lead.email|default:"Sem identificação" }}</td><td>{{ lead.get_status_display }}</td><td>{% if lead.crm_external_id %}<span class="badge bg-success-subtle text-success">Enviado</span>{% elif lead.crm_error %}<span class="badge bg-danger-subtle text-danger">Falha</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Pendente</span>{% endif %}</td><td>{{ lead.updated_at|date:"d/m/Y H:i" }}</td></tr>
+            <tr><td>{{ lead.tenant.slug }}</td><td><a href="{% url 'operations_portal:lead_detail' lead.pk %}">{{ lead.name|default:lead.company|default:lead.email|default:"Sem identificação" }}</a></td><td>{{ lead.status_label }}</td><td><span class="badge bg-{{ lead.crm_state.tone }}-subtle text-{{ lead.crm_state.tone }}">{{ lead.crm_state.label }}</span></td><td>{{ lead.updated_at|date:"d/m/Y H:i" }}</td></tr>
             {% endfor %}
           </tbody></table></div>
           {% else %}
@@ -116,4 +191,10 @@
     </div>
   </div>
 </div>
+{{ dashboard_charts|json_script:"dashboard-analytics-data" }}
+{% endblock %}
+
+{% block extra_javascript %}
+<script src="{% static 'operations_portal/hando/libs/apexcharts/apexcharts.min.js' %}"></script>
+<script src="{% static 'operations_portal/js/dashboard.js' %}"></script>
 {% endblock %}

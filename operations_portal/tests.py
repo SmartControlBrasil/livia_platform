@@ -1,3 +1,5 @@
+import json
+from datetime import timedelta
 from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
@@ -12,6 +14,7 @@ from leads.models import LeadDraft
 from leads.services.crm_dispatch import CRMDispatchResult
 from tenants.models import Tenant
 
+from .analytics import get_dashboard_analytics
 from .selectors import get_crm_status
 
 TEST_STORAGES = {
@@ -116,8 +119,11 @@ class OperationsPortalDashboardTests(PortalUserMixin, TestCase):
         self.assertContains(response, "Coleta da necessidade")
 
     def test_dashboard_uses_bounded_queries(self):
-        with self.assertNumQueries(10):
-            self.client.get(reverse("operations_portal:dashboard"))
+        with CaptureQueriesContext(connection) as captured:
+            response = self.client.get(reverse("operations_portal:dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(len(captured), 18)
 
     def test_placeholder_routes_do_not_break_sidebar(self):
         response = self.client.get(reverse("operations_portal:placeholder", kwargs={"section": "handoffs"}))
@@ -132,6 +138,167 @@ class OperationsPortalDashboardTests(PortalUserMixin, TestCase):
         self.assertContains(response, reverse("operations_portal:lead_list"))
         self.assertContains(response, reverse("operations_portal:placeholder", kwargs={"section": "integracoes"}))
         self.assertContains(response, reverse("admin:index"))
+
+
+@override_settings(SECURE_SSL_REDIRECT=False, STORAGES=TEST_STORAGES)
+class OperationsPortalAnalyticsTests(PortalUserMixin, TestCase):
+    def setUp(self):
+        self.login_superuser()
+        self.tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil")
+
+    def make_dt(self, days_ago=0):
+        return timezone.now() - timedelta(days=days_ago)
+
+    def set_created_at(self, instance, value):
+        instance.__class__.objects.filter(pk=instance.pk).update(created_at=value, updated_at=value)
+        instance.refresh_from_db()
+        return instance
+
+    def test_dashboard_uses_default_period_30(self):
+        response = self.client.get(reverse("operations_portal:dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["period"]["days"], 30)
+        self.assertContains(response, "Últimos 30 dias")
+
+    def test_dashboard_accepts_valid_periods(self):
+        for period in (7, 30, 90):
+            with self.subTest(period=period):
+                response = self.client.get(reverse("operations_portal:dashboard"), {"period": period})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context["period"]["days"], period)
+
+    def test_dashboard_invalid_period_falls_back_to_30(self):
+        response = self.client.get(reverse("operations_portal:dashboard"), {"period": "365"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["period"]["days"], 30)
+
+    def test_analytics_fills_missing_days_and_groups_conversations(self):
+        today = self.set_created_at(
+            Conversation.objects.create(tenant=self.tenant, session_id="today-1"), self.make_dt(0)
+        )
+        self.set_created_at(Conversation.objects.create(tenant=self.tenant, session_id="today-2"), today.created_at)
+        self.set_created_at(Conversation.objects.create(tenant=self.tenant, session_id="old"), self.make_dt(20))
+
+        analytics = get_dashboard_analytics(7)
+        chart = analytics["charts"]["conversations_by_day"]
+
+        self.assertEqual(len(chart["labels"]), 7)
+        self.assertEqual(sum(chart["series"][0]["data"]), 2)
+        self.assertIn(0, chart["series"][0]["data"])
+
+    def test_analytics_groups_leads_created_and_sent_by_sent_date(self):
+        created = self.set_created_at(
+            LeadDraft.objects.create(tenant=self.tenant, status=LeadDraft.Status.QUALIFIED), self.make_dt(1)
+        )
+        sent = self.set_created_at(
+            LeadDraft.objects.create(
+                tenant=self.tenant,
+                status=LeadDraft.Status.SENT_TO_CRM,
+                sent_to_crm_at=self.make_dt(0),
+                crm_external_id="crm-1",
+            ),
+            self.make_dt(2),
+        )
+        LeadDraft.objects.filter(pk=sent.pk).update(sent_to_crm_at=self.make_dt(0))
+
+        analytics = get_dashboard_analytics(7)
+        leads_chart = analytics["charts"]["leads_by_day"]
+
+        self.assertEqual(sum(leads_chart["series"][0]["data"]), 2)
+        self.assertEqual(sum(leads_chart["series"][1]["data"]), 1)
+        self.assertEqual(analytics["kpis"]["period_leads_created"], 2)
+        self.assertEqual(analytics["kpis"]["period_leads_qualified"], 1)
+        self.assertEqual(created.status, LeadDraft.Status.QUALIFIED)
+
+    def test_analytics_builds_mutually_exclusive_funnel(self):
+        for status in (
+            LeadDraft.Status.DRAFT,
+            LeadDraft.Status.QUALIFIED,
+            LeadDraft.Status.SENT_TO_CRM,
+            LeadDraft.Status.FAILED,
+        ):
+            self.set_created_at(LeadDraft.objects.create(tenant=self.tenant, status=status), self.make_dt(0))
+
+        funnel = get_dashboard_analytics(7)["charts"]["funnel"]
+
+        self.assertEqual(funnel["series"], [1, 1, 1, 1])
+        self.assertIn("categorias mutuamente exclusivas", funnel["summary"])
+
+    def test_analytics_translates_conversation_states(self):
+        self.set_created_at(
+            Conversation.objects.create(
+                tenant=self.tenant,
+                session_id="state-1",
+                lead_state=Conversation.LeadState.COLLECT_NAME_COMPANY,
+            ),
+            self.make_dt(0),
+        )
+
+        states = get_dashboard_analytics(7)["charts"]["conversation_states"]
+
+        self.assertEqual(states["labels"], ["Nome e empresa"])
+
+    def test_analytics_limits_top_tenants_to_10(self):
+        for index in range(11):
+            tenant = Tenant.objects.create(name=f"Tenant {index:02d}", slug=f"tenant-{index:02d}")
+            for item in range(index + 1):
+                self.set_created_at(
+                    Conversation.objects.create(tenant=tenant, session_id=f"tenant-{index}-{item}"),
+                    self.make_dt(0),
+                )
+
+        tenant_volume = get_dashboard_analytics(7)["charts"]["tenant_volume"]
+
+        self.assertEqual(len(tenant_volume["items"]), 10)
+        self.assertTrue(tenant_volume["has_more"])
+        self.assertEqual(tenant_volume["items"][0]["label"], "Tenant 10")
+
+    def test_analytics_rates_are_zero_without_leads(self):
+        analytics = get_dashboard_analytics(7)
+
+        self.assertEqual(analytics["kpis"]["qualification_rate"], 0)
+        self.assertEqual(analytics["kpis"]["crm_send_rate"], 0)
+        self.assertFalse(analytics["charts"]["leads_by_day"]["has_data"])
+
+    def test_dashboard_datasets_do_not_expose_personal_data_and_use_json_script(self):
+        lead = LeadDraft.objects.create(
+            tenant=self.tenant,
+            status=LeadDraft.Status.QUALIFIED,
+            name="Lead Seguro",
+            email="cliente@example.com",
+            phone="11988887777",
+        )
+        self.set_created_at(lead, self.make_dt(0))
+
+        response = self.client.get(reverse("operations_portal:dashboard"), {"period": 7})
+        payload = response.context["dashboard_charts"]
+        serialized = json.dumps(payload, ensure_ascii=False)
+        content = response.content.decode()
+
+        self.assertContains(response, 'id="dashboard-analytics-data"')
+        self.assertNotIn("cliente@example.com", serialized)
+        self.assertNotIn("11988887777", serialized)
+        self.assertNotIn("cliente@example.com", content)
+        self.assertNotIn("11988887777", content)
+
+    def test_dashboard_json_script_escapes_labels_and_empty_states_render(self):
+        tenant = Tenant.objects.create(name="<script>alert(1)</script>", slug="tenant-script")
+        self.set_created_at(Conversation.objects.create(tenant=tenant, session_id="safe-json"), self.make_dt(0))
+
+        response = self.client.get(reverse("operations_portal:dashboard"), {"period": 7})
+        content = response.content.decode()
+
+        self.assertIn("dashboard-analytics-data", content)
+        self.assertNotIn("<script>alert(1)</script>", content)
+        self.assertIn(r"\u003Cscript\u003Ealert(1)\u003C/script\u003E", content)
+
+    def test_dashboard_empty_states_render_without_activity(self):
+        response = self.client.get(reverse("operations_portal:dashboard"), {"period": 7})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Ainda não há dados neste período.", count=5)
 
 
 @override_settings(SECURE_SSL_REDIRECT=False, STORAGES=TEST_STORAGES)
