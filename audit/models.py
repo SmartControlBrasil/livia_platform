@@ -14,6 +14,9 @@ ACTION_WEBHOOK_CONFIG_UPDATED = "webhook_config.updated"
 ACTION_TENANT_MEMBERSHIP_CREATED = "tenant_membership.created"
 ACTION_TENANT_MEMBERSHIP_UPDATED = "tenant_membership.updated"
 ACTION_TENANT_MEMBERSHIP_DEACTIVATED = "tenant_membership.deactivated"
+ACTION_TENANT_ORIGIN_CREATED = "tenant_origin.created"
+ACTION_TENANT_ORIGIN_UPDATED = "tenant_origin.updated"
+ACTION_TENANT_ORIGIN_DEACTIVATED = "tenant_origin.deactivated"
 
 
 class AuditEvent(models.Model):
@@ -30,6 +33,9 @@ class AuditEvent(models.Model):
         TENANT_MEMBERSHIP_CREATED = ACTION_TENANT_MEMBERSHIP_CREATED, "Tenant membership created"
         TENANT_MEMBERSHIP_UPDATED = ACTION_TENANT_MEMBERSHIP_UPDATED, "Tenant membership updated"
         TENANT_MEMBERSHIP_DEACTIVATED = ACTION_TENANT_MEMBERSHIP_DEACTIVATED, "Tenant membership deactivated"
+        TENANT_ORIGIN_CREATED = ACTION_TENANT_ORIGIN_CREATED, "Tenant origin created"
+        TENANT_ORIGIN_UPDATED = ACTION_TENANT_ORIGIN_UPDATED, "Tenant origin updated"
+        TENANT_ORIGIN_DEACTIVATED = ACTION_TENANT_ORIGIN_DEACTIVATED, "Tenant origin deactivated"
 
     tenant = models.ForeignKey(
         "tenants.Tenant",

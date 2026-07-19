@@ -1,6 +1,8 @@
 from django.http import HttpResponse, JsonResponse
 
-from tenants.services.widget_config import build_widget_config_for_tenant_slug
+from tenants.models import Tenant
+from tenants.origins import log_origin_block, validate_tenant_origin
+from tenants.services.widget_config import build_disabled_widget_config, build_widget_config_for_tenant
 
 
 def widget_js(request):
@@ -377,7 +379,7 @@ def widget_js(request):
 
     async function loadConfig() {
       try {
-        const response = await fetch(configUrl, { method: "GET" });
+        const response = await fetch(configUrl, { method: "GET", headers: { "X-Livia-Tenant": tenant } });
         if (!response.ok) {
           return;
         }
@@ -405,7 +407,8 @@ def widget_js(request):
         const response = await fetch(apiUrl, {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-Livia-Tenant": tenant
           },
           body: JSON.stringify({
             tenant: tenant,
@@ -487,7 +490,18 @@ def widget_js(request):
 
 def widget_config(request):
     tenant_slug = request.GET.get("tenant", "").strip()
-    return JsonResponse(build_widget_config_for_tenant_slug(tenant_slug))
+    tenant = Tenant.objects.filter(slug=tenant_slug).first()
+    if tenant is None:
+        return JsonResponse(build_disabled_widget_config(tenant_slug), status=404)
+    if not tenant.is_active:
+        return JsonResponse(build_disabled_widget_config(tenant_slug), status=403)
+
+    result = validate_tenant_origin(request, tenant)
+    if not result.allowed:
+        log_origin_block(tenant, result)
+        return JsonResponse({"error": "origin_not_allowed"}, status=403)
+    request.livia_validated_origin = result.origin
+    return JsonResponse(build_widget_config_for_tenant(tenant))
 
 
 def demo_page(request):

@@ -11,7 +11,7 @@ Checklist operacional para preparar `livia.smartcontrolbrasil.com.br` sem execut
 5. Manter `DJANGO_DEBUG=False` em staging/produção.
 6. Configurar `DJANGO_ALLOWED_HOSTS=livia.smartcontrolbrasil.com.br` e hosts auxiliares necessários.
 7. Configurar `DJANGO_CSRF_TRUSTED_ORIGINS=https://livia.smartcontrolbrasil.com.br`.
-8. Configurar `LIVIA_ALLOWED_WIDGET_ORIGINS` somente com domínios autorizados para embed.
+8. Cadastrar origins autorizadas por tenant em `TenantAllowedOrigin`.
 
 ## 2. Banco de dados
 
@@ -69,7 +69,7 @@ Configurar OpenLiteSpeed/LiteSpeed como proxy/app server para o processo WSGI/AS
 1. Abrir `https://livia.smartcontrolbrasil.com.br/demo/`.
 2. Abrir `https://livia.smartcontrolbrasil.com.br/widget.js`.
 3. Testar `POST /api/chat/` com tenant válido.
-4. Testar embed em site externo autorizado via `LIVIA_ALLOWED_WIDGET_ORIGINS`.
+4. Testar embed em site externo cadastrado em `TenantAllowedOrigin`.
 5. Testar origin não autorizado e confirmar ausência de headers CORS permissivos.
 6. Criar lead qualificado com dispatch dry-run.
 7. Conferir logs do app para eventos `crm_dispatch_*`.

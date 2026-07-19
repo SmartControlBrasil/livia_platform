@@ -1,7 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 
-from tenants.models import AssistantProfile, Tenant
+from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
 from tenants.services.human_handoff import build_whatsapp_handoff_url
 
 
@@ -39,6 +39,7 @@ class WidgetTests(TestCase):
 class WidgetConfigEndpointTests(TestCase):
     def test_widget_config_returns_active_tenant_config(self):
         tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil", domain="smartcontrolbrasil.com.br")
+        TenantAllowedOrigin.objects.create(tenant=tenant, origin="https://www.smartcontrolbrasil.com.br")
         AssistantProfile.objects.create(
             tenant=tenant,
             name="Lívia",
@@ -51,7 +52,7 @@ class WidgetConfigEndpointTests(TestCase):
             show_branding=False,
         )
 
-        response = self.client.get("/api/widget/config/?tenant=smart-control-brasil")
+        response = self.client.get("/api/widget/config/?tenant=smart-control-brasil", HTTP_ORIGIN="https://www.smartcontrolbrasil.com.br", HTTP_X_LIVIA_TENANT="smart-control-brasil")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -80,21 +81,22 @@ class WidgetConfigEndpointTests(TestCase):
 
         response = self.client.get("/api/widget/config/?tenant=inactive")
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 403)
         self.assertFalse(response.json()["is_widget_enabled"])
 
     def test_widget_config_missing_tenant_returns_disabled_config(self):
         response = self.client.get("/api/widget/config/?tenant=missing")
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["tenant"], "missing")
         self.assertFalse(response.json()["is_widget_enabled"])
 
     def test_widget_config_uses_defaults_and_contains_no_secrets(self):
         tenant = Tenant.objects.create(name="Defaults", slug="defaults", domain="defaults.example")
         AssistantProfile.objects.create(tenant=tenant, name="Lívia Defaults")
+        TenantAllowedOrigin.objects.create(tenant=tenant, origin="https://defaults.example")
 
-        response = self.client.get("/api/widget/config/?tenant=defaults")
+        response = self.client.get("/api/widget/config/?tenant=defaults", HTTP_ORIGIN="https://defaults.example", HTTP_X_LIVIA_TENANT="defaults")
 
         data = response.json()
         self.assertEqual(data["widget_title"], "Lívia Defaults")
@@ -110,12 +112,16 @@ class WidgetConfigEndpointTests(TestCase):
 
 
 class WidgetCorsMiddlewareTests(TestCase):
+    def setUp(self):
+        tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil")
+        TenantAllowedOrigin.objects.create(tenant=tenant, origin="https://www.smartcontrolbrasil.com.br")
     @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
     def test_chat_options_allows_configured_origin(self):
         response = self.client.options(
             "/api/chat/",
             HTTP_ORIGIN="https://www.smartcontrolbrasil.com.br",
             HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_X_LIVIA_TENANT="smart-control-brasil",
         )
 
         self.assertEqual(response.status_code, 204)
@@ -128,18 +134,24 @@ class WidgetCorsMiddlewareTests(TestCase):
             "/api/chat/",
             HTTP_ORIGIN="https://evil.example",
             HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_X_LIVIA_TENANT="smart-control-brasil",
         )
 
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.status_code, 403)
         self.assertNotIn("Access-Control-Allow-Origin", response)
 
 
 class WidgetConfigCorsMiddlewareTests(TestCase):
+    def setUp(self):
+        tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil")
+        AssistantProfile.objects.create(tenant=tenant)
+        TenantAllowedOrigin.objects.create(tenant=tenant, origin="https://www.smartcontrolbrasil.com.br")
     @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
     def test_config_get_allows_configured_origin(self):
         response = self.client.get(
             "/api/widget/config/?tenant=smart-control-brasil",
             HTTP_ORIGIN="https://www.smartcontrolbrasil.com.br",
+            HTTP_X_LIVIA_TENANT="smart-control-brasil",
         )
 
         self.assertEqual(response.status_code, 200)
@@ -151,6 +163,7 @@ class WidgetConfigCorsMiddlewareTests(TestCase):
             "/api/widget/config/",
             HTTP_ORIGIN="https://www.smartcontrolbrasil.com.br",
             HTTP_ACCESS_CONTROL_REQUEST_METHOD="GET",
+            HTTP_X_LIVIA_TENANT="smart-control-brasil",
         )
 
         self.assertEqual(response.status_code, 204)
@@ -202,7 +215,8 @@ class HumanHandoffConfigTests(TestCase):
             handoff_whatsapp_number="551151968525",
         )
 
-        response = self.client.get("/api/widget/config/?tenant=tenant")
+        TenantAllowedOrigin.objects.create(tenant=tenant, origin="https://tenant.example")
+        response = self.client.get("/api/widget/config/?tenant=tenant", HTTP_ORIGIN="https://tenant.example", HTTP_X_LIVIA_TENANT="tenant")
 
         data = response.json()
         self.assertTrue(data["human_handoff_enabled"])

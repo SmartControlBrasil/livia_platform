@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Count
 
@@ -10,7 +11,8 @@ from integrations.models import TenantWebhookConfig, WebhookDeliveryLog
 from knowledge_base.models import KnowledgeDocument
 from leads.models import LeadDraft
 from operations_portal.analytics import get_dashboard_analytics
-from tenants.models import AssistantProfile, Tenant
+from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
+from tenants.origins import normalize_origin
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,7 @@ def _totals() -> dict:
         "webhook_delivery_logs": WebhookDeliveryLog.objects.count(),
         "users": user_model.objects.count(),
         "memberships": 0,
+        "allowed_origins": TenantAllowedOrigin.objects.count(),
     }
 
 
@@ -76,6 +79,12 @@ def _tenant_integrity() -> dict:
         "lead_conversation_tenant_mismatches": lead_mismatches,
         "handoff_conversation_tenant_mismatches": handoff_conversation_mismatches,
         "handoff_lead_tenant_mismatches": handoff_lead_mismatches,
+        "active_tenants_without_active_origin": Tenant.objects.filter(is_active=True).exclude(allowed_origins__is_active=True).distinct().count(),
+        "widget_enabled_without_active_origin": AssistantProfile.objects.filter(is_widget_enabled=True, tenant__is_active=True).exclude(tenant__allowed_origins__is_active=True).distinct().count(),
+        "invalid_origins": _invalid_origin_count(),
+        "logical_duplicate_origins": _logical_duplicate_origin_count(),
+        "production_originless_public_api": bool(not settings.DEBUG and getattr(settings, "LIVIA_ALLOW_ORIGINLESS_PUBLIC_API", False)),
+        "production_global_origin_list_present": bool(not settings.DEBUG and getattr(settings, "LIVIA_ALLOWED_WIDGET_ORIGINS", [])),
     }
 
 
@@ -112,3 +121,29 @@ def _kpi_summary() -> dict:
         data = get_dashboard_analytics(period)
         summary[str(period)] = data["kpis"]
     return summary
+
+
+def _invalid_origin_count() -> int:
+    invalid = 0
+    for item in TenantAllowedOrigin.objects.only("origin").iterator():
+        try:
+            normalize_origin(item.origin)
+        except Exception:
+            invalid += 1
+    return invalid
+
+
+def _logical_duplicate_origin_count() -> int:
+    seen = set()
+    duplicates = 0
+    rows = TenantAllowedOrigin.objects.values_list("tenant_id", "origin")
+    for tenant_id, origin in rows:
+        try:
+            normalized = normalize_origin(origin)
+        except Exception:
+            continue
+        key = (tenant_id, normalized)
+        if key in seen:
+            duplicates += 1
+        seen.add(key)
+    return duplicates

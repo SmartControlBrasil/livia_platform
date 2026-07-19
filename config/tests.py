@@ -1,7 +1,9 @@
 from unittest.mock import patch
 
 from django.core.exceptions import ImproperlyConfigured
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
+
+from tenants.models import Tenant, TenantAllowedOrigin
 
 from config import settings as project_settings
 from config.database import build_database_config, is_running_tests, parse_database_conn_max_age
@@ -121,43 +123,49 @@ class HealthcheckTests(SimpleTestCase):
         self.assertEqual(response.json(), {"status": "ok", "service": "livia-platform"})
 
 
-class LiviaWidgetCorsMiddlewareTests(SimpleTestCase):
-    @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
+class LiviaWidgetCorsMiddlewareTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Smart Control Brasil", slug="smart-control-brasil")
+        TenantAllowedOrigin.objects.create(tenant=self.tenant, origin="https://www.smartcontrolbrasil.com.br")
+
+    @override_settings(DEBUG=False, LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=False)
     def test_allowed_origin_receives_cors_headers(self):
         response = self.client.options(
             "/api/chat/",
             HTTP_ORIGIN="https://www.smartcontrolbrasil.com.br",
             HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_X_LIVIA_TENANT="smart-control-brasil",
         )
 
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response["Access-Control-Allow-Origin"], "https://www.smartcontrolbrasil.com.br")
 
-    @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
+    @override_settings(DEBUG=False, LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=False)
     def test_blocked_origin_does_not_receive_cors_headers(self):
         response = self.client.options(
             "/api/chat/",
             HTTP_ORIGIN="https://evil.example",
             HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_X_LIVIA_TENANT="smart-control-brasil",
         )
 
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.status_code, 403)
         self.assertNotIn("Access-Control-Allow-Origin", response)
 
-    @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=["https://www.smartcontrolbrasil.com.br"])
+    @override_settings(DEBUG=False, LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=False)
     def test_request_without_origin_does_not_break(self):
         response = self.client.options("/api/chat/")
 
-        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.status_code, 403)
         self.assertNotIn("Access-Control-Allow-Origin", response)
 
     @override_settings(DEBUG=False, LIVIA_ALLOWED_WIDGET_ORIGINS=[])
-    def test_empty_allowed_origins_is_permissive(self):
+    def test_empty_allowed_origins_is_not_permissive(self):
         response = self.client.options(
             "/api/chat/",
             HTTP_ORIGIN="https://www.canecadegaragem.com.br",
             HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
         )
 
-        self.assertEqual(response.status_code, 204)
-        self.assertEqual(response["Access-Control-Allow-Origin"], "https://www.canecadegaragem.com.br")
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn("Access-Control-Allow-Origin", response)

@@ -8,6 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from conversations.models import Conversation, HandoffRequest, Message
 from tenants.models import Tenant
+from tenants.origins import log_origin_block, validate_tenant_origin
 from tenants.services.human_handoff import build_human_handoff_payload
 from .security.ip import get_client_ip
 from .security.rate_limit import check_chat_rate_limit
@@ -41,12 +42,29 @@ def chat_api(request):
         return JsonResponse({"error": "Invalid JSON payload."}, status=400)
 
     tenant_slug = payload.get("tenant") or payload.get("tenant_id")
+    header_tenant_slug = request.headers.get("X-Livia-Tenant", "").strip()
     session_id = payload.get("session_key") or payload.get("session_id")
     user_message_raw = payload.get("message")
     source_page = payload.get("source_page", "")
 
     if not tenant_slug:
         return JsonResponse({"error": "tenant is required."}, status=400)
+    tenant_slug = str(tenant_slug).strip()
+    if header_tenant_slug and header_tenant_slug != tenant_slug:
+        return JsonResponse({"error": "tenant header mismatch."}, status=400)
+
+    tenant = Tenant.objects.filter(slug=tenant_slug).first()
+    if tenant is None:
+        return _safe_reply_response(INACTIVE_TENANT_REPLY, status=404, code="tenant_unavailable")
+    if not tenant.is_active:
+        logger.info("livia_chat_inactive_tenant tenant_slug=%s", tenant_slug)
+        return _safe_reply_response(INACTIVE_TENANT_REPLY, status=403, code="tenant_unavailable")
+
+    origin_result = validate_tenant_origin(request, tenant)
+    if not origin_result.allowed:
+        log_origin_block(tenant, origin_result)
+        return JsonResponse({"error": "origin_not_allowed"}, status=403)
+    request.livia_validated_origin = origin_result.origin
 
     if not session_id:
         return JsonResponse({"error": "session_id is required."}, status=400)
@@ -67,15 +85,6 @@ def chat_api(request):
             max_message_length,
         )
         return _safe_reply_response(LONG_MESSAGE_REPLY, status=400, code="message_too_long")
-
-    tenant = Tenant.objects.filter(slug=tenant_slug).first()
-
-    if tenant is None:
-        return _safe_reply_response(INACTIVE_TENANT_REPLY, status=404, code="tenant_unavailable")
-
-    if not tenant.is_active:
-        logger.info("livia_chat_inactive_tenant tenant_slug=%s", tenant_slug)
-        return _safe_reply_response(INACTIVE_TENANT_REPLY, status=403, code="tenant_unavailable")
 
     client_ip = get_client_ip(request)
     rate_limit = check_chat_rate_limit(tenant.slug, client_ip)

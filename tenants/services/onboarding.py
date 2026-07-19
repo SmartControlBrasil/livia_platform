@@ -6,8 +6,10 @@ from urllib.parse import urlparse
 from django.db import transaction
 from django.db.models import Q
 
+from tenants.origins import normalize_origin
+
 from knowledge_base.models import KnowledgeDocument
-from tenants.models import AssistantProfile, Tenant
+from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
 
 DEFAULT_WIDGET_SRC = "https://livia.smartcontrolbrasil.com.br/widget.js"
 DEFAULT_API_URL = "https://livia.smartcontrolbrasil.com.br/api/chat/"
@@ -22,6 +24,7 @@ class TenantOnboardingResult:
     created_knowledge_count: int
     widget_snippet: str
     allowed_origin: str
+    allowed_origins: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -50,13 +53,13 @@ def normalize_allowed_origin(domain, *, required=True):
         candidate = f"https://{candidate}"
         warnings.append("Domain did not include a scheme; https:// was assumed.")
 
-    parsed = urlparse(candidate)
-    if not parsed.scheme or not parsed.netloc:
-        raise ValueError("Domain must be a valid host or URL.")
+    try:
+        allowed_origin = normalize_origin(candidate)
+    except Exception as exc:
+        raise ValueError(str(exc)) from exc
 
-    allowed_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    parsed = urlparse(allowed_origin)
     host = parsed.hostname or ""
-
     if parsed.scheme == "http":
         warnings.append("Domain uses http; production embeds should use https.")
     if host in {"localhost", "127.0.0.1"} or host.endswith(".localhost"):
@@ -85,8 +88,16 @@ class TenantOnboardingService:
         widget_enabled=True,
         seed_knowledge=False,
         dry_run=False,
+        allowed_origins=None,
     ):
         allowed_origin, warnings = normalize_allowed_origin(domain)
+        explicit_origins = list(allowed_origins or [])
+        origin_values = explicit_origins or [allowed_origin]
+        normalized_origins = []
+        for origin_value in origin_values:
+            normalized = normalize_origin(origin_value)
+            if normalized not in normalized_origins:
+                normalized_origins.append(normalized)
         tenant_domain = allowed_origin
         existing_tenant = Tenant.objects.filter(slug=slug).first()
         created_tenant = existing_tenant is None
@@ -149,10 +160,15 @@ class TenantOnboardingService:
                 created_knowledge_count = 0
                 if seed_knowledge:
                     created_knowledge_count = self._seed_base_knowledge(tenant, name, primary_goal, allowed_origin)
+                for origin in normalized_origins:
+                    TenantAllowedOrigin.objects.update_or_create(
+                        tenant=tenant,
+                        origin=origin,
+                        defaults={"is_active": True},
+                    )
 
         if use_ai:
             warnings.append("Profile use_ai is enabled; real AI still requires LIVIA_AI_ENABLED=True globally.")
-        warnings.append("Add this origin to LIVIA_ALLOWED_WIDGET_ORIGINS when CORS is restricted.")
 
         return TenantOnboardingResult(
             tenant=tenant,
@@ -162,6 +178,7 @@ class TenantOnboardingService:
             created_knowledge_count=created_knowledge_count,
             widget_snippet=build_widget_snippet(slug),
             allowed_origin=allowed_origin,
+            allowed_origins=normalized_origins,
             warnings=warnings,
         )
 

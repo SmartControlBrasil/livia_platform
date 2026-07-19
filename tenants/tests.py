@@ -7,7 +7,7 @@ from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 
 from knowledge_base.models import KnowledgeDocument
-from tenants.models import AssistantProfile, Tenant
+from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
 from tenants.services.install_package import TenantInstallPackageService
 from tenants.services.onboarding import (
     TenantOnboardingService,
@@ -293,6 +293,7 @@ class TenantInstallPackageTests(TestCase):
             is_active=True,
         )
         AssistantProfile.objects.create(tenant=self.tenant, name="Lívia")
+        TenantAllowedOrigin.objects.create(tenant=self.tenant, origin="https://www.granimarmorespitondo.com.br")
 
     def test_install_page_returns_200_for_existing_tenant(self):
         response = self.client.get("/install/granimarmores-pitondo/")
@@ -375,11 +376,10 @@ class TenantInstallPackageTests(TestCase):
         self.assertContains(response, "inativo")
         self.assertContains(response, "widget não processará atendimentos")
 
-    @override_settings(LIVIA_ALLOWED_WIDGET_ORIGINS=["https://outro.example"])
-    def test_install_package_warns_when_origin_is_not_allowed(self):
+    def test_install_package_warns_when_no_active_origin_exists(self):
+        TenantAllowedOrigin.objects.filter(tenant=self.tenant).update(is_active=False)
         response = self.client.get("/install/granimarmores-pitondo.json")
-
-        self.assertIn("não está em LIVIA_ALLOWED_WIDGET_ORIGINS", " ".join(response.json()["warnings"]))
+        self.assertIn("origins autorizadas", " ".join(response.json()["warnings"]))
 
     def test_tenant_admin_exposes_install_url_and_widget_snippet_readonly(self):
         tenant_admin = admin.site._registry[Tenant]

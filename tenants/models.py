@@ -196,3 +196,46 @@ class TenantMembership(models.Model):
 
     def __str__(self):
         return f"{self.user} / {self.tenant.slug} / {self.role}"
+
+
+class TenantAllowedOrigin(models.Model):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="allowed_origins",
+    )
+    origin = models.CharField(max_length=255)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_tenant_allowed_origins",
+    )
+
+    class Meta:
+        ordering = ["tenant__name", "origin"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "origin"], name="unique_tenant_allowed_origin"),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "is_active"]),
+        ]
+
+    def clean(self):
+        super().clean()
+        from tenants.origins import normalize_origin
+
+        self.origin = normalize_origin(self.origin)
+
+    def save(self, *args, **kwargs):
+        from tenants.origins import normalize_origin
+
+        self.origin = normalize_origin(self.origin)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.tenant.slug} / {self.origin}"

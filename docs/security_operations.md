@@ -10,22 +10,22 @@ LIVIA_CHAT_RATE_LIMIT_ENABLED=True
 LIVIA_CHAT_RATE_LIMIT_REQUESTS=20
 LIVIA_CHAT_RATE_LIMIT_WINDOW_SECONDS=300
 LIVIA_SPAM_GUARD_ENABLED=True
-LIVIA_ALLOWED_WIDGET_ORIGINS=https://www.smartcontrolbrasil.com.br,https://smartcontrolbrasil.com.br,https://www.granimarmorespitondo.com.br,https://granimarmorespitondo.com.br,https://www.canecadegaragem.com.br,https://canecadegaragem.com.br,https://livia.smartcontrolbrasil.com.br
+# Origins do widget são cadastradas por tenant em TenantAllowedOrigin
 ~~~
 
-Quando LIVIA_ALLOWED_WIDGET_ORIGINS estiver vazio, o middleware fica permissivo para facilitar desenvolvimento e validações locais. Em produção, preencha a lista explicitamente.
+O middleware não é mais permissivo quando a lista global está vazia. A autorização é feita por `TenantAllowedOrigin` e falha fechada em produção.
 
 ## Origins do widget
 
-Inclua somente os domínios que podem hospedar o widget. A comparação é feita contra o header Origin completo, incluindo esquema.
+Cadastre somente os domínios que podem hospedar o widget em `TenantAllowedOrigin`. A comparação é exata após normalização, incluindo scheme e porta.
 
 Exemplo recomendado:
 
 ~~~env
-LIVIA_ALLOWED_WIDGET_ORIGINS=https://www.smartcontrolbrasil.com.br,https://smartcontrolbrasil.com.br,https://www.granimarmorespitondo.com.br,https://granimarmorespitondo.com.br,https://www.canecadegaragem.com.br,https://canecadegaragem.com.br,https://livia.smartcontrolbrasil.com.br
+# Origins do widget são cadastradas por tenant em TenantAllowedOrigin
 ~~~
 
-Requisições sem Origin, como curl e healthchecks, não são bloqueadas pelo CORS.
+Requisições públicas sem `Origin` são bloqueadas por padrão. Chamadas técnicas exigem `LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=True`, que não deve ficar ativo em produção.
 
 ## Tenant inativo
 

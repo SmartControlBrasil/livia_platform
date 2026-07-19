@@ -10,7 +10,7 @@ from integrations.openai.client import OpenAIChatResult
 from assistant_core.state import LeadState
 from assistant_core.services import LiviaDecisionService
 from leads.models import LeadDraft
-from tenants.models import AssistantProfile, Tenant
+from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
 
 
 class LiviaDecisionServiceTests(TestCase):
@@ -215,20 +215,21 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.json()["session_key"], "session-key-123")
         self.assertTrue(Conversation.objects.filter(session_id="session-key-123").exists())
 
-    @override_settings(DEBUG=True, LIVIA_ALLOWED_WIDGET_ORIGINS=[])
+    @override_settings(DEBUG=True, LIVIA_DEV_ALLOWED_WIDGET_ORIGINS=["http://localhost:3000"])
     def test_chat_api_options_allows_debug_localhost_origin(self):
         response = self.client.options(
             "/api/chat/",
             HTTP_ORIGIN="http://localhost:3000",
             HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
-            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type, authorization",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type, x-livia-tenant",
+            HTTP_X_LIVIA_TENANT=self.tenant.slug,
         )
 
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response["Access-Control-Allow-Origin"], "http://localhost:3000")
         self.assertIn("POST", response["Access-Control-Allow-Methods"])
         self.assertIn("Content-Type", response["Access-Control-Allow-Headers"])
-        self.assertIn("Authorization", response["Access-Control-Allow-Headers"])
+        self.assertIn("X-Livia-Tenant", response["Access-Control-Allow-Headers"])
 
     def test_chat_api_uses_active_assistant_profile(self):
         AssistantProfile.objects.create(
