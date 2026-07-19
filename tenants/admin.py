@@ -1,5 +1,12 @@
 from django.contrib import admin
 
+from audit.models import (
+    ACTION_ASSISTANT_PROFILE_UPDATED,
+    ACTION_TENANT_CREATED,
+    ACTION_TENANT_UPDATED,
+)
+from audit.services import audit_model_snapshot, changed_fields, record_audit_event
+
 from .models import AssistantProfile, Tenant
 from .services.install_package import build_install_url
 from .services.onboarding import build_widget_snippet
@@ -45,6 +52,34 @@ class TenantAdmin(admin.ModelAdmin):
         if not obj or not obj.slug:
             return ""
         return build_widget_snippet(obj.slug)
+
+    def save_model(self, request, obj, form, change):
+        before_data = {}
+        if change:
+            before_obj = Tenant.objects.get(pk=obj.pk)
+            before_data = audit_model_snapshot(before_obj, fields=form.changed_data)
+        super().save_model(request, obj, form, change)
+        if change:
+            changes = changed_fields(before_data, audit_model_snapshot(obj, fields=form.changed_data))
+            if not changes["before"] and not changes["after"]:
+                return
+            action = ACTION_TENANT_UPDATED
+            before_payload = changes["before"]
+            after_payload = changes["after"]
+        else:
+            action = ACTION_TENANT_CREATED
+            before_payload = {}
+            after_payload = audit_model_snapshot(obj, fields=["name", "slug", "domain", "is_active"])
+        record_audit_event(
+            action=action,
+            actor=request.user,
+            tenant=obj,
+            obj=obj,
+            before_data=before_payload,
+            after_data=after_payload,
+            metadata={"source": "django_admin"},
+            request=request,
+        )
 
 
 @admin.register(AssistantProfile)
@@ -107,3 +142,44 @@ class AssistantProfileAdmin(admin.ModelAdmin):
     @admin.display(description="Atendimento humano", boolean=True)
     def human_handoff_status(self, obj):
         return bool(obj.human_handoff_enabled and obj.has_valid_whatsapp_handoff)
+
+    def save_model(self, request, obj, form, change):
+        before_data = {}
+        if change:
+            before_obj = AssistantProfile.objects.get(pk=obj.pk)
+            before_data = audit_model_snapshot(before_obj, fields=form.changed_data)
+        super().save_model(request, obj, form, change)
+        fields = form.changed_data if change else [
+            "tenant",
+            "name",
+            "tone",
+            "primary_goal",
+            "use_ai",
+            "widget_title",
+            "launcher_label",
+            "primary_color",
+            "position",
+            "show_branding",
+            "collect_contact_hint",
+            "placeholder_text",
+            "is_widget_enabled",
+            "human_handoff_enabled",
+            "human_handoff_channel",
+            "handoff_whatsapp_number",
+            "handoff_whatsapp_label",
+            "handoff_whatsapp_message",
+            "is_active",
+        ]
+        changes = changed_fields(before_data, audit_model_snapshot(obj, fields=fields)) if change else None
+        if change and not changes["before"] and not changes["after"]:
+            return
+        record_audit_event(
+            action=ACTION_ASSISTANT_PROFILE_UPDATED,
+            actor=request.user,
+            tenant=obj.tenant,
+            obj=obj,
+            before_data=changes["before"] if change else {},
+            after_data=changes["after"] if change else audit_model_snapshot(obj, fields=fields),
+            metadata={"source": "django_admin", "created": not change},
+            request=request,
+        )

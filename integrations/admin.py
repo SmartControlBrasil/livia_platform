@@ -1,6 +1,9 @@
 from django import forms
 from django.contrib import admin
 
+from audit.models import ACTION_WEBHOOK_CONFIG_CREATED, ACTION_WEBHOOK_CONFIG_UPDATED
+from audit.services import audit_model_snapshot, changed_fields, record_audit_event
+
 from .models import TenantWebhookConfig, WebhookDeliveryLog
 
 
@@ -34,6 +37,37 @@ class TenantWebhookConfigAdmin(admin.ModelAdmin):
     search_fields = ["tenant__name", "tenant__slug", "name", "target_url"]
     readonly_fields = ["created_at", "updated_at"]
     actions = [activate_webhook_configs, deactivate_webhook_configs, mark_webhook_configs_dry_run]
+
+    audit_fields = ["tenant", "name", "event_type", "target_url", "secret_token", "is_active", "dry_run"]
+
+    def save_model(self, request, obj, form, change):
+        before_data = {}
+        fields = [field for field in (form.changed_data if change else self.audit_fields) if field in self.audit_fields]
+        if change:
+            before_obj = TenantWebhookConfig.objects.get(pk=obj.pk)
+            before_data = audit_model_snapshot(before_obj, fields=fields)
+        super().save_model(request, obj, form, change)
+        if change:
+            changes = changed_fields(before_data, audit_model_snapshot(obj, fields=fields))
+            if not changes["before"] and not changes["after"]:
+                return
+            action = ACTION_WEBHOOK_CONFIG_UPDATED
+            before_payload = changes["before"]
+            after_payload = changes["after"]
+        else:
+            action = ACTION_WEBHOOK_CONFIG_CREATED
+            before_payload = {}
+            after_payload = audit_model_snapshot(obj, fields=fields)
+        record_audit_event(
+            action=action,
+            actor=request.user,
+            tenant=obj.tenant,
+            obj=obj,
+            before_data=before_payload,
+            after_data=after_payload,
+            metadata={"source": "django_admin"},
+            request=request,
+        )
 
 
 @admin.register(WebhookDeliveryLog)

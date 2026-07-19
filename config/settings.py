@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     "widget",
     "integrations",
     "operations_portal",
+    "audit",
 ]
 
 MIDDLEWARE = [
