@@ -3,11 +3,14 @@ from django.contrib import admin
 from audit.models import (
     ACTION_ASSISTANT_PROFILE_UPDATED,
     ACTION_TENANT_CREATED,
+    ACTION_TENANT_MEMBERSHIP_CREATED,
+    ACTION_TENANT_MEMBERSHIP_DEACTIVATED,
+    ACTION_TENANT_MEMBERSHIP_UPDATED,
     ACTION_TENANT_UPDATED,
 )
 from audit.services import audit_model_snapshot, changed_fields, record_audit_event
 
-from .models import AssistantProfile, Tenant
+from .models import AssistantProfile, Tenant, TenantMembership
 from .services.install_package import build_install_url
 from .services.onboarding import build_widget_snippet
 
@@ -181,5 +184,65 @@ class AssistantProfileAdmin(admin.ModelAdmin):
             before_data=changes["before"] if change else {},
             after_data=changes["after"] if change else audit_model_snapshot(obj, fields=fields),
             metadata={"source": "django_admin", "created": not change},
+            request=request,
+        )
+
+
+@admin.register(TenantMembership)
+class TenantMembershipAdmin(admin.ModelAdmin):
+    list_display = ["tenant", "user", "role", "is_active", "updated_at"]
+    list_filter = ["tenant", "role", "is_active"]
+    search_fields = ["user__username", "user__email", "tenant__name", "tenant__slug"]
+    autocomplete_fields = ["tenant", "user", "created_by"]
+    readonly_fields = ["created_at", "updated_at", "created_by"]
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def save_model(self, request, obj, form, change):
+        before_data = {}
+        fields = ["role", "is_active"]
+        if change:
+            before_obj = TenantMembership.objects.select_related("tenant", "user").get(pk=obj.pk)
+            before_data = audit_model_snapshot(before_obj, fields=fields)
+        elif obj.created_by_id is None:
+            obj.created_by = request.user
+
+        super().save_model(request, obj, form, change)
+
+        if change:
+            after_data = audit_model_snapshot(obj, fields=fields)
+            changes = changed_fields(before_data, after_data)
+            if not changes["before"] and not changes["after"]:
+                return
+            action = ACTION_TENANT_MEMBERSHIP_DEACTIVATED if changes["after"].get("is_active") is False else ACTION_TENANT_MEMBERSHIP_UPDATED
+            before_payload = changes["before"]
+            after_payload = changes["after"]
+        else:
+            action = ACTION_TENANT_MEMBERSHIP_CREATED
+            before_payload = {}
+            after_payload = audit_model_snapshot(obj, fields=["role", "is_active"])
+
+        record_audit_event(
+            action=action,
+            actor=request.user,
+            tenant=obj.tenant,
+            obj=obj,
+            object_repr=f"{obj.user_id} / {obj.tenant.slug} / {obj.role}",
+            before_data=before_payload,
+            after_data=after_payload,
+            metadata={"source": "django_admin", "affected_user_id": obj.user_id},
             request=request,
         )

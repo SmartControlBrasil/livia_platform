@@ -5,11 +5,13 @@ A rota `/painel/` entrega o painel operacional próprio da Lívia Platform usand
 ## Acesso
 
 - usuário anônimo é redirecionado para `/admin/login/?next=/painel/` ou para a rota específica acessada;
-- usuário autenticado sem `is_staff` recebe 403;
-- staff comum também recebe 403 nesta fase;
-- superuser visualiza a consolidação administrativa de todos os tenants.
+- superuser mantém visão global consolidada e pode selecionar qualquer tenant ativo;
+- usuário comum acessa o portal somente quando possui `TenantMembership` ativo;
+- membership inativo ou inexistente retorna 403;
+- staff sem membership não ganha acesso automático;
+- cada rota valida a capability exigida e cada detalhe usa `pk + tenant` no mesmo queryset para evitar acesso cruzado por ID.
 
-A restrição a superuser é intencional: ainda não existe vínculo seguro entre usuário e tenant na modelagem atual. O painel fica preparado para escopo por tenant em fase futura, sem criar relacionamento improvisado.
+A seleção de tenant ativo é revalidada a cada requisição, mesmo quando vem de query string, POST ou sessão. A ocultação de menus e botões no template não substitui a autorização no backend.
 
 ## Primeira fase
 
@@ -40,7 +42,7 @@ A ação de reprocessamento aparece somente no detalhe de `LeadDraft` com `statu
 
 Fluxo operacional:
 
-1. Abrir `/painel/leads/<id>/` como superuser.
+1. Abrir `/painel/leads/<id>/` com usuário que possua `leads.retry_crm` para o tenant ativo.
 2. Confirmar que o lead está em falha e que não há envio anterior ao CRM.
 3. Clicar em `Reprocessar envio ao CRM`.
 4. O painel muda o lead para `qualified`, limpa `crm_error` e chama `CRMDispatchService.dispatch_if_qualified`.
@@ -99,7 +101,7 @@ Os assets de gráfico usam ApexCharts copiado localmente de `./hando/hando/stati
 
 ## Quarta fase
 
-A área `/painel/handoffs/` substitui o placeholder de Handoffs por uma gestão operacional somente para superusers.
+A área `/painel/handoffs/` substitui o placeholder de Handoffs por uma gestão operacional controlada por membership e capabilities.
 
 Rotas:
 
@@ -140,7 +142,7 @@ Nenhum destinatário, token, SMTP, cabeçalho ou valor de `.env` é exibido. Ree
 
 ### Privacidade
 
-Na lista, e-mail e telefone ficam mascarados. O detalhe mostra contato completo apenas para superuser autenticado. Mensagens da timeline e metadata são renderizadas sem `safe`, preservando escape de HTML do usuário.
+Na lista, e-mail e telefone ficam mascarados. O detalhe mostra contato completo apenas para usuário autenticado e autorizado no tenant ativo. Mensagens da timeline e metadata são renderizadas sem `safe`, preservando escape de HTML do usuário.
 
 ## Dados exibidos
 

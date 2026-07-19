@@ -66,22 +66,26 @@ def get_period_window(days: int) -> PeriodWindow:
     )
 
 
-def get_dashboard_analytics(period_value=None):
+def get_dashboard_analytics(period_value=None, *, tenant=None):
     days = resolve_period(period_value)
     window = get_period_window(days)
     day_items = _period_days(window)
-    conversations_by_day = _counts_by_day(Conversation.objects.all(), "created_at", window, day_items)
-    leads_created_by_day = _counts_by_day(LeadDraft.objects.all(), "created_at", window, day_items)
+    conversation_qs = _scope_queryset(Conversation.objects.all(), tenant)
+    lead_qs = _scope_queryset(LeadDraft.objects.all(), tenant)
+    handoff_qs = _scope_queryset(HandoffRequest.objects.all(), tenant)
+    tenant_qs = Tenant.objects.filter(pk=tenant.pk) if tenant is not None else Tenant.objects.filter(is_active=True)
+    conversations_by_day = _counts_by_day(conversation_qs, "created_at", window, day_items)
+    leads_created_by_day = _counts_by_day(lead_qs, "created_at", window, day_items)
     leads_sent_by_day = _counts_by_day(
-        LeadDraft.objects.filter(sent_to_crm_at__isnull=False),
+        lead_qs.filter(sent_to_crm_at__isnull=False),
         "sent_to_crm_at",
         window,
         day_items,
     )
-    funnel = _lead_funnel(window)
-    conversation_states = _conversation_states(window)
-    tenant_volume = _tenant_volume(window)
-    kpis = _analytics_kpis(window)
+    funnel = _lead_funnel(window, lead_qs)
+    conversation_states = _conversation_states(window, conversation_qs)
+    tenant_volume = _tenant_volume(window, tenant_qs)
+    kpis = _analytics_kpis(window, conversation_qs, lead_qs, handoff_qs, tenant_qs)
 
     return {
         "period": {
@@ -116,9 +120,8 @@ def get_dashboard_analytics(period_value=None):
         },
     }
 
-
-def _analytics_kpis(window):
-    lead_stats = LeadDraft.objects.aggregate(
+def _analytics_kpis(window, conversation_qs, lead_qs, handoff_qs, tenant_qs):
+    lead_stats = lead_qs.aggregate(
         total=Count("id"),
         created=Count("id", filter=Q(created_at__gte=window.start, created_at__lt=window.end)),
         qualified=Count(
@@ -134,11 +137,11 @@ def _analytics_kpis(window):
             filter=Q(created_at__gte=window.start, created_at__lt=window.end, status=LeadDraft.Status.FAILED),
         ),
     )
-    conversation_stats = Conversation.objects.aggregate(
+    conversation_stats = conversation_qs.aggregate(
         total=Count("id"),
         period=Count("id", filter=Q(created_at__gte=window.start, created_at__lt=window.end)),
     )
-    handoff_stats = HandoffRequest.objects.aggregate(
+    handoff_stats = handoff_qs.aggregate(
         pending=Count("id", filter=Q(status=HandoffRequest.Status.PENDING)),
         period_pending=Count(
             "id",
@@ -166,7 +169,7 @@ def _analytics_kpis(window):
         "pending_handoffs": handoff_stats["pending"] or 0,
         "period_pending_handoffs": handoff_stats["period_pending"] or 0,
         "high_priority_handoffs": handoff_stats["high_priority"] or 0,
-        "active_tenants": Tenant.objects.filter(is_active=True).count(),
+        "active_tenants": tenant_qs.filter(is_active=True).count(),
         "total_conversations": conversation_stats["total"] or 0,
         "total_leads": lead_stats["total"] or 0,
     }
@@ -198,9 +201,9 @@ def _counts_by_day(queryset, field_name, window, day_items):
     return [{**item, "count": counts.get(item["date"], 0)} for item in day_items]
 
 
-def _lead_funnel(window):
+def _lead_funnel(window, lead_qs):
     rows = (
-        LeadDraft.objects.filter(created_at__gte=window.start, created_at__lt=window.end)
+        lead_qs.filter(created_at__gte=window.start, created_at__lt=window.end)
         .values("status")
         .annotate(count=Count("id"))
     )
@@ -218,9 +221,9 @@ def _lead_funnel(window):
     }
 
 
-def _conversation_states(window):
+def _conversation_states(window, conversation_qs):
     rows = (
-        Conversation.objects.filter(created_at__gte=window.start, created_at__lt=window.end)
+        conversation_qs.filter(created_at__gte=window.start, created_at__lt=window.end)
         .values("lead_state")
         .annotate(count=Count("id"))
         .order_by("lead_state")
@@ -238,9 +241,9 @@ def _conversation_states(window):
     }
 
 
-def _tenant_volume(window):
+def _tenant_volume(window, tenant_qs):
     rows = list(
-        Tenant.objects.annotate(
+        tenant_qs.annotate(
             conversations_count=Count(
                 "conversations",
                 filter=Q(conversations__created_at__gte=window.start, conversations__created_at__lt=window.end),
@@ -290,3 +293,9 @@ def _percentage(numerator, denominator):
     if not denominator:
         return 0
     return round((numerator / denominator) * 100, 1)
+
+
+def _scope_queryset(queryset, tenant):
+    if tenant is None:
+        return queryset
+    return queryset.filter(tenant=tenant)

@@ -1,0 +1,111 @@
+from django.core.exceptions import PermissionDenied
+
+from .models import Tenant, TenantMembership
+
+CAPABILITY_PORTAL_VIEW_DASHBOARD = "portal.view_dashboard"
+CAPABILITY_CONVERSATIONS_VIEW = "conversations.view"
+CAPABILITY_LEADS_VIEW = "leads.view"
+CAPABILITY_LEADS_RETRY_CRM = "leads.retry_crm"
+CAPABILITY_HANDOFFS_VIEW = "handoffs.view"
+CAPABILITY_HANDOFFS_CHANGE_STATUS = "handoffs.change_status"
+CAPABILITY_ASSISTANT_PROFILE_VIEW = "assistant_profile.view"
+CAPABILITY_ASSISTANT_PROFILE_CHANGE = "assistant_profile.change"
+CAPABILITY_MEMBERSHIPS_VIEW = "memberships.view"
+CAPABILITY_MEMBERSHIPS_MANAGE = "memberships.manage"
+
+ALL_CAPABILITIES = frozenset(
+    {
+        CAPABILITY_PORTAL_VIEW_DASHBOARD,
+        CAPABILITY_CONVERSATIONS_VIEW,
+        CAPABILITY_LEADS_VIEW,
+        CAPABILITY_LEADS_RETRY_CRM,
+        CAPABILITY_HANDOFFS_VIEW,
+        CAPABILITY_HANDOFFS_CHANGE_STATUS,
+        CAPABILITY_ASSISTANT_PROFILE_VIEW,
+        CAPABILITY_ASSISTANT_PROFILE_CHANGE,
+        CAPABILITY_MEMBERSHIPS_VIEW,
+        CAPABILITY_MEMBERSHIPS_MANAGE,
+    }
+)
+
+ROLE_CAPABILITIES = {
+    TenantMembership.Role.TENANT_ADMIN: ALL_CAPABILITIES,
+    TenantMembership.Role.MANAGER: frozenset(
+        {
+            CAPABILITY_PORTAL_VIEW_DASHBOARD,
+            CAPABILITY_CONVERSATIONS_VIEW,
+            CAPABILITY_LEADS_VIEW,
+            CAPABILITY_LEADS_RETRY_CRM,
+            CAPABILITY_HANDOFFS_VIEW,
+            CAPABILITY_HANDOFFS_CHANGE_STATUS,
+            CAPABILITY_ASSISTANT_PROFILE_VIEW,
+        }
+    ),
+    TenantMembership.Role.OPERATOR: frozenset(
+        {
+            CAPABILITY_PORTAL_VIEW_DASHBOARD,
+            CAPABILITY_CONVERSATIONS_VIEW,
+            CAPABILITY_LEADS_VIEW,
+            CAPABILITY_HANDOFFS_VIEW,
+            CAPABILITY_HANDOFFS_CHANGE_STATUS,
+        }
+    ),
+    TenantMembership.Role.VIEWER: frozenset(
+        {
+            CAPABILITY_PORTAL_VIEW_DASHBOARD,
+            CAPABILITY_CONVERSATIONS_VIEW,
+            CAPABILITY_LEADS_VIEW,
+            CAPABILITY_HANDOFFS_VIEW,
+        }
+    ),
+}
+
+
+def get_accessible_tenants(user):
+    if not getattr(user, "is_authenticated", False):
+        return Tenant.objects.none()
+    if user.is_superuser:
+        return Tenant.objects.filter(is_active=True).order_by("name")
+    return (
+        Tenant.objects.filter(memberships__user=user, memberships__is_active=True, is_active=True)
+        .distinct()
+        .order_by("name")
+    )
+
+
+def get_active_membership(user, tenant):
+    if not getattr(user, "is_authenticated", False) or tenant is None:
+        return None
+    return (
+        TenantMembership.objects.select_related("tenant", "user")
+        .filter(user=user, tenant=tenant, is_active=True, tenant__is_active=True)
+        .first()
+    )
+
+
+def user_has_tenant_capability(user, tenant, capability):
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if user.is_superuser:
+        return capability in ALL_CAPABILITIES
+    membership = get_active_membership(user, tenant)
+    if membership is None:
+        return False
+    return capability in ROLE_CAPABILITIES.get(membership.role, frozenset())
+
+
+def require_tenant_capability(user, tenant, capability):
+    if not user_has_tenant_capability(user, tenant, capability):
+        raise PermissionDenied
+    return True
+
+
+def capabilities_for_user(user, tenant):
+    if not getattr(user, "is_authenticated", False):
+        return frozenset()
+    if user.is_superuser:
+        return ALL_CAPABILITIES
+    membership = get_active_membership(user, tenant)
+    if membership is None:
+        return frozenset()
+    return ROLE_CAPABILITIES.get(membership.role, frozenset())

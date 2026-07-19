@@ -13,6 +13,18 @@
       </ul>
 
       <ul class="list-unstyled topnav-menu mb-0 d-flex align-items-center">
+        {% if accessible_tenants %}
+        <li class="d-none d-md-flex align-items-center me-2">
+          <form method="get" class="d-flex align-items-center gap-2" aria-label="Selecionar tenant ativo">
+            <select name="tenant" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="Tenant ativo">
+              {% if request.user.is_superuser %}<option value="global" {% if portal_is_global %}selected{% endif %}>Todos os tenants</option>{% endif %}
+              {% for tenant in accessible_tenants %}
+              <option value="{{ tenant.pk }}" {% if active_tenant and tenant.pk == active_tenant.pk %}selected{% endif %}>{{ tenant.name }}</option>
+              {% endfor %}
+            </select>
+          </form>
+        </li>
+        {% endif %}
         <li class="d-none d-sm-flex">
           <button type="button" class="btn nav-link" data-toggle="fullscreen" aria-label="Tela cheia">
             <i data-feather="maximize" class="align-middle fullscreen noti-icon"></i>
@@ -33,7 +45,7 @@
           </a>
           <div class="dropdown-menu dropdown-menu-end profile-dropdown">
             <div class="dropdown-header noti-title">
-              <h6 class="text-overflow m-0">Smart Control Brasil</h6>
+              <h6 class="text-overflow m-0">{% if portal_is_global %}Todos os tenants{% elif active_tenant %}{{ active_tenant.name }}{% else %}Lívia Platform{% endif %}</h6>
             </div>
             <a href="{% url 'admin:index' %}" class="dropdown-item notify-item">
               <i class="mdi mdi-shield-account-outline fs-16 align-middle"></i>

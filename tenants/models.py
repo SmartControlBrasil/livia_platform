@@ -1,6 +1,7 @@
 import re
 
 from django.core.exceptions import ValidationError
+from django.conf import settings
 from django.core.validators import RegexValidator
 from django.db import models
 
@@ -151,3 +152,47 @@ class AssistantProfile(models.Model):
             and self.human_handoff_channel == HUMAN_HANDOFF_CHANNEL_WHATSAPP
             and MIN_WHATSAPP_NUMBER_LENGTH <= len(number) <= MAX_WHATSAPP_NUMBER_LENGTH
         )
+
+
+class TenantMembership(models.Model):
+    class Role(models.TextChoices):
+        TENANT_ADMIN = "tenant_admin", "Tenant admin"
+        MANAGER = "manager", "Manager"
+        OPERATOR = "operator", "Operator"
+        VIEWER = "viewer", "Viewer"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="memberships",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tenant_memberships",
+    )
+    role = models.CharField(max_length=30, choices=Role.choices)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_tenant_memberships",
+    )
+
+    class Meta:
+        ordering = ["tenant__name", "user__username"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "user"], name="unique_tenant_membership_per_user"),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "is_active"]),
+            models.Index(fields=["user", "is_active"]),
+            models.Index(fields=["tenant", "role"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user} / {self.tenant.slug} / {self.role}"

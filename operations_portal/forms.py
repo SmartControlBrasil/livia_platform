@@ -47,7 +47,10 @@ HANDOFF_REASON_CHOICES = [
 
 class PortalFilterForm(forms.Form):
     def __init__(self, *args, **kwargs):
+        tenant_queryset = kwargs.pop("tenant_queryset", None)
         super().__init__(*args, **kwargs)
+        if tenant_queryset is not None and "tenant" in self.fields:
+            self.fields["tenant"].queryset = tenant_queryset
         for name, field in self.fields.items():
             css_class = "form-select" if isinstance(field.widget, forms.Select) else "form-control"
             field.widget.attrs["class"] = css_class
