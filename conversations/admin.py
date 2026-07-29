@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Conversation, HandoffRequest, Message
+from .models import ChatRequest, Conversation, HandoffRequest, Message
 
 
 def _short_text(value, limit=90):
@@ -112,3 +112,44 @@ class HandoffRequestAdmin(admin.ModelAdmin):
     @admin.display(description="Summary")
     def short_summary(self, obj):
         return _short_text(obj.summary)
+
+
+@admin.register(ChatRequest)
+class ChatRequestAdmin(admin.ModelAdmin):
+    list_display = ["tenant", "request_id", "status", "created_at", "completed_at"]
+    list_filter = ["tenant", "status", "created_at", "completed_at"]
+    search_fields = ["request_id", "session_id", "tenant__slug", "tenant__name"]
+    readonly_fields = [
+        "tenant",
+        "conversation",
+        "session_id",
+        "request_id",
+        "status",
+        "request_fingerprint",
+        "response_status_code",
+        "error_code",
+        "created_at",
+        "updated_at",
+        "completed_at",
+        "safe_response_payload",
+    ]
+    fields = readonly_fields
+
+    def has_module_permission(self, request):
+        return bool(request.user and request.user.is_superuser)
+
+    def has_view_permission(self, request, obj=None):
+        return bool(request.user and request.user.is_superuser)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description="Response payload")
+    def safe_response_payload(self, obj):
+        return _short_text(obj.response_payload, limit=240)

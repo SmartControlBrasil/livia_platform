@@ -12,6 +12,10 @@ def widget_js(request):
   const sessionStorageKey = "livia_session_id_" + tenant;
   const apiUrl = resolveApiUrl(currentScript);
   const configUrl = resolveConfigUrl(currentScript);
+  const requestTimeoutMs = 10000;
+  const maxSendAttempts = 3;
+  const retryDelayMs = 650;
+  const inProgressDelayMs = 900;
   const defaultConfig = {
     assistant_name: "Lívia",
     widget_title: "Lívia",
@@ -69,6 +73,17 @@ def widget_js(request):
     } catch (error) {
       return generateSessionId();
     }
+  }
+
+  function generateRequestId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+
+    const timestamp = Date.now().toString(16);
+    const randomPart = Math.random().toString(16).slice(2, 14);
+    const extraPart = Math.random().toString(16).slice(2, 14);
+    return "00000000-0000-4000-8000-" + (timestamp + randomPart + extraPart).slice(0, 12).padEnd(12, "0");
   }
 
   function generateSessionId() {
@@ -220,6 +235,7 @@ def widget_js(request):
     let typingIndicator = null;
     let isOpen = false;
     let widgetEnabled = true;
+    let isSending = false;
 
     function applyConfig(rawConfig) {
       const config = Object.assign({}, defaultConfig, rawConfig || {});
@@ -392,42 +408,65 @@ def widget_js(request):
       }
     }
 
+    async function postChatMessage(message, requestId) {
+      return fetchWithTimeout(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Livia-Tenant": tenant,
+          "X-Livia-Request-ID": requestId
+        },
+        body: JSON.stringify({
+          tenant: tenant,
+          session_key: sessionId,
+          session_id: sessionId,
+          request_id: requestId,
+          message: message,
+          source_page: window.location.href
+        })
+      }, requestTimeoutMs);
+    }
+
     async function sendMessage(rawMessage) {
       const message = String(rawMessage || "").trim();
-      if (!message || !widgetEnabled) {
+      if (!message || !widgetEnabled || isSending) {
         return;
       }
 
+      const requestId = generateRequestId();
+      isSending = true;
       appendMessage(messages, "user", message);
       input.value = "";
       setLoading(input, sendButton, true);
       ensureTyping();
 
       try {
-        const response = await fetch(apiUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Livia-Tenant": tenant
-          },
-          body: JSON.stringify({
-            tenant: tenant,
-            session_key: sessionId,
-            session_id: sessionId,
-            message: message,
-            source_page: window.location.href
-          })
-        });
-
-        const data = await response.json().catch(function () {
-          return {};
-        });
+        let response = null;
+        let data = {};
+        for (let attempt = 1; attempt <= maxSendAttempts; attempt += 1) {
+          try {
+            response = await postChatMessage(message, requestId);
+            data = await response.json().catch(function () {
+              return {};
+            });
+            if (response.status === 409 && data.error === "request_in_progress" && attempt < maxSendAttempts) {
+              await delay(inProgressDelayMs);
+              continue;
+            }
+            break;
+          } catch (error) {
+            if (attempt >= maxSendAttempts) {
+              throw error;
+            }
+            await delay(retryDelayMs);
+          }
+        }
 
         removeTyping();
         updateAssistantProfile(data);
 
-        if (!response.ok) {
-          appendMessage(messages, "assistant", data.error || "Não consegui responder agora. Tente novamente em instantes.");
+        if (!response || !response.ok) {
+          appendMessage(messages, "assistant", data.reply || data.error || "Não consegui responder agora. Tente novamente em instantes.");
           return;
         }
 
@@ -437,6 +476,7 @@ def widget_js(request):
         removeTyping();
         appendMessage(messages, "assistant", "Houve um problema ao conectar com a Lívia. Tente novamente.");
       } finally {
+        isSending = false;
         setLoading(input, sendButton, false);
       }
     }

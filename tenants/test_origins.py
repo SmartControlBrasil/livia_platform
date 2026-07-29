@@ -1,4 +1,5 @@
 import json
+import uuid
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -89,7 +90,8 @@ class PublicEndpointOriginTests(TestCase):
         TenantAllowedOrigin.objects.create(tenant=self.tenant, origin="https://www.example.com")
 
     def test_chat_authorized_post_and_blocked_origin(self):
-        payload = {"tenant": "tenant", "session_id": "ok", "message": "Olá"}
+        request_id = str(uuid.uuid4())
+        payload = {"tenant": "tenant", "session_id": "ok", "request_id": request_id, "message": "Olá"}
         response = self.client.post(
             "/api/chat/",
             data=json.dumps(payload),
@@ -103,7 +105,7 @@ class PublicEndpointOriginTests(TestCase):
 
         response = self.client.post(
             "/api/chat/",
-            data=json.dumps({**payload, "session_id": "blocked"}),
+            data=json.dumps({**payload, "session_id": "blocked", "request_id": str(uuid.uuid4())}),
             content_type="application/json",
             HTTP_ORIGIN="https://evil-example.com",
             HTTP_X_LIVIA_TENANT="tenant",

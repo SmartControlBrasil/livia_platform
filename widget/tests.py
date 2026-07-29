@@ -28,6 +28,15 @@ class WidgetTests(TestCase):
         self.assertIn("https:\\/\\/wa\\.me", content)
         self.assertIn("prefers-reduced-motion", content)
         self.assertIn("noopener noreferrer", content)
+        self.assertIn("generateRequestId", content)
+        self.assertIn("crypto.randomUUID", content)
+        self.assertIn("request_id: requestId", content)
+        self.assertIn("X-Livia-Request-ID", content)
+        self.assertIn("X-Livia-Tenant", content)
+        self.assertIn("fetchWithTimeout", content)
+        self.assertIn("maxSendAttempts", content)
+        self.assertIn("request_in_progress", content)
+        self.assertIn("isSending", content)
 
     def test_demo_page_loads_widget_script(self):
         response = self.client.get("/demo/")
