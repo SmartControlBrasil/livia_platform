@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db.models import Case, Count, IntegerField, Prefetch, Q, Value, When
+from django.db.utils import OperationalError, ProgrammingError
 from django.shortcuts import get_object_or_404
 
 from conversations.models import Conversation, HandoffRequest, Message
-from integrations.models import TenantWebhookConfig
+from integrations.models import OutboxEvent, TenantWebhookConfig
 from leads.models import LeadDraft
 from tenants.models import Tenant
 
@@ -55,6 +56,42 @@ HANDOFF_PRIORITY_LABELS = {
 }
 
 PAGE_SIZE = 12
+OUTBOX_STATUS_LABELS = {
+    OutboxEvent.Status.PENDING: "Pendente",
+    OutboxEvent.Status.PROCESSING: "Processando",
+    OutboxEvent.Status.SUCCEEDED: "Concluído",
+    OutboxEvent.Status.RETRY: "Retry agendado",
+    OutboxEvent.Status.DEAD_LETTER: "Dead letter",
+    OutboxEvent.Status.SKIPPED: "Ignorado",
+}
+OUTBOX_STATUS_TONES = {
+    OutboxEvent.Status.PENDING: "warning",
+    OutboxEvent.Status.PROCESSING: "info",
+    OutboxEvent.Status.SUCCEEDED: "success",
+    OutboxEvent.Status.RETRY: "warning",
+    OutboxEvent.Status.DEAD_LETTER: "danger",
+    OutboxEvent.Status.SKIPPED: "secondary",
+}
+RETRYABLE_ERROR_HINTS = (
+    "timeout",
+    "temporar",
+    "temporar",
+    "unavailable",
+    "connection",
+    "429",
+    "503",
+    "504",
+    "502",
+    "requestsunavailableerror",
+)
+SENSITIVE_ERROR_HINTS = (
+    "authorization",
+    "token",
+    "secret",
+    "api_key",
+    "apikey",
+    "password",
+)
 
 
 @dataclass(frozen=True)
@@ -219,6 +256,7 @@ def get_lead_list(form, *, page_number=1, tenant=None):
     )
     queryset = _filter_leads(queryset, form)
     page = Paginator(queryset, PAGE_SIZE).get_page(page_number)
+    _decorate_lead_outbox(page.object_list)
     for lead in page.object_list:
         decorate_lead(lead)
     return page
@@ -235,6 +273,7 @@ def get_lead_detail(pk, *, tenant=None):
         ),
         pk=pk,
     )
+    _decorate_lead_outbox([lead])
     decorate_lead(lead)
     for handoff in getattr(lead, "prefetched_handoffs", []):
         decorate_handoff(handoff)
@@ -264,6 +303,7 @@ def decorate_lead(lead):
     lead.masked_email = mask_email(lead.email)
     lead.masked_phone = mask_phone(lead.phone)
     lead.can_retry_crm_dispatch = can_retry_crm_dispatch(lead)
+    lead.crm_error_sanitized = sanitize_error_message(lead.crm_error)
     handoffs = list(getattr(lead, "prefetched_handoffs", []))
     lead.latest_handoff = handoffs[0] if handoffs else None
     if lead.latest_handoff is not None:
@@ -280,6 +320,113 @@ def decorate_handoff(handoff, *, detail=False):
     handoff.summary_short = short_text(handoff.summary, limit=100)
     handoff.contact = handoff_contact_summary(handoff, masked=not detail)
     return handoff
+
+
+def sanitize_error_message(value):
+    text = short_text(value, limit=220)
+    lowered = text.lower()
+    if "traceback" in lowered:
+        return "Detalhe técnico interno ocultado."
+    if any(fragment in lowered for fragment in SENSITIVE_ERROR_HINTS):
+        return "Detalhe técnico sensível ocultado."
+    return text or "-"
+
+
+def classify_failure_kind(*, lead, outbox_event):
+    if outbox_event is not None:
+        if outbox_event.status in {OutboxEvent.Status.PENDING, OutboxEvent.Status.PROCESSING, OutboxEvent.Status.RETRY}:
+            return "temporaria", "Temporária"
+        if outbox_event.status in {OutboxEvent.Status.DEAD_LETTER, OutboxEvent.Status.SKIPPED}:
+            return "definitiva", "Definitiva"
+        if outbox_event.status == OutboxEvent.Status.SUCCEEDED:
+            return "resolvida", "Resolvida"
+    lowered = str(getattr(lead, "crm_error", "") or "").lower()
+    if lowered and any(fragment in lowered for fragment in RETRYABLE_ERROR_HINTS):
+        return "temporaria", "Temporária"
+    if lowered:
+        return "indefinida", "Indefinida"
+    return "sem_falha", "Sem falha"
+
+
+def _decorate_lead_outbox(leads):
+    leads = list(leads or [])
+    if not leads:
+        return
+    lead_ids = [str(lead.pk) for lead in leads]
+    tenant_ids = list({lead.tenant_id for lead in leads})
+    latest_by_key = {}
+    try:
+        events = (
+            OutboxEvent.objects.filter(
+                event_type=OutboxEvent.EventType.LEAD_QUALIFIED,
+                aggregate_id__in=lead_ids,
+                tenant_id__in=tenant_ids,
+            )
+            .order_by("aggregate_id", "-created_at")
+        )
+        for event in events:
+            key = (event.tenant_id, event.aggregate_id)
+            if key not in latest_by_key:
+                latest_by_key[key] = event
+    except (OperationalError, ProgrammingError):
+        for lead in leads:
+            _set_outbox_defaults(
+                lead,
+                schema_available=False,
+                note="Outbox indisponível neste banco local (migration pendente).",
+            )
+        return
+
+    for lead in leads:
+        event = latest_by_key.get((lead.tenant_id, str(lead.pk)))
+        if event is None:
+            _set_outbox_defaults(lead, schema_available=True, note="Sem evento de outbox para este lead.")
+            _set_failure_kind(lead, outbox_event=None)
+            continue
+        _set_outbox_from_event(lead, event)
+        _set_failure_kind(lead, outbox_event=event)
+
+
+def _set_failure_kind(lead, *, outbox_event):
+    code, label = classify_failure_kind(lead=lead, outbox_event=outbox_event)
+    lead.failure_kind_code = code
+    lead.failure_kind_label = label
+
+
+def _set_outbox_defaults(lead, *, schema_available: bool, note: str):
+    lead.outbox_schema_available = schema_available
+    lead.outbox_note = note
+    lead.outbox_status_code = ""
+    lead.outbox_status_label = "Indisponível" if not schema_available else "Sem evento"
+    lead.outbox_status_tone = "secondary"
+    lead.outbox_event_id = ""
+    lead.outbox_event_id_compact = "-"
+    lead.outbox_attempts = 0
+    lead.outbox_max_attempts = 0
+    lead.outbox_last_attempt_at = None
+    lead.outbox_next_retry_at = None
+    lead.outbox_last_error_code = ""
+    lead.outbox_last_error_message = "-"
+    lead.outbox_is_active = False
+    lead.outbox_processed_at = None
+
+
+def _set_outbox_from_event(lead, event):
+    lead.outbox_schema_available = True
+    lead.outbox_note = ""
+    lead.outbox_status_code = event.status
+    lead.outbox_status_label = OUTBOX_STATUS_LABELS.get(event.status, event.status)
+    lead.outbox_status_tone = OUTBOX_STATUS_TONES.get(event.status, "secondary")
+    lead.outbox_event_id = str(event.event_id)
+    lead.outbox_event_id_compact = compact_external_id(str(event.event_id))
+    lead.outbox_attempts = int(event.attempts or 0)
+    lead.outbox_max_attempts = int(event.max_attempts or 0)
+    lead.outbox_last_attempt_at = event.last_attempt_at
+    lead.outbox_next_retry_at = event.available_at if event.status in {OutboxEvent.Status.PENDING, OutboxEvent.Status.RETRY} else None
+    lead.outbox_last_error_code = str(event.last_error_code or "")
+    lead.outbox_last_error_message = sanitize_error_message(event.last_error_message)
+    lead.outbox_is_active = event.status in {OutboxEvent.Status.PENDING, OutboxEvent.Status.PROCESSING, OutboxEvent.Status.RETRY}
+    lead.outbox_processed_at = event.processed_at
 
 
 def _filter_conversations(queryset, form):

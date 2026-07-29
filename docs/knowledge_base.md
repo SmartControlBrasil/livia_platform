@@ -58,17 +58,17 @@ monta um texto curto com até poucos trechos relevantes para a Lívia usar no fl
 
 ## Limitações atuais
 
-- Busca textual simples, sem embeddings vetoriais.
-- Sem OpenAI nesta fase.
+- O retriever público (`retrieve_relevant_knowledge`) continua textual e usa somente `KnowledgeDocument`.
+- A fase 4 adicionou embeddings locais por tenant (`TenantRagChunkEmbedding`), ainda desconectados do chat/`/api/chat/`.
+- A busca vetorial administrativa (`admin_vector_search`) filtra por tenant antes do cosseno e não é endpoint público.
+- SQLite não oferece busca vetorial de produção; pgvector fica para evolução em PostgreSQL.
 - Sem parser de PDF complexo.
-- Sem dashboard/admin customizado.
-- Ranking heurístico e pequeno, adequado para base inicial por tenant.
+- Sem dashboard/admin customizado além da inspeção segura dos models.
 
 ## Plano futuro
 
-- Criar chunks dedicados por documento.
-- Adicionar embeddings e busca vetorial por tenant.
+- Conectar o índice vetorial multi-tenant ao retriever público com gate explícito.
+- Migrar armazenamento vetorial para pgvector em PostgreSQL quando a escala exigir.
 - Adicionar pipeline de ingestão de PDFs e páginas do site.
-- Guardar fontes e auditoria de atualização.
-- Permitir curadoria/admin para cada tenant.
+- Permitir curadoria/admin avançada para cada tenant.
 - Usar OpenAI para síntese controlada, mantendo restrições de segurança comercial.

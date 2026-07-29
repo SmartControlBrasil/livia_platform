@@ -1,7 +1,10 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
+from django.db.utils import OperationalError, ProgrammingError
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 
 from audit.models import (
     ACTION_ASSISTANT_PROFILE_UPDATED,
@@ -10,6 +13,7 @@ from audit.models import (
 )
 from audit.services import audit_model_snapshot, changed_fields, record_audit_event
 from conversations.models import HandoffRequest
+from integrations.models import OutboxEvent
 from leads.models import LeadDraft
 from integrations.outbox.service import enqueue_lead_qualified
 from leads.services.handoff import HandoffService
@@ -116,29 +120,99 @@ def retry_lead_crm_dispatch(request, pk):
     if not can_retry_crm_dispatch(lead):
         messages.warning(request, "Este lead não pode ser reprocessado porque já foi enviado ou não está em falha.")
         return redirect("operations_portal:lead_detail", pk=lead.pk)
-
     before_data = audit_model_snapshot(lead, fields=["status", "crm_error", "crm_external_id", "sent_to_crm_at"])
-    lead.status = LeadDraft.Status.QUALIFIED
-    lead.crm_error = ""
-    lead.save(update_fields=["status", "crm_error", "updated_at"])
-    event, created = enqueue_lead_qualified(lead)
-    messages.success(request, "Reprocessamento enfileirado com sucesso." if created else "Reprocessamento já estava enfileirado.")
-    lead.refresh_from_db()
-    record_audit_event(
-        action=ACTION_LEAD_CRM_DISPATCH_RETRIED,
-        actor=request.user,
-        tenant=lead.tenant,
-        obj=lead,
-        before_data=before_data,
-        after_data=audit_model_snapshot(lead, fields=["status", "crm_error", "crm_external_id", "sent_to_crm_at"]),
-        metadata={
-            "outbox_event_id": str(event.event_id),
-            "outbox_created": created,
-            "conversation_id": lead.conversation_id,
-        },
-        request=request,
-    )
-    return redirect("operations_portal:lead_detail", pk=lead.pk)
+    try:
+        with transaction.atomic():
+            locked = get_object_or_404(
+                LeadDraft.objects.select_for_update().select_related("tenant", "conversation"),
+                pk=lead.pk,
+                tenant=lead.tenant,
+            )
+            event = (
+                OutboxEvent.objects.select_for_update()
+                .filter(
+                    event_type=OutboxEvent.EventType.LEAD_QUALIFIED,
+                    aggregate_id=str(locked.pk),
+                    tenant=locked.tenant,
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if event is not None and event.status in {OutboxEvent.Status.PROCESSING, OutboxEvent.Status.PENDING}:
+                messages.info(request, "Já existe processamento em andamento para este lead.")
+                _audit_lead_retry(
+                    request=request,
+                    lead=locked,
+                    before_data=before_data,
+                    metadata={"outcome": "blocked_active", "outbox_event_id": str(event.event_id), "outbox_status": event.status},
+                )
+                return redirect("operations_portal:lead_detail", pk=locked.pk)
+            if event is not None and event.status == OutboxEvent.Status.RETRY:
+                messages.info(request, "Este lead já possui retry agendado na outbox.")
+                _audit_lead_retry(
+                    request=request,
+                    lead=locked,
+                    before_data=before_data,
+                    metadata={"outcome": "already_retry_scheduled", "outbox_event_id": str(event.event_id), "outbox_status": event.status},
+                )
+                return redirect("operations_portal:lead_detail", pk=locked.pk)
+            if event is not None and event.status == OutboxEvent.Status.SUCCEEDED:
+                messages.warning(request, "Este lead já foi concluído na outbox e não pode ser reenfileirado por aqui.")
+                _audit_lead_retry(
+                    request=request,
+                    lead=locked,
+                    before_data=before_data,
+                    metadata={"outcome": "blocked_succeeded", "outbox_event_id": str(event.event_id), "outbox_status": event.status},
+                )
+                return redirect("operations_portal:lead_detail", pk=locked.pk)
+
+            locked.status = LeadDraft.Status.QUALIFIED
+            locked.crm_error = ""
+            locked.save(update_fields=["status", "crm_error", "updated_at"])
+
+            if event is not None and event.status in {OutboxEvent.Status.DEAD_LETTER, OutboxEvent.Status.SKIPPED}:
+                event.status = OutboxEvent.Status.PENDING
+                event.available_at = timezone.now()
+                event.locked_at = None
+                event.locked_by = ""
+                event.last_error_code = "manual_requeue_from_portal"
+                event.last_error_message = "Lead reenfileirado manualmente pelo portal."
+                event.save(
+                    update_fields=[
+                        "status",
+                        "available_at",
+                        "locked_at",
+                        "locked_by",
+                        "last_error_code",
+                        "last_error_message",
+                        "updated_at",
+                    ]
+                )
+                created = False
+                messages.success(request, "Lead reenfileirado com sucesso na outbox.")
+            else:
+                event, created = enqueue_lead_qualified(locked)
+                messages.success(request, "Reprocessamento enfileirado com sucesso." if created else "Reprocessamento já estava enfileirado.")
+            locked.refresh_from_db()
+            _audit_lead_retry(
+                request=request,
+                lead=locked,
+                before_data=before_data,
+                metadata={
+                    "outcome": "enqueued" if created else "reused_or_requeued",
+                    "outbox_event_id": str(event.event_id),
+                    "outbox_created": created,
+                    "outbox_status": event.status,
+                    "conversation_id": locked.conversation_id,
+                },
+            )
+            return redirect("operations_portal:lead_detail", pk=locked.pk)
+    except (OperationalError, ProgrammingError):
+        messages.error(
+            request,
+            "Não foi possível reenfileirar: outbox indisponível neste banco local. Verifique migrations antes de tentar novamente.",
+        )
+        return redirect("operations_portal:lead_detail", pk=lead.pk)
 
 
 @login_required(login_url="/admin/login/")
@@ -265,3 +339,16 @@ def placeholder(request, section):
     context = {"title": title, "active_section": section}
     context.update(portal_template_context(access))
     return render(request, "operations_portal/placeholder.html", context)
+
+
+def _audit_lead_retry(*, request, lead, before_data, metadata):
+    record_audit_event(
+        action=ACTION_LEAD_CRM_DISPATCH_RETRIED,
+        actor=request.user,
+        tenant=lead.tenant,
+        obj=lead,
+        before_data=before_data,
+        after_data=audit_model_snapshot(lead, fields=["status", "crm_error", "crm_external_id", "sent_to_crm_at"]),
+        metadata=metadata,
+        request=request,
+    )

@@ -31,7 +31,7 @@
       {% if page_obj.object_list %}
       <div class="table-responsive">
         <table class="table table-hover table-nowrap align-middle mb-0">
-          <thead><tr><th>ID</th><th>Tenant</th><th>Contato</th><th>Empresa</th><th>Necessidade</th><th>Status</th><th>CRM</th><th>External ID</th><th>Criado</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th>Tenant</th><th>Contato</th><th>Empresa</th><th>Status</th><th>CRM</th><th>Outbox</th><th>Tentativas</th><th>Falha</th><th>Criado</th><th></th></tr></thead>
           <tbody>
             {% for lead in page_obj.object_list %}
             <tr>
@@ -39,10 +39,19 @@
               <td>{{ lead.tenant.slug }}</td>
               <td><span class="fw-medium text-dark">{{ lead.contact.name }}</span>{% if lead.contact.details %}<br><small class="text-muted">{{ lead.contact.details }}</small>{% endif %}</td>
               <td>{{ lead.company|default:"-" }}</td>
-              <td>{{ lead.need_summary_short|default:"-" }}</td>
               <td><span class="badge bg-{{ lead.status_tone }}-subtle text-{{ lead.status_tone }}">{{ lead.status_label }}</span></td>
               <td><span class="badge bg-{{ lead.crm_state.tone }}-subtle text-{{ lead.crm_state.tone }}">{{ lead.crm_state.label }}</span></td>
-              <td>{{ lead.crm_external_id_compact|default:"-" }}</td>
+              <td>
+                <span class="badge bg-{{ lead.outbox_status_tone }}-subtle text-{{ lead.outbox_status_tone }}">{{ lead.outbox_status_label }}</span>
+                {% if lead.outbox_next_retry_at %}<br><small class="text-muted">Próximo: {{ lead.outbox_next_retry_at|date:"d/m/Y H:i" }}</small>{% endif %}
+              </td>
+              <td>{{ lead.outbox_attempts }}{% if lead.outbox_max_attempts %}/{{ lead.outbox_max_attempts }}{% endif %}</td>
+              <td>
+                <span class="badge bg-{% if lead.failure_kind_code == 'temporaria' %}warning{% elif lead.failure_kind_code == 'definitiva' %}danger{% elif lead.failure_kind_code == 'resolvida' %}success{% else %}secondary{% endif %}-subtle text-{% if lead.failure_kind_code == 'temporaria' %}warning{% elif lead.failure_kind_code == 'definitiva' %}danger{% elif lead.failure_kind_code == 'resolvida' %}success{% else %}secondary{% endif %}">
+                  {{ lead.failure_kind_label }}
+                </span>
+                {% if lead.crm_error_sanitized and lead.crm_error_sanitized != "-" %}<br><small class="text-muted">{{ lead.crm_error_sanitized }}</small>{% endif %}
+              </td>
               <td>{{ lead.created_at|date:"d/m/Y H:i" }}</td>
               <td><a class="btn btn-sm btn-primary" href="{% url 'operations_portal:lead_detail' lead.pk %}">Ver lead</a></td>
             </tr>
