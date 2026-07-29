@@ -10,6 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from conversations.models import Conversation, HandoffRequest, Message
+from integrations.models import OutboxEvent
 from leads.models import LeadDraft
 from leads.services.crm_dispatch import CRMDispatchResult
 from tenants.models import AssistantProfile, Tenant
@@ -574,34 +575,19 @@ class OperationsPortalLeadTests(PortalUserMixin, TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_retry_crm_dispatch_calls_service_for_failed_unsent_lead(self):
-        result = CRMDispatchResult(
-            attempted=True,
-            success=True,
-            dry_run=True,
-            lead_draft=self.failed_lead,
-            external_id="dry-run-id",
-            message="ok",
-        )
-        service = Mock()
-        service.dispatch_if_qualified.return_value = result
-
-        with patch("operations_portal.views.CRMDispatchService", return_value=service):
-            response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.failed_lead.pk}))
+        response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.failed_lead.pk}))
 
         self.assertRedirects(response, reverse("operations_portal:lead_detail", kwargs={"pk": self.failed_lead.pk}))
-        service.dispatch_if_qualified.assert_called_once()
+        self.assertTrue(OutboxEvent.objects.filter(event_type=OutboxEvent.EventType.LEAD_QUALIFIED, aggregate_id=str(self.failed_lead.pk)).exists())
         self.failed_lead.refresh_from_db()
         self.assertEqual(self.failed_lead.status, LeadDraft.Status.QUALIFIED)
         self.assertEqual(self.failed_lead.crm_error, "")
 
     def test_retry_crm_dispatch_does_not_call_service_for_already_sent_lead(self):
-        service = Mock()
-
-        with patch("operations_portal.views.CRMDispatchService", return_value=service):
-            response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.sent_lead.pk}))
+        response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.sent_lead.pk}))
 
         self.assertRedirects(response, reverse("operations_portal:lead_detail", kwargs={"pk": self.sent_lead.pk}))
-        service.dispatch_if_qualified.assert_not_called()
+        self.assertFalse(OutboxEvent.objects.filter(aggregate_id=str(self.sent_lead.pk)).exists())
         self.sent_lead.refresh_from_db()
         self.assertEqual(self.sent_lead.status, LeadDraft.Status.SENT_TO_CRM)
 

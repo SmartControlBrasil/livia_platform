@@ -145,17 +145,16 @@ class LeadCaptureService:
         )
 
     def _dispatch_webhook_lead_qualified(self, lead_draft: LeadDraft) -> None:
-        try:
-            from integrations.webhooks.service import WebhookDispatchService
+        from integrations.outbox.service import enqueue_lead_qualified
 
-            WebhookDispatchService().dispatch_lead_qualified(lead_draft)
-        except Exception as exc:
-            logger.info(
-                "livia_webhook_lead_capture_dispatch_ignored lead_draft_id=%s tenant_slug=%s error_type=%s",
-                lead_draft.id,
-                lead_draft.tenant.slug,
-                type(exc).__name__,
-            )
+        event, created = enqueue_lead_qualified(lead_draft)
+        logger.info(
+            "outbox_enqueue lead_draft_id=%s tenant_slug=%s event_id=%s created=%s",
+            lead_draft.id,
+            lead_draft.tenant.slug,
+            event.event_id,
+            created,
+        )
 
     def calculate_missing_fields(self, lead_draft: LeadDraft) -> list[str]:
         missing: list[str] = []

@@ -303,8 +303,6 @@ class LiviaDecisionService:
             message=current_message,
             history=history,
         )
-        if result.is_qualified:
-            self.crm_dispatch_service.dispatch_if_qualified(result.lead_draft)
         reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields, intent=intent, invalid_fields=result.invalid_fields)
         if result.is_qualified:
             reply = build_contextual_reply(intent=intent, missing_fields=[])

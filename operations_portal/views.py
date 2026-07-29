@@ -11,7 +11,7 @@ from audit.models import (
 from audit.services import audit_model_snapshot, changed_fields, record_audit_event
 from conversations.models import HandoffRequest
 from leads.models import LeadDraft
-from leads.services.crm_dispatch import CRMDispatchService
+from integrations.outbox.service import enqueue_lead_qualified
 from leads.services.handoff import HandoffService
 from tenants.access import (
     CAPABILITY_ASSISTANT_PROFILE_CHANGE,
@@ -121,15 +121,8 @@ def retry_lead_crm_dispatch(request, pk):
     lead.status = LeadDraft.Status.QUALIFIED
     lead.crm_error = ""
     lead.save(update_fields=["status", "crm_error", "updated_at"])
-    result = CRMDispatchService().dispatch_if_qualified(lead)
-    if result.success:
-        messages.success(request, "Reprocessamento concluído com sucesso.")
-    else:
-        if not result.attempted:
-            lead.status = LeadDraft.Status.FAILED
-            lead.crm_error = result.message
-            lead.save(update_fields=["status", "crm_error", "updated_at"])
-        messages.error(request, result.message or "Reprocessamento não concluído.")
+    event, created = enqueue_lead_qualified(lead)
+    messages.success(request, "Reprocessamento enfileirado com sucesso." if created else "Reprocessamento já estava enfileirado.")
     lead.refresh_from_db()
     record_audit_event(
         action=ACTION_LEAD_CRM_DISPATCH_RETRIED,
@@ -139,9 +132,8 @@ def retry_lead_crm_dispatch(request, pk):
         before_data=before_data,
         after_data=audit_model_snapshot(lead, fields=["status", "crm_error", "crm_external_id", "sent_to_crm_at"]),
         metadata={
-            "attempted": result.attempted,
-            "success": result.success,
-            "dry_run": result.dry_run,
+            "outbox_event_id": str(event.event_id),
+            "outbox_created": created,
             "conversation_id": lead.conversation_id,
         },
         request=request,

@@ -27,7 +27,7 @@ class Smart360GrowthClient:
         self.token = token
         self.dry_run = dry_run
 
-    def ingest_lead(self, payload: LeadIngestPayload | dict[str, Any]) -> LeadIngestResponse:
+    def ingest_lead(self, payload: LeadIngestPayload | dict[str, Any], *, idempotency_key: str = "") -> LeadIngestResponse:
         normalized_payload = self._normalize_payload(payload)
         if self.dry_run:
             tenant_slug = str(normalized_payload.get("tenant_slug") or "tenant")
@@ -44,7 +44,7 @@ class Smart360GrowthClient:
                 },
             )
 
-        return self._post_lead(normalized_payload)
+        return self._post_lead(normalized_payload, idempotency_key=idempotency_key)
 
     def _normalize_payload(self, payload: LeadIngestPayload | dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload, LeadIngestPayload):
@@ -56,7 +56,7 @@ class Smart360GrowthClient:
             return ""
         return f"{self.base_url}/api/v1/growth/leads/ingest/"
 
-    def _post_lead(self, payload: dict[str, Any]) -> LeadIngestResponse:
+    def _post_lead(self, payload: dict[str, Any], *, idempotency_key: str = "") -> LeadIngestResponse:
         if not self.base_url:
             raise ValueError("base_url é obrigatório quando dry_run=False.")
 
@@ -64,6 +64,9 @@ class Smart360GrowthClient:
             "Authorization": f"Bearer {self.token}" if self.token else "",
             "Content-Type": "application/json",
         }
+        if idempotency_key:
+            headers["X-Livia-Event-ID"] = idempotency_key
+            headers["Idempotency-Key"] = idempotency_key
         headers = {key: value for key, value in headers.items() if value}
 
         try:

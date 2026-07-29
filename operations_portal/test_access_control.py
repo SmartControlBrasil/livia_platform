@@ -1,3 +1,4 @@
+import uuid
 from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
@@ -13,6 +14,7 @@ from audit.models import (
     AuditEvent,
 )
 from conversations.models import Conversation, HandoffRequest
+from integrations.models import OutboxEvent
 from leads.models import LeadDraft
 from tenants.models import AssistantProfile, Tenant, TenantMembership
 
@@ -149,23 +151,16 @@ class PortalTenantAccessTests(TestCase):
 
     def test_manager_retries_crm_and_records_actor_tenant(self):
         self.login_with_role(TenantMembership.Role.MANAGER, tenant=self.tenant_a)
-        result = Mock(attempted=True, success=True, dry_run=True)
-        service = Mock()
 
-        def dispatch(lead):
-            lead.status = LeadDraft.Status.SENT_TO_CRM
-            lead.crm_external_id = "dry-run"
-            lead.save(update_fields=["status", "crm_external_id", "updated_at"])
-            return result
-
-        service.dispatch_if_qualified.side_effect = dispatch
-        with patch("operations_portal.views.CRMDispatchService", return_value=service):
-            response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.lead_a.pk}))
+        response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.lead_a.pk}))
 
         self.assertEqual(response.status_code, 302)
+        outbox_event = OutboxEvent.objects.get(event_type=OutboxEvent.EventType.LEAD_QUALIFIED, aggregate_id=str(self.lead_a.pk))
+        self.assertEqual(outbox_event.tenant, self.tenant_a)
         event = AuditEvent.objects.get(action=ACTION_LEAD_CRM_DISPATCH_RETRIED)
         self.assertEqual(event.actor, self.user)
         self.assertEqual(event.tenant, self.tenant_a)
+        self.assertEqual(event.metadata["outbox_event_id"], str(outbox_event.event_id))
 
     def test_only_tenant_admin_changes_assistant_profile(self):
         AssistantProfile.objects.create(tenant=self.tenant_a)
@@ -236,7 +231,7 @@ class PublicEndpointRegressionTests(TestCase):
         self.assertEqual(self.client.get("/api/widget/config/?tenant=tenant").status_code, 200)
         response = self.client.post(
             "/api/chat/",
-            data='{"tenant":"tenant","session_id":"public-session","message":"Olá"}',
+            data=f'{{"tenant":"tenant","session_id":"public-session","request_id":"{uuid.uuid4()}","message":"Olá"}}',
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 200)

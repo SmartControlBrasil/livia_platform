@@ -1,7 +1,9 @@
 from django.contrib import admin, messages
 
 from assistant_core.discovery import analyze_message
-from leads.services.crm_dispatch import CRMDispatchService
+from audit.models import ACTION_LEAD_CRM_DISPATCH_RETRIED
+from audit.services import audit_model_snapshot, record_audit_event
+from integrations.outbox.service import enqueue_lead_qualified
 
 from .models import LeadDraft
 
@@ -35,7 +37,6 @@ class LeadServiceAreaFilter(admin.SimpleListFilter):
 
 @admin.action(description="Reprocessar envio ao CRM dos LeadDrafts com falha")
 def retry_failed_crm_dispatch(modeladmin, request, queryset):
-    service = CRMDispatchService()
     selected = queryset.select_related("tenant", "conversation")
     retried = 0
     skipped = 0
@@ -53,18 +54,29 @@ def retry_failed_crm_dispatch(modeladmin, request, queryset):
         lead_draft.status = LeadDraft.Status.QUALIFIED
         lead_draft.crm_error = ""
         lead_draft.save(update_fields=["status", "crm_error", "updated_at"])
-        result = service.dispatch_if_qualified(lead_draft)
+        before_data = audit_model_snapshot(lead_draft, fields=["status", "crm_error", "crm_external_id", "sent_to_crm_at"])
+        event, created = enqueue_lead_qualified(lead_draft)
         retried += 1
-        if result.success:
+        if created:
             succeeded += 1
         else:
-            failed += 1
+            skipped += 1
+        record_audit_event(
+            action=ACTION_LEAD_CRM_DISPATCH_RETRIED,
+            actor=request.user,
+            tenant=lead_draft.tenant,
+            obj=lead_draft,
+            before_data=before_data,
+            after_data=audit_model_snapshot(lead_draft, fields=["status", "crm_error", "crm_external_id", "sent_to_crm_at"]),
+            metadata={"source": "django_admin", "outbox_event_id": str(event.event_id), "outbox_created": created},
+            request=request,
+        )
 
     modeladmin.message_user(
         request,
         (
-            f"Reprocessamento CRM concluído: {retried} tentativa(s), "
-            f"{succeeded} sucesso(s), {failed} falha(s), {skipped} ignorado(s)."
+            f"Reprocessamento CRM enfileirado: {retried} tentativa(s), "
+            f"{succeeded} evento(s) novo(s), {failed} falha(s), {skipped} ignorado(s)."
         ),
         messages.INFO,
     )
