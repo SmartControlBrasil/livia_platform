@@ -123,3 +123,7 @@ Confira se o snippet usa `data-api-url="https://livia.smartcontrolbrasil.com.br/
 ## Personalização visual
 
 Veja `docs/widget_customization.md` para campos disponíveis, defaults, endpoint `/api/widget/config/` e exemplos de onboarding com aparência por tenant.
+
+## Idempotência do envio
+
+O widget gera um `request_id` UUID para cada mensagem enviada, envia o valor no JSON e no header `X-Livia-Request-ID`, e reutiliza o mesmo valor apenas em retries de rede/timeout daquela mesma tentativa. Erros `400`, `403`, `409 request_id_conflict` e `429` não são repetidos automaticamente; `409 request_in_progress` usa uma espera curta e consulta novamente com o mesmo `request_id`.

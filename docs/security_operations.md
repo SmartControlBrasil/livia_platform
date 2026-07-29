@@ -113,3 +113,11 @@ curl -i -X OPTIONS https://livia.smartcontrolbrasil.com.br/api/chat/ \
   -H "Origin: https://example.invalid" \
   -H "Access-Control-Request-Method: POST"
 ~~~
+
+## Idempotência do chat público
+
+O endpoint `/api/chat/` exige `request_id` UUID por mensagem depois de tenant e origin validados. A tabela `ChatRequest` guarda fingerprint, status e payload público de resposta para replay seguro, sem persistir o texto da mensagem no log de idempotência. Monitore `chat_request_report` e readiness para requests abandonados, falhas recentes, SQLite em produção e timeout inválido.
+
+## Outbox transacional
+
+Monitore `outbox_report` para eventos vencidos, retries atrasados, locks abandonados e dead letters. `process_outbox` sem `--execute` é dry-run. Requeue manual pelo Admin é restrito a superuser e auditado.

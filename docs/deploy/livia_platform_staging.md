@@ -15,7 +15,14 @@ Checklist operacional para preparar `livia.smartcontrolbrasil.com.br` sem execut
 
 ## 2. Banco de dados
 
-O projeto mantém SQLite como padrão local. Para staging/produção, defina a estratégia de banco antes do deploy. Ainda não há helper `DATABASE_URL` no projeto; se PostgreSQL/MySQL for adotado, incluir a dependência de driver, ajustar `DATABASES` e validar migrations em staging antes de produção.
+O projeto mantém SQLite como fallback local em `DEBUG=True`, mas staging/produção exigem `DATABASE_URL` apontando para PostgreSQL quando `DEBUG=False`.
+
+Checklist mínimo:
+
+1. Definir `DATABASE_URL` de staging para PostgreSQL.
+2. Confirmar `DJANGO_ALLOW_EXTERNAL_TEST_DATABASE_URL=False` fora de ambiente de teste local.
+3. Rodar `python manage.py database_readiness` antes e depois das migrations.
+4. Rodar `python manage.py database_validation_report` após carga inicial para comparar contagens sem PII.
 
 ## 3. Instalar aplicação
 
