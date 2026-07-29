@@ -18,6 +18,7 @@ from audit.models import (
 )
 from audit.services import MASKED_VALUE, SERIALIZATION_ERROR_VALUE, extract_ip_address, record_audit_event
 from conversations.models import Conversation, HandoffRequest
+from integrations.models import OutboxEvent
 from integrations.models import TenantWebhookConfig
 from leads.models import LeadDraft
 from tenants.models import AssistantProfile, Tenant
@@ -67,27 +68,14 @@ class AuditPortalTests(TestCase):
             status=LeadDraft.Status.FAILED,
             crm_error="erro temporário",
         )
-        result = Mock(attempted=True, success=True, dry_run=True)
-        service = Mock()
-
-        def dispatch(updated_lead):
-            updated_lead.status = LeadDraft.Status.SENT_TO_CRM
-            updated_lead.crm_external_id = "dry-run-id"
-            updated_lead.crm_error = ""
-            updated_lead.save(update_fields=["status", "crm_external_id", "crm_error", "updated_at"])
-            return result
-
-        service.dispatch_if_qualified.side_effect = dispatch
-
-        with patch("operations_portal.views.CRMDispatchService", return_value=service):
-            response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": lead.pk}))
+        response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": lead.pk}))
 
         self.assertRedirects(response, reverse("operations_portal:lead_detail", kwargs={"pk": lead.pk}))
+        outbox_event = OutboxEvent.objects.get(event_type=OutboxEvent.EventType.LEAD_QUALIFIED, aggregate_id=str(lead.pk))
         event = AuditEvent.objects.get(action=ACTION_LEAD_CRM_DISPATCH_RETRIED)
         self.assertEqual(event.before_data["status"], LeadDraft.Status.FAILED)
-        self.assertEqual(event.after_data["status"], LeadDraft.Status.SENT_TO_CRM)
-        self.assertEqual(event.metadata["attempted"], True)
-        self.assertEqual(event.metadata["success"], True)
+        self.assertEqual(event.after_data["status"], LeadDraft.Status.QUALIFIED)
+        self.assertEqual(event.metadata["outbox_event_id"], str(outbox_event.event_id))
 
     def test_assistant_profile_settings_records_only_changed_fields(self):
         profile = AssistantProfile.objects.create(
