@@ -1,13 +1,20 @@
 from io import StringIO
+import uuid
+from datetime import timedelta
 
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import connection
+from django.conf import settings
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
+from conversations.models import ChatRequest
 from knowledge_base.models import KnowledgeDocument
 from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
+from tenants.services.database_validation import build_database_validation_report
 from tenants.services.install_package import TenantInstallPackageService
 from tenants.services.onboarding import (
     TenantOnboardingService,
@@ -397,3 +404,48 @@ class TenantInstallPackageTests(TestCase):
         package = TenantInstallPackageService().build_for_tenant(self.tenant)
 
         self.assertEqual(package.allowed_origin, "https://www.granimarmorespitondo.com.br")
+
+
+class ChatRequestReadinessTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Tenant", slug="tenant")
+
+    @override_settings(LIVIA_CHAT_PROCESSING_TIMEOUT_SECONDS=1)
+    def test_readiness_detects_abandoned_processing_request(self):
+        chat_request = ChatRequest.objects.create(
+            tenant=self.tenant,
+            session_id="abandoned",
+            request_id=uuid.uuid4(),
+            request_fingerprint="f" * 64,
+            status=ChatRequest.Status.PROCESSING,
+        )
+        ChatRequest.objects.filter(pk=chat_request.pk).update(updated_at=timezone.now() - timedelta(seconds=5))
+
+        report = build_database_validation_report()
+
+        self.assertEqual(report.tenant_integrity["abandoned_processing_chat_requests"], 1)
+
+    @override_settings(LIVIA_CHAT_PROCESSING_TIMEOUT_SECONDS=0)
+    def test_readiness_detects_invalid_processing_timeout(self):
+        report = build_database_validation_report()
+
+        self.assertTrue(report.tenant_integrity["invalid_chat_processing_timeout"])
+
+    @override_settings(DEBUG=False)
+    def test_readiness_flags_sqlite_in_production(self):
+        report = build_database_validation_report()
+
+        expected = (not settings.DEBUG) and connection.vendor == "sqlite"
+        self.assertEqual(report.tenant_integrity["production_sqlite_database"], expected)
+
+    def test_readiness_counts_recent_failed_requests(self):
+        ChatRequest.objects.create(
+            tenant=self.tenant,
+            session_id="failed",
+            request_id=uuid.uuid4(),
+            request_fingerprint="0" * 64,
+            status=ChatRequest.Status.FAILED,
+        )
+
+        report = build_database_validation_report()
+        self.assertEqual(report.tenant_integrity["recent_failed_chat_requests"], 1)
