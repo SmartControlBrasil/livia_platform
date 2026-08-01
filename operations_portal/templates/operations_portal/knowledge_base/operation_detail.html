@@ -1,0 +1,56 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Detalhe da execução{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column gap-2">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Detalhe da execução</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    <a class="btn btn-light border" href="{% url 'operations_portal:knowledge_base_operations' %}?tenant={{ selected_tenant.pk }}">Voltar</a>
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Resumo</h5></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-3"><strong>ID interno</strong><br>#{{ operation.id }}</div>
+        <div class="col-md-3"><strong>Operação</strong><br>{{ operation.operation_label }}</div>
+        <div class="col-md-3"><strong>Status</strong><br>{{ operation.status_label }}</div>
+        <div class="col-md-3"><strong>Dry-run</strong><br>{% if operation.dry_run %}Sim{% else %}Não{% endif %}</div>
+        <div class="col-md-3"><strong>Solicitante</strong><br>{{ operation.requested_by }}</div>
+        <div class="col-md-3"><strong>Criada em</strong><br>{{ operation.created_at|date:"d/m/Y H:i" }}</div>
+        <div class="col-md-3"><strong>Início</strong><br>{% if operation.started_at %}{{ operation.started_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</div>
+        <div class="col-md-3"><strong>Término</strong><br>{% if operation.finished_at %}{{ operation.finished_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</div>
+        <div class="col-md-3"><strong>Duração</strong><br>{{ operation.duration_ms }} ms</div>
+        <div class="col-md-3"><strong>Código</strong><br>{{ operation.error_code|default:"-" }}</div>
+        <div class="col-md-6"><strong>Mensagem operacional</strong><br>{{ operation.error_message|default:"Sem mensagem adicional." }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Métricas</h5></div>
+    <div class="card-body">
+      {% if operation.counters %}
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Contador</th><th>Valor</th></tr></thead>
+          <tbody>
+            {% for key, value in operation.counters.items %}
+            <tr><td>{{ key }}</td><td>{{ value }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="text-muted mb-0">Nenhuma métrica registrada para esta execução.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

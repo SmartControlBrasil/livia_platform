@@ -1,0 +1,13 @@
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-sm {% if kb_sub_section == 'dashboard' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_dashboard' %}?tenant={{ selected_tenant.pk }}">Visão geral</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'documents' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_documents' %}?tenant={{ selected_tenant.pk }}">Documentos</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'chunks' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_chunks' %}?tenant={{ selected_tenant.pk }}">Chunks</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'config' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_config' %}?tenant={{ selected_tenant.pk }}">Configuração</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'diagnostic' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_diagnostic' %}?tenant={{ selected_tenant.pk }}">Busca diagnóstica</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'operations' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_operations' %}?tenant={{ selected_tenant.pk }}">Atualização da base</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'events' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_events' %}?tenant={{ selected_tenant.pk }}">Eventos recentes</a>
+    </div>
+  </div>
+</div>

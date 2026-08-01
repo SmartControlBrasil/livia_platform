@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+from django.core.paginator import Paginator
+from django.db.models import Count, Exists, OuterRef, Q
+
+from knowledge_base.models import (
+    RagRetrievalEvent,
+    TenantRagChunkEmbedding,
+    TenantRagConfiguration,
+    TenantRagDocumentChunk,
+    TenantRagDriveFileManifest,
+)
+
+from .knowledge_base_services import sanitize_excerpt, serialize_retrieval_event
+
+PAGE_SIZE = 12
+
+
+def get_tenant_rag_configuration(tenant) -> TenantRagConfiguration | None:
+    if tenant is None:
+        return None
+    return TenantRagConfiguration.objects.filter(tenant=tenant).first()
+
+
+def get_knowledge_document_list(*, tenant, form, page_number=1):
+    queryset = (
+        TenantRagDriveFileManifest.objects.filter(tenant=tenant)
+        .annotate(
+            chunk_count=Count(
+                "chunks",
+                filter=Q(
+                    chunks__is_active=True,
+                    chunks__status=TenantRagDocumentChunk.Status.ACTIVE,
+                ),
+                distinct=True,
+            )
+        )
+        .order_by("-updated_at", "-id")
+    )
+    status = form.cleaned_data.get("status") if form.is_valid() else ""
+    if status:
+        queryset = queryset.filter(status=status)
+    active = form.cleaned_data.get("is_active") if form.is_valid() else ""
+    if active == "yes":
+        queryset = queryset.filter(is_active=True)
+    elif active == "no":
+        queryset = queryset.filter(is_active=False)
+    q = form.cleaned_data.get("q") if form.is_valid() else ""
+    if q:
+        queryset = queryset.filter(Q(name__icontains=q) | Q(relative_path__icontains=q))
+
+    page = Paginator(queryset, PAGE_SIZE).get_page(page_number)
+    for item in page.object_list:
+        item.title = item.name
+        item.origin_label = item.mime_type or "Google Drive"
+        item.index_status_label = item.get_status_display()
+        item.updated_at_display = item.updated_at or item.last_seen_at
+    return page
+
+
+def get_knowledge_chunk_list(*, tenant, form, page_number=1):
+    active_embedding = TenantRagChunkEmbedding.objects.filter(
+        chunk_id=OuterRef("pk"),
+        tenant=tenant,
+        is_active=True,
+        status=TenantRagChunkEmbedding.Status.ACTIVE,
+    )
+    queryset = (
+        TenantRagDocumentChunk.objects.filter(tenant=tenant)
+        .select_related("manifest")
+        .annotate(has_embedding=Exists(active_embedding))
+        .order_by("manifest__name", "ordinal", "id")
+    )
+    if form.is_valid():
+        status = form.cleaned_data.get("status")
+        if status:
+            queryset = queryset.filter(status=status)
+        active = form.cleaned_data.get("is_active")
+        if active == "yes":
+            queryset = queryset.filter(is_active=True)
+        elif active == "no":
+            queryset = queryset.filter(is_active=False)
+        embedding = form.cleaned_data.get("has_embedding")
+        if embedding == "yes":
+            queryset = queryset.filter(has_embedding=True)
+        elif embedding == "no":
+            queryset = queryset.filter(has_embedding=False)
+        manifest_id = form.cleaned_data.get("manifest")
+        if manifest_id:
+            queryset = queryset.filter(manifest_id=manifest_id.pk)
+
+    page = Paginator(queryset, PAGE_SIZE).get_page(page_number)
+    for item in page.object_list:
+        item.document_title = item.manifest.name if item.manifest_id else "-"
+        item.excerpt = sanitize_excerpt(item.chunk_text)
+        item.embedding_label = "Sim" if item.has_embedding else "Não"
+        item.status_label = item.get_status_display()
+    return page
+
+
+def get_knowledge_retrieval_events(*, tenant, page_number=1, page_size=20):
+    queryset = RagRetrievalEvent.objects.filter(tenant=tenant).order_by("-created_at", "-id")
+    page = Paginator(queryset, page_size).get_page(page_number)
+    page.object_list = [serialize_retrieval_event(event) for event in page.object_list]
+    return page
+
+
+def serialize_operation_request(request_obj) -> dict:
+    duration_ms = 0
+    if request_obj.started_at and request_obj.finished_at:
+        duration_ms = int((request_obj.finished_at - request_obj.started_at).total_seconds() * 1000)
+    return {
+        "id": request_obj.pk,
+        "operation": request_obj.operation,
+        "operation_label": request_obj.get_operation_display(),
+        "status": request_obj.status,
+        "status_label": request_obj.get_status_display(),
+        "dry_run": request_obj.dry_run,
+        "run_id": request_obj.run_id,
+        "counters": request_obj.counters or {},
+        "error_code": request_obj.error_code or "",
+        "error_message": request_obj.error_message or "",
+        "requested_by": getattr(request_obj.requested_by, "username", "") or "-",
+        "started_at": request_obj.started_at,
+        "finished_at": request_obj.finished_at,
+        "created_at": request_obj.created_at,
+        "duration_ms": duration_ms,
+    }
+
+
+def get_operation_request_list(*, tenant, page_number=1):
+    from knowledge_base.models import TenantRagOperationRequest
+
+    queryset = (
+        TenantRagOperationRequest.objects.filter(tenant=tenant)
+        .select_related("requested_by")
+        .order_by("-created_at", "-id")
+    )
+    page = Paginator(queryset, PAGE_SIZE).get_page(page_number)
+    page.object_list = [serialize_operation_request(item) for item in page.object_list]
+    return page
+
+
+def get_operation_request_detail(*, tenant, pk: int):
+    from knowledge_base.models import TenantRagOperationRequest
+
+    request_obj = (
+        TenantRagOperationRequest.objects.select_related("requested_by", "index_run")
+        .filter(tenant=tenant, pk=pk)
+        .first()
+    )
+    if request_obj is None:
+        return None
+    payload = serialize_operation_request(request_obj)
+    payload["index_run_id"] = getattr(request_obj.index_run, "pk", None)
+    return payload

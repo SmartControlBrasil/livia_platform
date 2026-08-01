@@ -23,6 +23,12 @@ ACTION_TENANT_RAG_CONFIGURED = "tenant.rag_configured"
 ACTION_TENANT_RAG_INDEX_STARTED = "tenant.rag_index_started"
 ACTION_TENANT_RAG_INDEX_COMPLETED = "tenant.rag_index_completed"
 ACTION_TENANT_RAG_INDEX_FAILED = "tenant.rag_index_failed"
+ACTION_TENANT_RAG_DIAGNOSTIC_SEARCH = "tenant.rag_diagnostic_search"
+ACTION_TENANT_RAG_OPERATION_REQUESTED = "tenant.rag_operation_requested"
+ACTION_TENANT_RAG_OPERATION_REJECTED = "tenant.rag_operation_rejected"
+ACTION_TENANT_RAG_OPERATION_STARTED = "tenant.rag_operation_started"
+ACTION_TENANT_RAG_OPERATION_COMPLETED = "tenant.rag_operation_completed"
+ACTION_TENANT_RAG_OPERATION_FAILED = "tenant.rag_operation_failed"
 
 
 class AuditEvent(models.Model):
@@ -48,6 +54,12 @@ class AuditEvent(models.Model):
         TENANT_RAG_INDEX_STARTED = ACTION_TENANT_RAG_INDEX_STARTED, "Tenant RAG index started"
         TENANT_RAG_INDEX_COMPLETED = ACTION_TENANT_RAG_INDEX_COMPLETED, "Tenant RAG index completed"
         TENANT_RAG_INDEX_FAILED = ACTION_TENANT_RAG_INDEX_FAILED, "Tenant RAG index failed"
+        TENANT_RAG_DIAGNOSTIC_SEARCH = ACTION_TENANT_RAG_DIAGNOSTIC_SEARCH, "Tenant RAG diagnostic search"
+        TENANT_RAG_OPERATION_REQUESTED = ACTION_TENANT_RAG_OPERATION_REQUESTED, "Tenant RAG operation requested"
+        TENANT_RAG_OPERATION_REJECTED = ACTION_TENANT_RAG_OPERATION_REJECTED, "Tenant RAG operation rejected"
+        TENANT_RAG_OPERATION_STARTED = ACTION_TENANT_RAG_OPERATION_STARTED, "Tenant RAG operation started"
+        TENANT_RAG_OPERATION_COMPLETED = ACTION_TENANT_RAG_OPERATION_COMPLETED, "Tenant RAG operation completed"
+        TENANT_RAG_OPERATION_FAILED = ACTION_TENANT_RAG_OPERATION_FAILED, "Tenant RAG operation failed"
 
     tenant = models.ForeignKey(
         "tenants.Tenant",

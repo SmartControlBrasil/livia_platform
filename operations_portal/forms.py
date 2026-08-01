@@ -1,6 +1,7 @@
 from django import forms
 
 from conversations.models import Conversation, HandoffRequest
+from knowledge_base.models import TenantRagDriveFileManifest
 from leads.models import LeadDraft
 from tenants.models import AssistantProfile, Tenant
 
@@ -118,3 +119,145 @@ class HumanHandoffSettingsForm(forms.ModelForm):
         self.fields["handoff_whatsapp_label"].label = "Texto do botão"
         self.fields["handoff_whatsapp_message"].label = "Mensagem pré-preenchida"
         self.fields["handoff_whatsapp_number"].help_text = "Use telefone internacional. O valor será salvo apenas com dígitos."
+
+
+MANIFEST_STATUS_CHOICES = [
+    ("discovered", "Descoberto"),
+    ("exported", "Exportado"),
+    ("updated", "Atualizado"),
+    ("unchanged", "Sem alteração"),
+    ("skipped_unsupported", "Ignorado (não suportado)"),
+    ("failed", "Falha"),
+    ("removed", "Removido"),
+    ("unavailable", "Indisponível"),
+]
+
+CHUNK_STATUS_CHOICES = [
+    ("active", "Ativo"),
+    ("replaced", "Substituído"),
+    ("failed", "Falha"),
+]
+
+
+class KnowledgeDocumentFilterForm(PortalFilterForm):
+    status = forms.ChoiceField(required=False, choices=[("", "Todos")] + MANIFEST_STATUS_CHOICES)
+    is_active = forms.ChoiceField(required=False, choices=[("", "Todos"), ("yes", "Ativo"), ("no", "Inativo")])
+    q = forms.CharField(required=False, max_length=120)
+
+
+class KnowledgeChunkFilterForm(PortalFilterForm):
+    status = forms.ChoiceField(required=False, choices=[("", "Todos")] + CHUNK_STATUS_CHOICES)
+    is_active = forms.ChoiceField(required=False, choices=[("", "Todos"), ("yes", "Ativo"), ("no", "Inativo")])
+    has_embedding = forms.ChoiceField(
+        required=False,
+        choices=[("", "Todos"), ("yes", "Com embedding"), ("no", "Sem embedding")],
+    )
+    manifest = forms.ModelChoiceField(queryset=TenantRagDriveFileManifest.objects.none(), required=False, empty_label="Todos")
+
+    def __init__(self, *args, tenant=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if tenant is not None:
+            self.fields["manifest"].queryset = TenantRagDriveFileManifest.objects.filter(tenant=tenant).order_by("name")
+
+
+class KnowledgeDiagnosticSearchForm(forms.Form):
+    query = forms.CharField(
+        required=True,
+        max_length=500,
+        label="Consulta diagnóstica",
+        widget=forms.TextInput(attrs={"placeholder": "Ex.: mármore Carrara para bancada"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["query"].widget.attrs["class"] = "form-control"
+
+
+class TenantRagConfigurationPortalForm(forms.ModelForm):
+    class Meta:
+        from knowledge_base.models import TenantRagConfiguration
+
+        model = TenantRagConfiguration
+        fields = [
+            "retrieval_enabled",
+            "min_similarity_score",
+            "max_retrieved_chunks",
+            "max_context_chars",
+            "retrieval_timeout_seconds",
+        ]
+
+    def __init__(self, *args, global_limits=None, **kwargs):
+        self.global_limits = global_limits
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            else:
+                field.widget.attrs["class"] = "form-control"
+        self.fields["retrieval_enabled"].label = "Habilitar recuperação RAG no chat"
+        self.fields["min_similarity_score"].label = "Score mínimo (override)"
+        self.fields["min_similarity_score"].required = False
+        self.fields["max_retrieved_chunks"].label = "Máximo de chunks (override)"
+        self.fields["max_retrieved_chunks"].required = False
+        self.fields["max_context_chars"].label = "Orçamento de contexto em caracteres (override)"
+        self.fields["max_context_chars"].required = False
+        self.fields["retrieval_timeout_seconds"].label = "Timeout da recuperação em segundos (override)"
+        self.fields["retrieval_timeout_seconds"].required = False
+        limits = global_limits
+        if limits is not None:
+            self.fields["max_retrieved_chunks"].help_text = (
+                f"Deixe vazio para herdar o limite global ({limits.global_max_chunks}). "
+                "O tenant só pode restringir esse teto."
+            )
+            self.fields["max_context_chars"].help_text = (
+                f"Deixe vazio para herdar o limite global ({limits.global_max_context_chars} caracteres). "
+                "O tenant só pode restringir esse teto."
+            )
+            self.fields["retrieval_timeout_seconds"].help_text = (
+                f"Deixe vazio para herdar o timeout global ({limits.global_timeout_seconds}s). "
+                "O tenant só pode reduzir o timeout efetivo."
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        limits = self.global_limits
+        if limits is None:
+            return cleaned
+        max_chunks = cleaned.get("max_retrieved_chunks")
+        if max_chunks is not None and int(max_chunks) > limits.global_max_chunks:
+            self.add_error(
+                "max_retrieved_chunks",
+                f"O valor não pode exceder o limite global de {limits.global_max_chunks}.",
+            )
+        max_chars = cleaned.get("max_context_chars")
+        if max_chars is not None and int(max_chars) > limits.global_max_context_chars:
+            self.add_error(
+                "max_context_chars",
+                f"O valor não pode exceder o limite global de {limits.global_max_context_chars} caracteres.",
+            )
+        timeout = cleaned.get("retrieval_timeout_seconds")
+        if timeout is not None and int(timeout) > limits.global_timeout_seconds:
+            self.add_error(
+                "retrieval_timeout_seconds",
+                f"O valor não pode exceder o timeout global de {limits.global_timeout_seconds}s.",
+            )
+        return cleaned
+
+
+PORTAL_RAG_OPERATIONS = [
+    ("inventory", "Inventário da origem"),
+    ("sync_export", "Sincronização de documentos"),
+    ("build_chunks", "Atualização de chunks"),
+    ("index_embeddings", "Geração de embeddings pendentes"),
+    ("full_reindex", "Reindexação completa"),
+]
+
+
+class KnowledgeBaseOperationRequestForm(forms.Form):
+    operation = forms.ChoiceField(choices=PORTAL_RAG_OPERATIONS, label="Operação")
+    confirm_reindex = forms.BooleanField(required=False, label="Confirmo o impacto da reindexação completa")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["operation"].widget.attrs["class"] = "form-select"
+        self.fields["confirm_reindex"].widget.attrs["class"] = "form-check-input"

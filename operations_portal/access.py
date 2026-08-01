@@ -9,6 +9,10 @@ from tenants.access import (
     CAPABILITY_CONVERSATIONS_VIEW,
     CAPABILITY_HANDOFFS_CHANGE_STATUS,
     CAPABILITY_HANDOFFS_VIEW,
+    CAPABILITY_KNOWLEDGE_BASE_CONFIGURE,
+    CAPABILITY_KNOWLEDGE_BASE_OPERATE,
+    CAPABILITY_KNOWLEDGE_BASE_REINDEX,
+    CAPABILITY_KNOWLEDGE_BASE_VIEW,
     CAPABILITY_LEADS_RETRY_CRM,
     CAPABILITY_LEADS_VIEW,
     CAPABILITY_MEMBERSHIPS_MANAGE,
@@ -52,6 +56,10 @@ class PortalAccessContext:
             "assistant_profile_change": CAPABILITY_ASSISTANT_PROFILE_CHANGE in self.capabilities,
             "memberships_view": CAPABILITY_MEMBERSHIPS_VIEW in self.capabilities,
             "memberships_manage": CAPABILITY_MEMBERSHIPS_MANAGE in self.capabilities,
+            "knowledge_base_view": CAPABILITY_KNOWLEDGE_BASE_VIEW in self.capabilities,
+            "knowledge_base_configure": CAPABILITY_KNOWLEDGE_BASE_CONFIGURE in self.capabilities,
+            "knowledge_base_operate": CAPABILITY_KNOWLEDGE_BASE_OPERATE in self.capabilities,
+            "knowledge_base_reindex": CAPABILITY_KNOWLEDGE_BASE_REINDEX in self.capabilities,
         }
 
 

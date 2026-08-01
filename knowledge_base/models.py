@@ -1,5 +1,6 @@
 import math
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -386,6 +387,73 @@ class TenantRagIndexRun(models.Model):
 
     def __str__(self):
         return f"{self.tenant.slug} / {self.run_id} / {self.status}"
+
+
+class TenantRagOperationRequest(models.Model):
+    """Solicitação operacional de sync/index RAG consumida por worker controlado."""
+
+    class Operation(models.TextChoices):
+        INVENTORY = "inventory", "Inventário da origem"
+        SYNC_EXPORT = "sync_export", "Sincronização de documentos"
+        BUILD_CHUNKS = "build_chunks", "Atualização de chunks"
+        INDEX_EMBEDDINGS = "index_embeddings", "Geração de embeddings pendentes"
+        FULL_REINDEX = "full_reindex", "Reindexação completa"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RUNNING = "running", "Running"
+        SUCCEEDED = "succeeded", "Succeeded"
+        PARTIAL = "partial", "Partial"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="rag_operation_requests",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rag_operation_requests",
+    )
+    operation = models.CharField(max_length=40, choices=Operation.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    dry_run = models.BooleanField(default=False)
+    run_id = models.CharField(max_length=64)
+    counters = models.JSONField(default=dict, blank=True)
+    error_code = models.CharField(max_length=80, blank=True)
+    error_message = models.CharField(max_length=500, blank=True)
+    index_run = models.ForeignKey(
+        TenantRagIndexRun,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="operation_requests",
+    )
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "run_id"],
+                name="unique_rag_operation_run_per_tenant",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "status", "created_at"]),
+            models.Index(fields=["tenant", "operation", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.tenant.slug} / {self.operation} / {self.status}"
 
 
 class RagRetrievalEvent(models.Model):
