@@ -46,6 +46,10 @@ def main() -> int:
     verify_tls = os.environ.get("LIVIA_SOAK_VERIFY_TLS", "true").lower() not in {"0", "false", "no"}
     timeout = float(os.environ.get("LIVIA_SOAK_TIMEOUT_SECONDS", "120"))
 
+    import phase17_staging_soak as phase17_module  # noqa: E402
+
+    phase17_module.GP_ORIGIN = origin
+
     print("=== FASE 19B SOAK (HTTP físico) ===")
     print(f"base_url: {base_url}")
     print(f"origin: {origin}")

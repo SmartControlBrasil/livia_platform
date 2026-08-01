@@ -60,3 +60,21 @@ python manage.py check   # falha se LIVIA_ENVIRONMENT=staging e CRM dry-run fals
 | CRM dispatch | logs `crm_dispatch_*` + outbox |
 
 Relatório: `python manage.py ai_usage_report --tenant granimarmores-pitondo`
+
+---
+
+## Fase 20 — Deploy reproduzível staging físico
+
+| Artefato | Propósito |
+|---|---|
+| `deploy/staging/livia-staging.env.example` | Template `.env` sem segredos |
+| `deploy/staging/livia-staging.service` | Unit systemd @ `:8012` |
+| `deploy/staging/openlitespeed-vhost.conf.example` | Vhost dedicado |
+| `scripts/staging_predeploy_check.py` | Gate read-only pré-migrate |
+| `scripts/staging_postdeploy_check.py` | Gate HTTP pós-deploy |
+| `manage.py staging_deployment_report` | Relatório sanitizado |
+| `docs/deploy/staging_physical_deployment.md` | Runbook operador |
+
+Staging GP esperado permanece: OpenAI REAL (GP-only), CRM/webhooks/handoff **OFF/DRY-RUN**.
+
+Produção (`8011`, SQLite, `main`) **não** deve ser alterada durante provisionamento staging.

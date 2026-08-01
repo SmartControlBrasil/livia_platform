@@ -1,0 +1,57 @@
+# OpenLiteSpeed / CyberPanel — vhost EXCLUSIVO de staging (exemplo)
+# NÃO editar o vhost/listener de produção além de adicionar este host.
+#
+# Substituir placeholders:
+#   __STAGING_DOCROOT__     → ex.: /home/staging-livia.smartcontrolbrasil.com.br/livia_platform
+#   __STAGING_STATIC__      → ex.: .../staticfiles
+#   __ACME_WELLKNOWN__      → ex.: .../public/.well-known/acme-challenge
+#
+# Backend Gunicorn staging: http://127.0.0.1:8012
+# Produção permanece em http://127.0.0.1:8011
+
+virtualhost staging-livia {
+  vhDomain                  staging-livia.smartcontrolbrasil.com.br
+  vhAliases                 www.staging-livia.smartcontrolbrasil.com.br
+  docRoot                   __STAGING_DOCROOT__
+  enableGzip                1
+
+  # TLS: emitir via CyberPanel/Let's Encrypt APÓS DNS propagar.
+  # vhssl {
+  #   keyFile                 /etc/letsencrypt/live/staging-livia.smartcontrolbrasil.com.br/privkey.pem
+  #   certFile                /etc/letsencrypt/live/staging-livia.smartcontrolbrasil.com.br/fullchain.pem
+  #   certChain               1
+  # }
+
+  context /.well-known/acme-challenge/ {
+    type                    static
+    location                __ACME_WELLKNOWN__
+    allowBrowse             1
+    addDefaultCharset       off
+  }
+
+  context /static/ {
+    type                    static
+    location                __STAGING_STATIC__
+    allowBrowse             1
+    addDefaultCharset       off
+  }
+
+  context / {
+    type                    proxy
+    handler                 staging_livia_gunicorn
+    addDefaultCharset       off
+  }
+
+  extprocessor staging_livia_gunicorn {
+    type                    proxy
+    address                 http://127.0.0.1:8012
+    maxConns                50
+    initTimeout             60
+    retryTimeout            0
+    respBuffer              0
+  }
+}
+
+# Após editar: validar sintaxe no painel e preferir reload seguro:
+#   systemctl reload lsws
+# ou equivalente CyberPanel — evitar restart global desnecessário de produção.
