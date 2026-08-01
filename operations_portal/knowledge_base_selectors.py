@@ -109,6 +109,14 @@ def serialize_operation_request(request_obj) -> dict:
     duration_ms = 0
     if request_obj.started_at and request_obj.finished_at:
         duration_ms = int((request_obj.finished_at - request_obj.started_at).total_seconds() * 1000)
+    lease_stale = False
+    if (
+        request_obj.status == request_obj.Status.RUNNING
+        and request_obj.lease_expires_at is not None
+    ):
+        from django.utils import timezone
+
+        lease_stale = request_obj.lease_expires_at < timezone.now()
     return {
         "id": request_obj.pk,
         "operation": request_obj.operation,
@@ -125,6 +133,10 @@ def serialize_operation_request(request_obj) -> dict:
         "finished_at": request_obj.finished_at,
         "created_at": request_obj.created_at,
         "duration_ms": duration_ms,
+        "attempt_count": request_obj.attempt_count,
+        "last_heartbeat_at": request_obj.last_heartbeat_at,
+        "lease_expires_at": request_obj.lease_expires_at,
+        "lease_stale": lease_stale,
     }
 
 

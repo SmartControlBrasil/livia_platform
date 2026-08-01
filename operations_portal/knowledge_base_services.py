@@ -315,6 +315,14 @@ def build_operations_dashboard(*, tenant, configuration: TenantRagConfiguration 
     from operations_portal.knowledge_base_selectors import serialize_operation_request
 
     gate = operations_gate_status()
+    from django.utils import timezone
+
+    now = timezone.now()
+    stale_count = TenantRagOperationRequest.objects.filter(
+        tenant=tenant,
+        status=TenantRagOperationRequest.Status.RUNNING,
+        lease_expires_at__lt=now,
+    ).count()
     latest = (
         TenantRagOperationRequest.objects.filter(tenant=tenant)
         .select_related("requested_by")
@@ -343,5 +351,12 @@ def build_operations_dashboard(*, tenant, configuration: TenantRagConfiguration 
         "last_index_error": getattr(configuration, "last_index_error", "") if configuration else "",
         "latest_request": serialize_operation_request(latest) if latest else None,
         "active_request": serialize_operation_request(active) if active else None,
+        "stale_running_count": stale_count,
+        "lease_seconds": int(getattr(settings, "LIVIA_RAG_OPERATIONS_LEASE_SECONDS", 3600) or 3600),
+        "max_attempts": int(getattr(settings, "LIVIA_RAG_OPERATIONS_MAX_ATTEMPTS", 3) or 3),
+        "simulation_mode": gate.dry_run,
+        "real_execution_allowed": gate.enabled and not gate.dry_run,
         "worker_command": "python manage.py process_tenant_rag_operations",
+        "status_command": "python manage.py tenant_rag_operations_status",
+        "readiness_command": "python manage.py tenant_rag_operations_readiness",
     }

@@ -29,6 +29,8 @@ ACTION_TENANT_RAG_OPERATION_REJECTED = "tenant.rag_operation_rejected"
 ACTION_TENANT_RAG_OPERATION_STARTED = "tenant.rag_operation_started"
 ACTION_TENANT_RAG_OPERATION_COMPLETED = "tenant.rag_operation_completed"
 ACTION_TENANT_RAG_OPERATION_FAILED = "tenant.rag_operation_failed"
+ACTION_TENANT_RAG_OPERATION_DUPLICATE = "tenant.rag_operation_duplicate"
+ACTION_TENANT_RAG_OPERATION_STALE_RECOVERED = "tenant.rag_operation_stale_recovered"
 
 
 class AuditEvent(models.Model):
@@ -60,6 +62,11 @@ class AuditEvent(models.Model):
         TENANT_RAG_OPERATION_STARTED = ACTION_TENANT_RAG_OPERATION_STARTED, "Tenant RAG operation started"
         TENANT_RAG_OPERATION_COMPLETED = ACTION_TENANT_RAG_OPERATION_COMPLETED, "Tenant RAG operation completed"
         TENANT_RAG_OPERATION_FAILED = ACTION_TENANT_RAG_OPERATION_FAILED, "Tenant RAG operation failed"
+        TENANT_RAG_OPERATION_DUPLICATE = ACTION_TENANT_RAG_OPERATION_DUPLICATE, "Tenant RAG operation duplicate"
+        TENANT_RAG_OPERATION_STALE_RECOVERED = (
+            ACTION_TENANT_RAG_OPERATION_STALE_RECOVERED,
+            "Tenant RAG operation stale recovered",
+        )
 
     tenant = models.ForeignKey(
         "tenants.Tenant",

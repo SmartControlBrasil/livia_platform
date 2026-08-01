@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
-from audit.models import ACTION_TENANT_RAG_OPERATION_REJECTED, ACTION_TENANT_RAG_OPERATION_REQUESTED, AuditEvent
+from audit.models import ACTION_TENANT_RAG_OPERATION_DUPLICATE, ACTION_TENANT_RAG_OPERATION_REJECTED, ACTION_TENANT_RAG_OPERATION_REQUESTED, ACTION_TENANT_RAG_OPERATION_STALE_RECOVERED, AuditEvent
 from conversations.models import Conversation, HandoffRequest, Message
 from knowledge_base.models import TenantRagConfiguration, TenantRagOperationRequest
 from knowledge_base.rag.operations import execute_operation_request, recover_stale_operation_requests
@@ -136,6 +136,12 @@ class KnowledgeBaseOperationsPortalTests(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(TenantRagOperationRequest.objects.filter(tenant=self.tenant_a).count(), 1)
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                tenant=self.tenant_a,
+                action=ACTION_TENANT_RAG_OPERATION_DUPLICATE,
+            ).exists()
+        )
 
     @override_settings(LIVIA_RAG_OPERATIONS_ENABLED=True)
     def test_post_with_different_tenant_denied(self):
@@ -238,6 +244,12 @@ class KnowledgeBaseOperationsPortalTests(TestCase):
         self.assertEqual(recovered, 1)
         self.assertEqual(stale.status, TenantRagOperationRequest.Status.FAILED)
         self.assertEqual(stale.error_code, "stale_execution")
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                tenant=self.tenant_a,
+                action=ACTION_TENANT_RAG_OPERATION_STALE_RECOVERED,
+            ).exists()
+        )
 
     @override_settings(LIVIA_RAG_OPERATIONS_ENABLED=True, LIVIA_RAG_OPERATIONS_DRY_RUN=True)
     def test_no_chat_side_effects(self):

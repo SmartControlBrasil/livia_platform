@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from audit.models import (
@@ -14,9 +14,11 @@ from audit.models import (
     ACTION_TENANT_RAG_INDEX_FAILED,
     ACTION_TENANT_RAG_INDEX_STARTED,
     ACTION_TENANT_RAG_OPERATION_COMPLETED,
+    ACTION_TENANT_RAG_OPERATION_DUPLICATE,
     ACTION_TENANT_RAG_OPERATION_FAILED,
     ACTION_TENANT_RAG_OPERATION_REJECTED,
     ACTION_TENANT_RAG_OPERATION_REQUESTED,
+    ACTION_TENANT_RAG_OPERATION_STALE_RECOVERED,
     ACTION_TENANT_RAG_OPERATION_STARTED,
 )
 from audit.services import record_audit_event
@@ -84,6 +86,45 @@ def operations_gate_status() -> OperationsGateStatus:
 
 def _lease_seconds() -> int:
     return max(int(getattr(settings, "LIVIA_RAG_OPERATIONS_LEASE_SECONDS", 3600) or 3600), 60)
+
+
+def _max_attempts() -> int:
+    return max(int(getattr(settings, "LIVIA_RAG_OPERATIONS_MAX_ATTEMPTS", 3) or 3), 1)
+
+
+def _renew_operation_lease(*, request: TenantRagOperationRequest, stage: str = "") -> None:
+    """Renova lease entre etapas longas (ex.: full_reindex). Operações indivisíveis em dry-run não precisam."""
+    now = timezone.now()
+    request.last_heartbeat_at = now
+    request.lease_expires_at = now + timedelta(seconds=_lease_seconds())
+    request.save(update_fields=["last_heartbeat_at", "lease_expires_at", "updated_at"])
+    if stage:
+        logger.info(
+            "rag operation heartbeat request_id=%s stage=%s lease_until=%s",
+            request.pk,
+            stage,
+            request.lease_expires_at.isoformat(),
+        )
+
+
+def _record_duplicate_operation(
+    *,
+    tenant: Tenant,
+    operation: str,
+    requested_by,
+    source: str,
+    reason_code: str,
+) -> None:
+    record_audit_event(
+        action=ACTION_TENANT_RAG_OPERATION_DUPLICATE,
+        actor=requested_by,
+        tenant=tenant,
+        metadata={
+            "source": source,
+            "operation": operation,
+            "code": reason_code,
+        },
+    )
 
 
 def _sync_stale_cutoff() -> timezone.datetime:
@@ -163,29 +204,42 @@ def recover_stale_operation_requests(*, tenant: Tenant | None = None) -> int:
     if tenant is not None:
         qs = qs.filter(tenant=tenant)
     recovered = 0
-    for request in qs.iterator():
-        request.status = TenantRagOperationRequest.Status.FAILED
-        request.error_code = "stale_execution"
-        request.error_message = "Execução expirou sem conclusão. Solicite novamente após revisar o histórico."
-        request.finished_at = now
-        request.save(
-            update_fields=["status", "error_code", "error_message", "finished_at", "updated_at"]
-        )
-        record_audit_event(
-            action=ACTION_TENANT_RAG_OPERATION_FAILED,
-            tenant=request.tenant,
-            object_type="knowledge_base.tenantragoperationrequest",
-            object_id=str(request.pk),
-            object_repr=str(request),
-            metadata={
-                "source": "rag.operations.recover_stale",
-                "run_id": request.run_id,
-                "operation": request.operation,
-                "error_code": request.error_code,
-                "dry_run": request.dry_run,
-            },
-        )
-        recovered += 1
+    for request_id in qs.values_list("pk", flat=True):
+        with transaction.atomic():
+            request = (
+                TenantRagOperationRequest.objects.select_for_update()
+                .filter(
+                    pk=request_id,
+                    status=TenantRagOperationRequest.Status.RUNNING,
+                    lease_expires_at__lt=now,
+                )
+                .first()
+            )
+            if request is None:
+                continue
+            request.status = TenantRagOperationRequest.Status.FAILED
+            request.error_code = "stale_execution"
+            request.error_message = "Execução expirou sem conclusão. Solicite novamente após revisar o histórico."
+            request.finished_at = now
+            request.save(
+                update_fields=["status", "error_code", "error_message", "finished_at", "updated_at"]
+            )
+            record_audit_event(
+                action=ACTION_TENANT_RAG_OPERATION_STALE_RECOVERED,
+                tenant=request.tenant,
+                object_type="knowledge_base.tenantragoperationrequest",
+                object_id=str(request.pk),
+                object_repr=str(request),
+                metadata={
+                    "source": "rag.operations.recover_stale",
+                    "run_id": request.run_id,
+                    "operation": request.operation,
+                    "error_code": request.error_code,
+                    "dry_run": request.dry_run,
+                    "attempt_count": request.attempt_count,
+                },
+            )
+            recovered += 1
     return recovered
 
 
@@ -265,20 +319,47 @@ def create_operation_request(
             code="sync_disabled",
         )
 
-    with transaction.atomic():
-        locked_config = TenantRagConfiguration.objects.select_for_update().get(pk=configuration.pk)
-        _assert_no_active_operation(tenant=tenant)
-        _assert_no_pipeline_lock(configuration=locked_config)
-        run_id = str(uuid.uuid4())
-        request = TenantRagOperationRequest.objects.create(
+    duplicate_reason = None
+    request = None
+    run_id = str(uuid.uuid4())
+    try:
+        with transaction.atomic():
+            locked_config = TenantRagConfiguration.objects.select_for_update().get(pk=configuration.pk)
+            _assert_no_active_operation(tenant=tenant)
+            _assert_no_pipeline_lock(configuration=locked_config)
+            request = TenantRagOperationRequest.objects.create(
+                tenant=tenant,
+                requested_by=requested_by,
+                operation=operation,
+                status=TenantRagOperationRequest.Status.PENDING,
+                dry_run=gate.dry_run,
+                run_id=run_id,
+                counters={},
+            )
+    except RagOperationsError as exc:
+        if exc.code == "duplicate_operation":
+            duplicate_reason = "active_operation_exists"
+        if duplicate_reason:
+            _record_duplicate_operation(
+                tenant=tenant,
+                operation=operation,
+                requested_by=requested_by,
+                source=source,
+                reason_code=duplicate_reason,
+            )
+        raise
+    except IntegrityError as exc:
+        _record_duplicate_operation(
             tenant=tenant,
-            requested_by=requested_by,
             operation=operation,
-            status=TenantRagOperationRequest.Status.PENDING,
-            dry_run=gate.dry_run,
-            run_id=run_id,
-            counters={},
+            requested_by=requested_by,
+            source=source,
+            reason_code="constraint_conflict",
         )
+        raise RagOperationsError(
+            "Já existe uma solicitação operacional pendente ou em execução para este tenant.",
+            code="duplicate_operation",
+        ) from exc
 
     record_audit_event(
         action=ACTION_TENANT_RAG_OPERATION_REQUESTED,
@@ -440,10 +521,44 @@ def execute_operation_request(*, request_id: int) -> TenantRagOperationRequest:
             raise RagOperationsError("Solicitação já está em execução.", code="already_running")
         if request.status != TenantRagOperationRequest.Status.PENDING:
             return request
+        next_attempt = request.attempt_count + 1
+        if next_attempt > _max_attempts():
+            request.status = TenantRagOperationRequest.Status.FAILED
+            request.error_code = "max_attempts_exceeded"
+            request.error_message = "Limite de tentativas do worker excedido para esta solicitação."
+            request.finished_at = timezone.now()
+            request.save(
+                update_fields=["status", "error_code", "error_message", "finished_at", "updated_at"]
+            )
+            record_audit_event(
+                action=ACTION_TENANT_RAG_OPERATION_FAILED,
+                actor=request.requested_by,
+                tenant=request.tenant,
+                obj=request,
+                metadata={
+                    "source": "rag.operations.execute",
+                    "run_id": request.run_id,
+                    "operation": request.operation,
+                    "error_code": request.error_code,
+                    "attempt_count": next_attempt,
+                },
+            )
+            return request
         request.status = TenantRagOperationRequest.Status.RUNNING
+        request.attempt_count = next_attempt
         request.started_at = timezone.now()
+        request.last_heartbeat_at = request.started_at
         request.lease_expires_at = request.started_at + timedelta(seconds=_lease_seconds())
-        request.save(update_fields=["status", "started_at", "lease_expires_at", "updated_at"])
+        request.save(
+            update_fields=[
+                "status",
+                "attempt_count",
+                "started_at",
+                "last_heartbeat_at",
+                "lease_expires_at",
+                "updated_at",
+            ]
+        )
 
     record_audit_event(
         action=ACTION_TENANT_RAG_OPERATION_STARTED,
@@ -475,6 +590,7 @@ def execute_operation_request(*, request_id: int) -> TenantRagOperationRequest:
                 operation=TenantRagOperationRequest.Operation.BUILD_CHUNKS,
                 dry_run=request.dry_run,
             )
+            _renew_operation_lease(request=request, stage="after_build_chunks")
             index_status, index_counters, index_run = _execute_index_operation(request=request, only_stale=False)
             counters = {**build_counters, **index_counters}
             status = index_status

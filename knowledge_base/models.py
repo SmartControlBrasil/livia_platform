@@ -436,6 +436,8 @@ class TenantRagOperationRequest(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     lease_expires_at = models.DateTimeField(null=True, blank=True)
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -445,6 +447,16 @@ class TenantRagOperationRequest(models.Model):
             models.UniqueConstraint(
                 fields=["tenant", "run_id"],
                 name="unique_rag_operation_run_per_tenant",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant"],
+                condition=models.Q(
+                    status__in=[
+                        "pending",
+                        "running",
+                    ]
+                ),
+                name="unique_active_rag_operation_per_tenant",
             ),
         ]
         indexes = [
