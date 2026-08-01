@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from django.conf import settings
 
@@ -147,6 +147,45 @@ def _resolve_effective_threshold(
         tenant_threshold = float(configuration.min_similarity_score)
         return _validate_threshold(tenant_threshold, source_label="tenant"), "tenant"
     return _validate_threshold(float(global_threshold), source_label="global_default"), "global_default"
+
+
+def _resolve_effective_limits(
+    *,
+    configuration: TenantRagConfiguration | None,
+    global_max_chunks: int,
+    global_max_chars: int,
+) -> tuple[int, int]:
+    max_chunks = global_max_chunks
+    max_chars = global_max_chars
+    if configuration is None:
+        return max_chunks, max_chars
+    if configuration.max_retrieved_chunks is not None:
+        tenant_chunks = int(configuration.max_retrieved_chunks)
+        if tenant_chunks > 0:
+            max_chunks = min(global_max_chunks, tenant_chunks)
+    if configuration.max_context_chars is not None:
+        tenant_chars = int(configuration.max_context_chars)
+        if tenant_chars > 0:
+            max_chars = min(global_max_chars, tenant_chars)
+    return max_chunks, max_chars
+
+
+def _apply_tenant_retrieval_timeout(
+    cfg: EmbeddingConfig,
+    configuration: TenantRagConfiguration | None,
+) -> EmbeddingConfig:
+    if configuration is None or configuration.retrieval_timeout_seconds is None:
+        return cfg
+    try:
+        tenant_timeout = int(configuration.retrieval_timeout_seconds)
+    except (TypeError, ValueError):
+        return cfg
+    if tenant_timeout <= 0:
+        return cfg
+    effective = min(cfg.timeout_seconds, tenant_timeout)
+    if effective == cfg.timeout_seconds:
+        return cfg
+    return replace(cfg, timeout_seconds=effective)
 
 
 @dataclass(frozen=True)
@@ -336,11 +375,15 @@ def retrieve_context(
         _emit_metric(tenant=tenant, conversation=conversation, result=result)
         return result
 
+    allowed, reason, configuration = _can_attempt_retrieval(tenant=tenant)
+    max_chunks, max_chars = _resolve_effective_limits(
+        configuration=configuration,
+        global_max_chunks=max_chunks,
+        global_max_chars=max_chars,
+    )
     if limit is not None:
         max_chunks = min(max_chunks, max(1, int(limit)))
     search_limit = max(candidate_limit, max_chunks)
-
-    allowed, reason, configuration = _can_attempt_retrieval(tenant=tenant)
     threshold_source = "global_default"
     try:
         threshold, threshold_source = _resolve_effective_threshold(
@@ -418,7 +461,7 @@ def retrieve_context(
         return result
 
     try:
-        cfg = config or load_embedding_config()
+        cfg = _apply_tenant_retrieval_timeout(config or load_embedding_config(), configuration)
         if not getattr(settings, "RUNNING_TESTS", False):
             ensure_config_schema_compatible(cfg)
     except EmbeddingConfigurationError as exc:

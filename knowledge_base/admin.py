@@ -94,6 +94,9 @@ class TenantRagConfigurationAdmin(admin.ModelAdmin):
         "sync_enabled",
         "retrieval_enabled",
         "min_similarity_score",
+        "max_retrieved_chunks",
+        "max_context_chars",
+        "retrieval_timeout_seconds",
         "approved_folder_id",
         "last_inventory_status",
         "last_inventory_file_count",
@@ -122,6 +125,9 @@ class TenantRagConfigurationAdmin(admin.ModelAdmin):
         "sync_enabled",
         "retrieval_enabled",
         "min_similarity_score",
+        "max_retrieved_chunks",
+        "max_context_chars",
+        "retrieval_timeout_seconds",
     ]
 
     def save_model(self, request, obj, form, change):

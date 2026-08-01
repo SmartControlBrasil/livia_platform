@@ -31,6 +31,21 @@ class TenantRagConfiguration(models.Model):
         blank=True,
         help_text="Override por tenant para threshold de similaridade (0.0 a 1.0).",
     )
+    max_retrieved_chunks = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Limite máximo de chunks recuperados no chat (null = default global).",
+    )
+    max_context_chars = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Orçamento máximo de caracteres de contexto RAG no chat (null = default global).",
+    )
+    retrieval_timeout_seconds = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Timeout da recuperação/embed da query no chat (null = default global).",
+    )
     last_inventory_status = models.CharField(
         max_length=20,
         choices=InventoryStatus.choices,
@@ -72,6 +87,12 @@ class TenantRagConfiguration(models.Model):
             value = float(self.min_similarity_score)
             if not math.isfinite(value) or value < 0.0 or value > 1.0:
                 errors["min_similarity_score"] = "Threshold must be a finite number between 0 and 1."
+        if self.max_retrieved_chunks is not None and int(self.max_retrieved_chunks) <= 0:
+            errors["max_retrieved_chunks"] = "Must be a positive integer when set."
+        if self.max_context_chars is not None and int(self.max_context_chars) <= 0:
+            errors["max_context_chars"] = "Must be a positive integer when set."
+        if self.retrieval_timeout_seconds is not None and int(self.retrieval_timeout_seconds) <= 0:
+            errors["retrieval_timeout_seconds"] = "Must be a positive integer when set."
         if errors:
             raise ValidationError(errors)
 
