@@ -58,16 +58,31 @@ monta um texto curto com até poucos trechos relevantes para a Lívia usar no fl
 
 ## Limitações atuais
 
-- O retriever público (`retrieve_relevant_knowledge`) continua textual e usa somente `KnowledgeDocument`.
-- A fase 4 adicionou embeddings locais por tenant (`TenantRagChunkEmbedding`), ainda desconectados do chat/`/api/chat/`.
-- A busca vetorial administrativa (`admin_vector_search`) filtra por tenant antes do cosseno e não é endpoint público.
+- O retriever textual (`retrieve_relevant_knowledge`) usa somente `KnowledgeDocument` e serve de fallback.
+- A fase 5 conecta embeddings locais (`TenantRagChunkEmbedding`) ao chat via `retrieve_context` + `build_knowledge_context`, atrás de feature flags.
+- A busca vetorial filtra por tenant antes do cosseno e não é endpoint público.
 - SQLite não oferece busca vetorial de produção; pgvector fica para evolução em PostgreSQL.
 - Sem parser de PDF complexo.
-- Sem dashboard/admin customizado além da inspeção segura dos models.
+
+## Política de corpus (tenant RAG Google Drive)
+
+Critérios operacionais para `sync_tenant_rag`:
+
+- `INCLUDE`: catálogo de materiais, aplicações, serviços, triagem/orçamento, FAQ de manutenção, processos comerciais de atendimento.
+- `EXCLUDE`: credenciais, segredos, folha de pagamento, contratos sigilosos, documentos administrativos sem valor para atendimento.
+- `REVIEW`: conteúdo ambíguo que depende de curadoria manual.
+
+Boas práticas de curadoria:
+
+- manter escopo no folder aprovado do tenant;
+- revisar documentos vazios e falhas de exportação;
+- evitar duplicatas integrais (versões/cópias iguais);
+- revisar amostra de chunks (sentido semântico, corte de contexto, repetição);
+- manter rastreabilidade por `manifest`, `drive_file_id`, `ordinal`, `hash`.
 
 ## Plano futuro
 
-- Conectar o índice vetorial multi-tenant ao retriever público com gate explícito.
+- Evoluir `build_retrieval_query` com summary/discovery.
 - Migrar armazenamento vetorial para pgvector em PostgreSQL quando a escala exigir.
 - Adicionar pipeline de ingestão de PDFs e páginas do site.
 - Permitir curadoria/admin avançada para cada tenant.

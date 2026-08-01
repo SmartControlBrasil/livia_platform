@@ -78,7 +78,11 @@ class AssistantProfile(models.Model):
     )
     tone = models.CharField(max_length=120, default="consultivo, claro e profissional")
     primary_goal = models.CharField(max_length=160, default="qualificar leads")
+    business_name = models.CharField(max_length=160, blank=True, default="")
+    business_domain = models.CharField(max_length=220, blank=True, default="")
+    short_description = models.TextField(blank=True, default="")
     use_ai = models.BooleanField(default=False)
+    grounded_synthesis_enabled = models.BooleanField(default=False)
     widget_title = models.CharField(max_length=80, blank=True)
     launcher_label = models.CharField(max_length=80, default=DEFAULT_WIDGET_LAUNCHER_LABEL)
     primary_color = models.CharField(
@@ -143,6 +147,10 @@ class AssistantProfile(models.Model):
     @property
     def effective_widget_title(self):
         return self.widget_title.strip() or self.name
+
+    @property
+    def effective_business_name(self):
+        return self.business_name.strip() or self.tenant.name
 
     @property
     def has_valid_whatsapp_handoff(self):

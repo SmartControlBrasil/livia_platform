@@ -95,9 +95,10 @@ class KnowledgeRetrievalTests(TestCase):
     def test_build_knowledge_context_returns_short_text(self):
         context = build_knowledge_context(self.tenant, "robô de limpeza", service_area="robotics")
 
-        self.assertIn("Base de conhecimento encontrada", context)
+        self.assertIn("[KNOWLEDGE_BASE]", context)
+        self.assertIn("[/KNOWLEDGE_BASE]", context)
         self.assertIn("HygiBot", context)
-        self.assertLess(len(context), 900)
+        self.assertLess(len(context), 1200)
 
     def test_seed_demo_knowledge_is_idempotent(self):
         call_command("seed_demo_knowledge", verbosity=0)

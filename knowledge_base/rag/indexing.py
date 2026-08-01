@@ -25,6 +25,7 @@ from knowledge_base.rag.embeddings import (
     load_embedding_config,
     sanitize_embedding_error,
 )
+from knowledge_base.rag.embedding_profile import ensure_config_schema_compatible
 from tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
@@ -175,6 +176,9 @@ def _decide_pending(
     *,
     tenant: Tenant,
     config: EmbeddingConfig,
+    only_stale: bool = False,
+    drive_file_id: str | None = None,
+    max_pending: int | None = None,
 ) -> tuple[list[_PendingItem], IndexCounters, list[TenantRagChunkEmbedding]]:
     counters = IndexCounters()
     active_chunks = list(
@@ -191,6 +195,16 @@ def _decide_pending(
 
     pending: list[_PendingItem] = []
     active_chunk_ids = {chunk.id for chunk in active_chunks}
+
+    if drive_file_id:
+        drive_file_id = str(drive_file_id).strip()
+        active_chunks = [
+            chunk
+            for chunk in active_chunks
+            if chunk.manifest and str(chunk.manifest.drive_file_id or "").strip() == drive_file_id
+        ]
+        counters.chunks = len(active_chunks)
+        counters.documents = len({chunk.manifest_id for chunk in active_chunks})
 
     for chunk in active_chunks:
         compatible = _compatible_active_embedding(chunk=chunk, config=config)
@@ -209,8 +223,13 @@ def _decide_pending(
             .first()
         )
         action = "reindex" if previous is not None else "index"
+        if only_stale and action == "index":
+            counters.unchanged += 1
+            continue
         pending.append(_PendingItem(chunk=chunk, action=action, previous=previous))
         counters.pending += 1
+        if max_pending is not None and counters.pending >= max(0, int(max_pending)):
+            break
 
     to_deactivate = list(
         TenantRagChunkEmbedding.objects.filter(
@@ -232,6 +251,10 @@ def _persist_embedding(
     previous: TenantRagChunkEmbedding | None,
     now,
 ) -> None:
+    if len(vector) != config.dimension:
+        raise TenantRagIndexingError(
+            f"Embedding vector dimension {len(vector)} != configured {config.dimension}."
+        )
     with transaction.atomic():
         embedding, created = TenantRagChunkEmbedding.objects.select_for_update().get_or_create(
             tenant_id=chunk.tenant_id,
@@ -308,12 +331,20 @@ def run_index_for_tenant(
     *,
     configuration: TenantRagConfiguration,
     dry_run: bool = False,
+    only_stale: bool = False,
+    limit: int | None = None,
+    drive_file_id: str | None = None,
     provider: EmbeddingProvider | None = None,
     config: EmbeddingConfig | None = None,
     run_id: str | None = None,
 ) -> IndexOutcome:
     tenant = configuration.tenant
     cfg = config or load_embedding_config()
+    if not dry_run:
+        from django.conf import settings as django_settings
+
+        if not getattr(django_settings, "RUNNING_TESTS", False):
+            ensure_config_schema_compatible(cfg)
     mode = "dry_run" if dry_run else "index"
     operational_run_id = run_id or configuration.last_index_run_id or str(uuid.uuid4())
     now = timezone.now()
@@ -342,7 +373,13 @@ def run_index_for_tenant(
         started_at=now,
     )
 
-    pending, counters, to_deactivate = _decide_pending(tenant=tenant, config=cfg)
+    pending, counters, to_deactivate = _decide_pending(
+        tenant=tenant,
+        config=cfg,
+        only_stale=only_stale,
+        drive_file_id=drive_file_id,
+        max_pending=limit,
+    )
     counters.deactivated = _deactivate_embeddings(embeddings=to_deactivate, dry_run=dry_run)
 
     logger.info(

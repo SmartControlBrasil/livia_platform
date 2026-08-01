@@ -1,6 +1,10 @@
+import math
+
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from tenants.models import Tenant
+from knowledge_base.rag.vector_field import RagVectorField, configured_embedding_dimensions
 
 
 class TenantRagConfiguration(models.Model):
@@ -18,6 +22,15 @@ class TenantRagConfiguration(models.Model):
     )
     approved_folder_id = models.CharField(max_length=120)
     sync_enabled = models.BooleanField(default=False)
+    retrieval_enabled = models.BooleanField(
+        default=False,
+        help_text="Permite recuperação semântica no fluxo de conversa deste tenant.",
+    )
+    min_similarity_score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Override por tenant para threshold de similaridade (0.0 a 1.0).",
+    )
     last_inventory_status = models.CharField(
         max_length=20,
         choices=InventoryStatus.choices,
@@ -45,12 +58,26 @@ class TenantRagConfiguration(models.Model):
         ordering = ["tenant__slug"]
         indexes = [
             models.Index(fields=["sync_enabled"]),
+            models.Index(fields=["retrieval_enabled"]),
             models.Index(fields=["last_inventory_status"]),
             models.Index(fields=["last_index_status"]),
         ]
 
     def __str__(self):
         return f"{self.tenant.slug} / {self.approved_folder_id}"
+
+    def clean(self):
+        errors = {}
+        if self.min_similarity_score is not None:
+            value = float(self.min_similarity_score)
+            if not math.isfinite(value) or value < 0.0 or value > 1.0:
+                errors["min_similarity_score"] = "Threshold must be a finite number between 0 and 1."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 
 class TenantRagDriveFileManifest(models.Model):
@@ -235,7 +262,7 @@ class TenantRagChunkEmbedding(models.Model):
     model = models.CharField(max_length=120)
     dimension = models.PositiveIntegerField()
     embedding_config_signature = models.CharField(max_length=64)
-    vector = models.JSONField(default=list, blank=True)
+    vector = RagVectorField(dimensions=configured_embedding_dimensions(), default=list, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     is_active = models.BooleanField(default=True)
     first_indexed_at = models.DateTimeField(null=True, blank=True)
@@ -257,6 +284,7 @@ class TenantRagChunkEmbedding(models.Model):
             models.Index(fields=["tenant", "embedding_config_signature"]),
             models.Index(fields=["tenant", "chunk", "is_active"]),
             models.Index(fields=["tenant", "manifest"]),
+            models.Index(fields=["tenant", "provider", "model", "dimension", "is_active"]),
         ]
 
     def __str__(self):
@@ -272,6 +300,12 @@ class TenantRagChunkEmbedding(models.Model):
             errors["manifest"] = "Manifest tenant must match embedding tenant."
         if self.chunk_id and self.manifest_id and self.chunk.manifest_id != self.manifest_id:
             errors["manifest"] = "Manifest must belong to chunk."
+        expected_dim = configured_embedding_dimensions()
+        if self.dimension and int(self.dimension) != expected_dim:
+            # Permite embeddings históricos de outra dimensão, mas impede silent mismatch na config atual.
+            pass
+        if self.vector is not None and self.dimension and len(self.vector) != int(self.dimension):
+            errors["vector"] = "Vector length must match embedding dimension."
         if errors:
             raise ValidationError(errors)
 
@@ -331,6 +365,48 @@ class TenantRagIndexRun(models.Model):
 
     def __str__(self):
         return f"{self.tenant.slug} / {self.run_id} / {self.status}"
+
+
+class RagRetrievalEvent(models.Model):
+    """Metrica operacional de retrieval (nao e audit log e nao guarda conteudo)."""
+
+    class Status(models.TextChoices):
+        COMPLETED = "completed", "Completed"
+        EMPTY = "empty", "Empty"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="rag_retrieval_events",
+    )
+    conversation_id = models.PositiveBigIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices)
+    reason = models.CharField(max_length=80, blank=True)
+    backend = models.CharField(max_length=40, blank=True)
+    provider = models.CharField(max_length=40, blank=True)
+    model = models.CharField(max_length=120, blank=True)
+    duration_ms = models.PositiveIntegerField(default=0)
+    candidate_count = models.PositiveIntegerField(default=0)
+    result_count = models.PositiveIntegerField(default=0)
+    max_score = models.FloatField(default=0.0)
+    threshold = models.FloatField(default=0.0)
+    threshold_source = models.CharField(max_length=30, blank=True, default="global_default")
+    dry_run = models.BooleanField(default=False)
+    hit = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),
+            models.Index(fields=["tenant", "status", "created_at"]),
+            models.Index(fields=["tenant", "hit", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.tenant.slug} / {self.status} / hit={self.hit}"
 
 
 class KnowledgeDocument(models.Model):

@@ -9,6 +9,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError, connection, transaction
 
 from assistant_core.discovery import analyze_message
+from assistant_core.services.ai_feature_gates import is_grounded_synthesis_allowed
 from conversations.models import Conversation, HandoffRequest, Message
 from knowledge_base.rag.context_builder import build_knowledge_context
 from tenants.services.human_handoff import build_human_handoff_payload
@@ -34,6 +35,15 @@ class _DeterministicChatResult:
 
 def process_chat_request(*, chat_request, tenant, session_id: str, user_message: str, source_page: str = "") -> dict:
     decision_service = LiviaDecisionService()
+    # Recuperação semântica pode chamar provider externo: permanece fora da transação de negócio.
+    discovery_preview = analyze_message(user_message)
+    knowledge_context = build_knowledge_context(
+        tenant,
+        user_message,
+        service_area=discovery_preview.service_area,
+        limit=2,
+        conversation=None,
+    )
     deterministic_result = _persist_chat_processing_state(
         chat_request=chat_request,
         tenant=tenant,
@@ -41,14 +51,25 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
         user_message=user_message,
         source_page=source_page,
         decision_service=decision_service,
+        knowledge_context=knowledge_context,
     )
     return _refine_response_with_ai_if_enabled(
         deterministic_result=deterministic_result,
         decision_service=decision_service,
+        knowledge_context=knowledge_context,
     )
 
 
-def _persist_chat_processing_state(*, chat_request, tenant, session_id: str, user_message: str, source_page: str, decision_service: LiviaDecisionService) -> _DeterministicChatResult:
+def _persist_chat_processing_state(
+    *,
+    chat_request,
+    tenant,
+    session_id: str,
+    user_message: str,
+    source_page: str,
+    decision_service: LiviaDecisionService,
+    knowledge_context: str = "",
+) -> _DeterministicChatResult:
     with transaction.atomic():
         conversation = _get_or_create_locked_conversation(tenant=tenant, session_id=session_id, source_page=source_page)
         assistant_profile = _active_assistant_profile(tenant)
@@ -60,6 +81,7 @@ def _persist_chat_processing_state(*, chat_request, tenant, session_id: str, use
             current_message=user_message,
             conversation=conversation,
             assistant_profile=_assistant_profile_without_ai(assistant_profile),
+            knowledge_context=knowledge_context,
         )
         Message.objects.create(
             conversation=conversation,
@@ -114,28 +136,66 @@ def _persist_chat_processing_state(*, chat_request, tenant, session_id: str, use
         )
 
 
-def _refine_response_with_ai_if_enabled(*, deterministic_result: _DeterministicChatResult, decision_service: LiviaDecisionService) -> dict:
+def _refine_response_with_ai_if_enabled(
+    *,
+    deterministic_result: _DeterministicChatResult,
+    decision_service: LiviaDecisionService,
+    knowledge_context: str = "",
+) -> dict:
     if not _can_refine_with_ai(deterministic_result.assistant_profile):
         return deterministic_result.response_payload
     if deterministic_result.response_payload.get("human_handoff", {}).get("active"):
         return deterministic_result.response_payload
 
     discovery = analyze_message(deterministic_result.user_message)
-    knowledge_context = build_knowledge_context(
+    context = knowledge_context or build_knowledge_context(
         deterministic_result.tenant,
         deterministic_result.user_message,
         service_area=discovery.service_area,
         limit=2,
+        conversation=deterministic_result.conversation,
     )
+
+    from assistant_core.services.grounded_response import GroundedResponseService
+
+    grounded_service = GroundedResponseService(ai_client=decision_service.ai_client)
     try:
-        refined_decision = decision_service._finalize_ai_response(  # noqa: SLF001 - uso interno controlado.
+        grounded = grounded_service.generate(
+            tenant=deterministic_result.tenant,
+            assistant_profile=deterministic_result.assistant_profile,
+            message=deterministic_result.user_message,
+            conversation=deterministic_result.conversation,
+            discovery=discovery,
+            decision=deterministic_result.decision,
+            knowledge_context=context,
+            history=deterministic_result.history,
+        )
+    except Exception:
+        logger.exception(
+            "ai.grounded.failed tenant_slug=%s session_hash_unavailable",
+            deterministic_result.tenant.slug,
+        )
+        grounded = None
+
+    if grounded is not None and grounded.used and grounded.text:
+        return _apply_refined_reply(deterministic_result, grounded.text, ai_mode="grounded")
+
+    if is_grounded_synthesis_allowed(
+        tenant_slug=deterministic_result.tenant.slug,
+        assistant_profile=deterministic_result.assistant_profile,
+    ):
+        # Tenant configurado para grounded: não cair no rewrite legado.
+        return deterministic_result.response_payload
+
+    try:
+        refined_decision = decision_service._finalize_ai_response(  # noqa: SLF001
             decision=deterministic_result.decision,
             conversation=deterministic_result.conversation,
             assistant_profile=deterministic_result.assistant_profile,
             discovery=discovery,
             current_message=deterministic_result.user_message,
             history=deterministic_result.history,
-            knowledge_context=knowledge_context,
+            knowledge_context=context,
         )
     except Exception:
         logger.exception(
@@ -147,12 +207,15 @@ def _refine_response_with_ai_if_enabled(*, deterministic_result: _DeterministicC
     if refined_decision.reply == deterministic_result.response_payload.get("reply", ""):
         return deterministic_result.response_payload
 
+    return _apply_refined_reply(deterministic_result, refined_decision.reply, ai_mode="rewrite")
+
+
+def _apply_refined_reply(deterministic_result: _DeterministicChatResult, reply: str, *, ai_mode: str) -> dict:
     updated_payload = dict(deterministic_result.response_payload)
-    updated_payload["reply"] = refined_decision.reply
+    updated_payload["reply"] = reply
+    updated_payload["ai_mode"] = ai_mode
     with transaction.atomic():
-        Message.objects.filter(pk=deterministic_result.assistant_message.pk).update(
-            content=refined_decision.reply
-        )
+        Message.objects.filter(pk=deterministic_result.assistant_message.pk).update(content=reply)
         update_completed_chat_request_response(
             deterministic_result.chat_request,
             response_payload=updated_payload,
@@ -179,6 +242,9 @@ def _assistant_profile_without_ai(assistant_profile):
         initial_message=getattr(assistant_profile, "initial_message", ""),
         tone=getattr(assistant_profile, "tone", ""),
         primary_goal=getattr(assistant_profile, "primary_goal", ""),
+        business_name=getattr(assistant_profile, "business_name", ""),
+        business_domain=getattr(assistant_profile, "business_domain", ""),
+        short_description=getattr(assistant_profile, "short_description", ""),
         use_ai=False,
     )
 

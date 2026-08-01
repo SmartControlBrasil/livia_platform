@@ -423,6 +423,10 @@ class ChatApiTests(TestCase):
         self.assertIn("nome", response.json()["reply"].lower())
 
     def test_chat_api_vague_budget_asks_area_before_contact(self):
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            business_domain="automação industrial, robótica, manutenção técnica e sistemas web",
+        )
         payload = {
             "tenant": self.tenant.slug,
             "session_id": "session-discovery-budget",
@@ -773,6 +777,25 @@ class LiviaDecisionKnowledgeTests(TestCase):
         self.assertIn("ambientes profissionais", decision.reply)
         self.assertIn("ambiente", decision.reply.lower())
 
+    def test_livia_decision_does_not_echo_semantic_rag_block(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="semantic-no-echo")
+        semantic = (
+            "[KNOWLEDGE_BASE]\n"
+            "Fonte: GP — Soluções para banheiros\n"
+            "Score: 0.8123\n"
+            "Conteúdo:\n"
+            "GP — Soluções para banheiros com mármores e cuidados com ácidos.\n"
+            "[/KNOWLEDGE_BASE]"
+        )
+        decision = self.service.generate_reply(
+            [],
+            "Posso usar mármore no banheiro?",
+            conversation=conversation,
+            knowledge_context=semantic,
+        )
+        self.assertNotIn("GP — Soluções", decision.reply)
+        self.assertNotIn("Score:", decision.reply)
+
     def test_livia_decision_keeps_current_reply_without_knowledge(self):
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="no-knowledge-session")
 
@@ -896,6 +919,7 @@ class LiviaOptionalAIResponseTests(TestCase):
             is_active=True,
         )
 
+    @override_settings(LIVIA_AI_ENABLED=False, LIVIA_AI_GROUNDED_SYNTHESIS_ENABLED=False)
     def test_ai_disabled_by_default_keeps_deterministic_reply(self):
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-default-off")
         ai_client = FakeAIClient(OpenAIChatResult(text="Resposta por IA", success=True, dry_run=False))

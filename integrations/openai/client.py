@@ -15,6 +15,10 @@ class OpenAIChatResult:
     success: bool
     dry_run: bool
     error_type: str = ""
+    model: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class OpenAIChatClient:
@@ -59,14 +63,53 @@ class OpenAIChatClient:
             response.raise_for_status()
             data = response.json()
             text = str(data["choices"][0]["message"]["content"] or "").strip()
+            usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+            prompt_tokens = int(usage.get("prompt_tokens") or 0)
+            completion_tokens = int(usage.get("completion_tokens") or 0)
+            total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
             if not text:
                 logger.info("livia_ai_empty_response model=%s", model)
-                return OpenAIChatResult(text="", success=False, dry_run=False, error_type="empty_response")
-            logger.info("livia_ai_success model=%s", model)
-            return OpenAIChatResult(text=text, success=True, dry_run=False)
+                return OpenAIChatResult(
+                    text="",
+                    success=False,
+                    dry_run=False,
+                    error_type="empty_response",
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                )
+            logger.info(
+                "livia_ai_success model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s",
+                model,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+            )
+            return OpenAIChatResult(
+                text=text,
+                success=True,
+                dry_run=False,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+            )
         except requests.Timeout:
             logger.warning("livia_ai_failure model=%s error_type=Timeout", model)
-            return OpenAIChatResult(text="", success=False, dry_run=False, error_type="Timeout")
+            return OpenAIChatResult(
+                text="",
+                success=False,
+                dry_run=False,
+                error_type="Timeout",
+                model=model,
+            )
         except Exception as exc:  # pragma: no cover - defensive provider guard
             logger.warning("livia_ai_failure model=%s error_type=%s", model, exc.__class__.__name__)
-            return OpenAIChatResult(text="", success=False, dry_run=False, error_type=exc.__class__.__name__)
+            return OpenAIChatResult(
+                text="",
+                success=False,
+                dry_run=False,
+                error_type=exc.__class__.__name__,
+                model=model,
+            )

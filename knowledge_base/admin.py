@@ -1,10 +1,15 @@
 from django.contrib import admin
 
-from audit.models import ACTION_KNOWLEDGE_DOCUMENT_CREATED, ACTION_KNOWLEDGE_DOCUMENT_UPDATED
+from audit.models import (
+    ACTION_KNOWLEDGE_DOCUMENT_CREATED,
+    ACTION_KNOWLEDGE_DOCUMENT_UPDATED,
+    ACTION_TENANT_RAG_CONFIGURED,
+)
 from audit.services import audit_model_snapshot, changed_fields, record_audit_event
 
 from .models import (
     KnowledgeDocument,
+    RagRetrievalEvent,
     TenantRagChunkEmbedding,
     TenantRagConfiguration,
     TenantRagDocumentChunk,
@@ -87,6 +92,8 @@ class TenantRagConfigurationAdmin(admin.ModelAdmin):
     list_display = [
         "tenant",
         "sync_enabled",
+        "retrieval_enabled",
+        "min_similarity_score",
         "approved_folder_id",
         "last_inventory_status",
         "last_inventory_file_count",
@@ -94,7 +101,7 @@ class TenantRagConfigurationAdmin(admin.ModelAdmin):
         "last_index_status",
         "last_index_at",
     ]
-    list_filter = ["sync_enabled", "last_inventory_status", "last_index_status"]
+    list_filter = ["sync_enabled", "retrieval_enabled", "last_inventory_status", "last_index_status"]
     search_fields = ["tenant__slug", "tenant__name", "approved_folder_id"]
     readonly_fields = [
         "created_at",
@@ -110,6 +117,42 @@ class TenantRagConfigurationAdmin(admin.ModelAdmin):
         "last_index_run_id",
         "last_index_error",
     ]
+    audit_fields = [
+        "approved_folder_id",
+        "sync_enabled",
+        "retrieval_enabled",
+        "min_similarity_score",
+    ]
+
+    def save_model(self, request, obj, form, change):
+        before_data = {}
+        fields = self.audit_fields
+        if change:
+            before_obj = TenantRagConfiguration.objects.get(pk=obj.pk)
+            fields = [field for field in form.changed_data if field in self.audit_fields]
+            before_data = audit_model_snapshot(before_obj, fields=fields)
+        super().save_model(request, obj, form, change)
+        if not fields:
+            return
+        if change:
+            changes = changed_fields(before_data, audit_model_snapshot(obj, fields=fields))
+            if not changes["before"] and not changes["after"]:
+                return
+            before_payload = changes["before"]
+            after_payload = changes["after"]
+        else:
+            before_payload = {}
+            after_payload = audit_model_snapshot(obj, fields=fields)
+        record_audit_event(
+            action=ACTION_TENANT_RAG_CONFIGURED,
+            actor=request.user,
+            tenant=obj.tenant,
+            obj=obj,
+            before_data=before_payload,
+            after_data=after_payload,
+            metadata={"source": "django_admin"},
+            request=request,
+        )
 
 
 @admin.register(TenantRagDriveFileManifest)
@@ -320,6 +363,47 @@ class TenantRagIndexRunAdmin(admin.ModelAdmin):
         "finished_at",
         "created_at",
         "updated_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(RagRetrievalEvent)
+class RagRetrievalEventAdmin(admin.ModelAdmin):
+    list_display = [
+        "tenant",
+        "status",
+        "hit",
+        "backend",
+        "dry_run",
+        "provider",
+        "model",
+        "result_count",
+        "candidate_count",
+        "max_score",
+        "duration_ms",
+        "created_at",
+    ]
+    list_filter = ["tenant", "status", "hit", "dry_run", "backend", "provider"]
+    search_fields = ["tenant__slug", "reason", "backend", "model"]
+    readonly_fields = [
+        "tenant",
+        "conversation_id",
+        "status",
+        "reason",
+        "backend",
+        "provider",
+        "model",
+        "duration_ms",
+        "candidate_count",
+        "result_count",
+        "max_score",
+        "threshold",
+        "threshold_source",
+        "dry_run",
+        "hit",
+        "created_at",
     ]
 
     def has_add_permission(self, request):

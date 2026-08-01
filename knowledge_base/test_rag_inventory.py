@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
@@ -143,6 +144,51 @@ class ConfigureTenantRagCommandTests(TestCase):
                 "https://drive.google.com/drive/folders/1Wbo-Vwj01NiWlYS_F1XWoN7umP9DZ6Jm",
                 "--enable-sync",
             )
+
+    def test_configure_tenant_rag_sets_and_clears_min_similarity_score(self):
+        call_command(
+            "configure_tenant_rag",
+            "--tenant",
+            self.tenant.slug,
+            "--approved-folder-id",
+            "1Wbo-Vwj01NiWlYS_F1XWoN7umP9DZ6Jm",
+            "--min-similarity-score",
+            "0.35",
+        )
+        config = TenantRagConfiguration.objects.get(tenant=self.tenant)
+        self.assertEqual(config.min_similarity_score, 0.35)
+
+        # Works without folder-id when configuration already exists.
+        call_command(
+            "configure_tenant_rag",
+            "--tenant",
+            self.tenant.slug,
+            "--clear-min-similarity-score",
+        )
+        config.refresh_from_db()
+        self.assertIsNone(config.min_similarity_score)
+
+    def test_configure_tenant_rag_rejects_invalid_min_similarity_score(self):
+        with self.assertRaises(CommandError):
+            call_command(
+                "configure_tenant_rag",
+                "--tenant",
+                self.tenant.slug,
+                "--approved-folder-id",
+                "1Wbo-Vwj01NiWlYS_F1XWoN7umP9DZ6Jm",
+                "--min-similarity-score",
+                "2",
+            )
+
+    def test_model_rejects_out_of_range_tenant_threshold(self):
+        config = TenantRagConfiguration.objects.create(
+            tenant=self.tenant,
+            approved_folder_id="1Wbo-Vwj01NiWlYS_F1XWoN7umP9DZ6Jm",
+            sync_enabled=True,
+        )
+        config.min_similarity_score = -0.5
+        with self.assertRaises(ValidationError):
+            config.save()
 
 
 class GoogleDriveClientConfigurationTests(SimpleTestCase):

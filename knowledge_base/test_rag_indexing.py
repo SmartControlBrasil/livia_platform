@@ -215,6 +215,13 @@ class RagIndexingPhase4Tests(TestCase):
         )
 
     def test_dimension_change_forces_reindex(self):
+        from django.db import connection
+
+        if connection.vendor == "postgresql":
+            self.skipTest(
+                "PostgreSQL/pgvector fixa vector(n) no schema; mudar dimensão exige "
+                "nova migration/coluna, não apenas override de settings."
+            )
         self._create_chunk(tenant=self.tenant, configuration=self.config)
         call_command("index_tenant_rag", "--tenant", self.tenant.slug)
         with override_settings(LIVIA_RAG_EMBEDDING_DIMENSION=16):
@@ -532,6 +539,46 @@ class RagIndexingPhase4Tests(TestCase):
         self.config.save(update_fields=["last_index_status", "last_index_started_at", "updated_at"])
         call_command("index_tenant_rag", "--tenant", self.tenant.slug)
         self.assertEqual(TenantRagChunkEmbedding.objects.filter(tenant=self.tenant).count(), 1)
+
+    def test_only_stale_skips_chunks_without_embedding(self):
+        self._create_chunk(tenant=self.tenant, configuration=self.config, file_id="stale-old", text="versão 1")
+        call_command("index_tenant_rag", "--tenant", self.tenant.slug)
+        chunk_new = self._create_chunk(
+            tenant=self.tenant,
+            configuration=self.config,
+            file_id="only-new",
+            text="chunk novo sem embedding",
+        )
+        stale = TenantRagDocumentChunk.objects.get(manifest__drive_file_id="stale-old")
+        stale.chunk_text = "versão 2"
+        stale.chunk_sha256 = "e" * 64
+        stale.save()
+        with override_settings(LIVIA_RAG_EMBEDDING_MODEL="fake-embed-v2"):
+            out = StringIO()
+            call_command(
+                "index_tenant_rag",
+                "--tenant",
+                self.tenant.slug,
+                "--only-stale",
+                stdout=out,
+            )
+        self.assertIn("reindexed=1", out.getvalue())
+        self.assertFalse(
+            TenantRagChunkEmbedding.objects.filter(chunk=chunk_new, is_active=True).exists()
+        )
+
+    def test_limit_caps_pending_chunks(self):
+        for idx in range(4):
+            self._create_chunk(
+                tenant=self.tenant,
+                configuration=self.config,
+                file_id=f"lim-{idx}",
+                text=f"texto limit {idx}",
+            )
+        out = StringIO()
+        call_command("index_tenant_rag", "--tenant", self.tenant.slug, "--limit", "2", stdout=out)
+        self.assertIn("indexed=2", out.getvalue())
+        self.assertEqual(TenantRagChunkEmbedding.objects.filter(tenant=self.tenant, is_active=True).count(), 2)
 
     def test_acquire_lock_requires_configuration(self):
         lonely = Tenant.objects.create(name="Sem config", slug="sem-config")

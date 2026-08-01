@@ -97,6 +97,88 @@ Comparar:
 
 O rollback para SQLite é uma medida emergencial. A configuração padrão da aplicação é fail-closed em `DEBUG=False` sem `DATABASE_URL`; qualquer rollback deve ser planejado e documentado durante a janela.
 
+## PostgreSQL e pgvector
+
+Producao deve usar PostgreSQL. Para desenvolvimento local com vetores:
+
+```bash
+docker compose -f docker-compose.postgres.yml up -d
+```
+
+A imagem local recomendada e `pgvector/pgvector:pg16` (extensao `vector` disponivel).
+PostgreSQL esperado pelo projeto: **16.x**.
+
+Apos `migrate`, valide:
+
+```bash
+python manage.py database_readiness
+python manage.py rag_retrieval_report --tenant <slug> --days 7
+```
+
+A suíte automatizada continua em SQLite com backend `in_memory`. A busca nativa pgvector exige PostgreSQL + extensao `vector` e nao deve ser fingida em SQLite.
+
+## Locks (`SELECT FOR UPDATE`) e OUTER JOIN
+
+PostgreSQL rejeita:
+
+```sql
+SELECT ...
+FROM lead
+LEFT OUTER JOIN conversation ...  -- FK nullable
+FOR UPDATE
+```
+
+com:
+
+```text
+FOR UPDATE cannot be applied to the nullable side of an outer join
+```
+
+SQLite é mais permissivo e mascara o problema.
+
+Padrão adotado no retry CRM do portal (`operations_portal.crm_retry`):
+
+1. Separar **LOCK** de **LOAD GRAPH**.
+2. Bloquear apenas `LeadDraft` (escopo `tenant_id` + `pk`) com `select_for_update()`.
+3. `select_related("tenant")` é seguro (FK obrigatória → `INNER JOIN`).
+4. Não usar `select_related("conversation")` no mesmo queryset do lock (`conversation` é nullable).
+5. Em seguida bloquear `OutboxEvent` do aggregate, se existir.
+6. Ordem de lock: `LeadDraft` → `OutboxEvent`.
+7. HTTP externo (Smart360) permanece fora da transação de enqueue (outbox assíncrona).
+
+Validação:
+
+```bash
+# suíte full PostgreSQL local
+DATABASE_URL='postgresql://...@127.0.0.1:55432/livia_platform?sslmode=disable' \
+  python manage.py test
+
+# testes específicos de concorrência CRM (PostgreSQL-only)
+python manage.py test operations_portal.test_crm_retry_concurrency
+```
+
+## Collation após troca de imagem Docker
+
+Volumes criados com `postgres:16` e depois reutilizados com `pgvector/pgvector:pg16` podem emitir:
+
+```text
+collation version mismatch (ex.: 2.41 → 2.36)
+```
+
+Mitigação segura em banco **local descartável**:
+
+```sql
+ALTER DATABASE template1 REFRESH COLLATION VERSION;
+ALTER DATABASE postgres REFRESH COLLATION VERSION;
+ALTER DATABASE livia_platform REFRESH COLLATION VERSION;
+```
+
+Não execute `REINDEX DATABASE` indiscriminadamente. Em staging/produção, planeje janela e backup antes de qualquer rebuild de collation.
+
+## Evolução de dimensão de embedding
+
+A coluna `vector(n)` é tipada no schema. Mudar `LIVIA_RAG_EMBEDDING_DIMENSION` sozinho **não** altera a coluna. Exige migration explícita + reindexação.
+
 ## Proibições operacionais
 
 - Nunca execute a suíte de testes contra banco produtivo.

@@ -4,14 +4,13 @@ from dataclasses import dataclass
 
 from django.conf import settings
 
-from knowledge_base.models import TenantRagChunkEmbedding
 from knowledge_base.rag.embeddings import (
     EmbeddingConfig,
     EmbeddingProvider,
     build_embedding_provider,
-    cosine_similarity,
     load_embedding_config,
 )
+from knowledge_base.rag.vector_search import get_vector_search_backend
 from tenants.models import Tenant
 
 
@@ -42,9 +41,8 @@ def admin_vector_search(
     """
     Busca vetorial administrativa isolada por tenant.
 
-    Segurança: o conjunto candidato é filtrado pelo tenant ANTES do cálculo
-    de similaridade. O fallback em memória (cosseno) é apenas para
-    desenvolvimento/testes (SQLite) e não é solução de produção.
+    Delega ao backend (pgvector no PostgreSQL; in-memory no SQLite).
+    O tenant restringe o conjunto candidato antes da similaridade.
     """
     if tenant is None:
         raise TenantRagAdminSearchError("tenant is required for administrative vector search.")
@@ -64,46 +62,28 @@ def admin_vector_search(
     cfg = config or load_embedding_config()
     embedder = provider or build_embedding_provider(cfg)
     query_vector = embedder.embed_texts([text], config=cfg)[0]
+    if len(query_vector) != cfg.dimension:
+        raise TenantRagAdminSearchError(
+            f"Query embedding dimension {len(query_vector)} != configured {cfg.dimension}."
+        )
 
-    candidates = list(
-        TenantRagChunkEmbedding.objects.filter(
-            tenant=tenant,
-            is_active=True,
-            status=TenantRagChunkEmbedding.Status.ACTIVE,
-            embedding_config_signature=cfg.signature,
-            dimension=cfg.dimension,
-        )
-        .only(
-            "id",
-            "chunk_id",
-            "manifest_id",
-            "vector",
-            "chunk_sha256",
-            "provider",
-            "model",
-            "dimension",
-        )
-        .order_by("id")
+    backend = get_vector_search_backend()
+    hits = backend.search_similar_chunks(
+        tenant=tenant,
+        query_vector=query_vector,
+        config=cfg,
+        limit=max_results,
     )
-
-    scored: list[AdminSearchHit] = []
-    for item in candidates:
-        vector = item.vector or []
-        if not isinstance(vector, list) or len(vector) != cfg.dimension:
-            continue
-        score = cosine_similarity(query_vector, vector)
-        scored.append(
-            AdminSearchHit(
-                embedding_id=item.id,
-                chunk_id=item.chunk_id,
-                manifest_id=item.manifest_id,
-                score=score,
-                chunk_sha256=item.chunk_sha256,
-                provider=item.provider,
-                model=item.model,
-                dimension=item.dimension,
-            )
+    return [
+        AdminSearchHit(
+            embedding_id=hit.embedding.id,
+            chunk_id=hit.embedding.chunk_id,
+            manifest_id=hit.embedding.manifest_id,
+            score=hit.score,
+            chunk_sha256=hit.embedding.chunk_sha256,
+            provider=hit.embedding.provider,
+            model=hit.embedding.model,
+            dimension=hit.embedding.dimension,
         )
-
-    scored.sort(key=lambda hit: (-hit.score, hit.chunk_id, hit.embedding_id))
-    return scored[:max_results]
+        for hit in hits
+    ]

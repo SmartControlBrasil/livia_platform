@@ -57,7 +57,56 @@ class Command(BaseCommand):
             ready = False
             self.stdout.write(self.style.ERROR(f"counts=unavailable error={exc.__class__.__name__}"))
 
-        self.stdout.write(self.style.SUCCESS("READY") if ready else self.style.ERROR("NOT READY"))
+        try:
+            from knowledge_base.rag.readiness import inspect_rag_vector_readiness
+
+            self.stdout.write("rag_vector_readiness")
+            for check in inspect_rag_vector_readiness():
+                line = f"[{'OK' if check.ok else 'FAIL'}] {check.code}: {check.detail}"
+                if check.ok:
+                    self.stdout.write(line)
+                else:
+                    # Readiness RAG nao derruba READY geral em SQLite; apenas reporta.
+                    if connection.vendor == "postgresql" and check.code in {
+                        "pgvector_extension",
+                        "vector_column",
+                        "vector_index",
+                        "active_backend",
+                        "embedding_profile",
+                        "indexed_embeddings",
+                    }:
+                        ready = False
+                    self.stdout.write(self.style.ERROR(line))
+        except Exception as exc:
+            ready = False
+            self.stdout.write(self.style.ERROR(f"rag_vector_readiness=unavailable error={exc.__class__.__name__}"))
+
+        try:
+            from config.environment_safety import inspect_environment_safety, summarize_environment_readiness
+
+            self.stdout.write("environment_safety")
+            env_checks = inspect_environment_safety()
+            env_status = summarize_environment_readiness(env_checks)
+            for item in env_checks:
+                if item.level == "info" and item.ok:
+                    continue
+                mark = "OK" if item.ok else item.level.upper()
+                line = f"[{mark}] {item.code}: {item.detail}"
+                if item.ok:
+                    self.stdout.write(line)
+                else:
+                    self.stdout.write(self.style.ERROR(line))
+                    if item.level == "critical":
+                        ready = False
+            self.stdout.write(f"environment_status={env_status}")
+            if env_status == "NOT_READY":
+                ready = False
+        except Exception as exc:
+            ready = False
+            self.stdout.write(self.style.ERROR(f"environment_safety=unavailable error={exc.__class__.__name__}"))
+
+        label = "READY" if ready else "NOT READY"
+        self.stdout.write(self.style.SUCCESS(label) if ready else self.style.ERROR(label))
         if not ready:
             raise SystemExit(1)
 

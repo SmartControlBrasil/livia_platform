@@ -217,7 +217,10 @@ class OpenAIChatClientTests(SimpleTestCase):
     def test_real_mode_posts_expected_payload_without_logging_secret(self):
         response_mock = Mock()
         response_mock.raise_for_status.return_value = None
-        response_mock.json.return_value = {"choices": [{"message": {"content": "Resposta IA"}}]}
+        response_mock.json.return_value = {
+            "choices": [{"message": {"content": "Resposta IA"}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
+        }
         client = OpenAIChatClient()
 
         with patch("integrations.openai.client.requests.post", return_value=response_mock) as post_mock:
@@ -232,6 +235,9 @@ class OpenAIChatClientTests(SimpleTestCase):
         self.assertEqual(kwargs["timeout"], 3)
         self.assertTrue(result.success)
         self.assertEqual(result.text, "Resposta IA")
+        self.assertEqual(result.prompt_tokens, 11)
+        self.assertEqual(result.completion_tokens, 7)
+        self.assertEqual(result.total_tokens, 18)
 
     @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="secret")
     def test_timeout_returns_failure_result(self):

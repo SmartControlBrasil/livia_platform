@@ -13,6 +13,7 @@ from audit.services import record_audit_event
 from knowledge_base.rag.embeddings import EmbeddingConfigurationError, load_embedding_config
 from knowledge_base.rag.indexing import (
     TenantRagIndexingError,
+    _decide_pending,
     acquire_tenant_index_lock,
     mark_index_failed,
     run_index_for_tenant,
@@ -34,9 +35,29 @@ class Command(BaseCommand):
             help="Simula decisoes de indexacao sem chamar o provedor nem gravar embeddings.",
         )
 
+        parser.add_argument(
+            "--only-stale",
+            action="store_true",
+            help="Reindexa apenas chunks com embedding existente incompatível; não indexa chunks novos.",
+        )
+        parser.add_argument(
+            "--limit",
+            type=int,
+            default=None,
+            help="Máximo de chunks a indexar/reindexar nesta execução (ordem por id).",
+        )
+        parser.add_argument(
+            "--drive-file-id",
+            default="",
+            help="Restringe a um manifest (Google Drive file id) do tenant.",
+        )
+
     def handle(self, *args, **options):
         tenant_slug = str(options["tenant"]).strip()
         dry_run = bool(options.get("dry_run"))
+        only_stale = bool(options.get("only_stale"))
+        limit = options.get("limit")
+        drive_file_id = str(options.get("drive_file_id") or "").strip() or None
         tenant = Tenant.objects.filter(slug=tenant_slug).first()
         if tenant is None:
             raise CommandError("Tenant not found.")
@@ -50,6 +71,9 @@ class Command(BaseCommand):
             raise CommandError(
                 "Indexing is disabled. Set LIVIA_RAG_INDEXING_ENABLED=True only after explicit authorization."
             )
+
+        if limit is not None and int(limit) <= 0:
+            raise CommandError("--limit must be a positive integer.")
 
         run_id = str(uuid.uuid4())
         mode = "dry_run" if dry_run else "index"
@@ -77,10 +101,28 @@ class Command(BaseCommand):
             },
         )
 
+        pending_preview, preview_counters, _ = _decide_pending(
+            tenant=tenant,
+            config=config,
+            only_stale=only_stale,
+            drive_file_id=drive_file_id,
+            max_pending=int(limit) if limit is not None else None,
+        )
+        if pending_preview:
+            batch_size = config.batch_size
+            batches = (len(pending_preview) + batch_size - 1) // batch_size
+            self.stdout.write(
+                f"estimate selected={len(pending_preview)} batch_size={batch_size} "
+                f"batches={batches} model={config.model} dimension={config.dimension}"
+            )
+
         try:
             outcome = run_index_for_tenant(
                 configuration=configuration,
                 dry_run=dry_run,
+                only_stale=only_stale,
+                limit=int(limit) if limit is not None else None,
+                drive_file_id=drive_file_id,
                 config=config,
                 run_id=run_id,
             )

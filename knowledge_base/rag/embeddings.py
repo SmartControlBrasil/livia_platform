@@ -42,6 +42,24 @@ def sanitize_embedding_error(exc: Exception, *, fallback: str = "embedding_provi
     return message[:500] or fallback
 
 
+def _assert_fake_embedding_provider_allowed() -> None:
+    """Fail-closed: fake só em testes ou scripts locais explicitamente permitidos."""
+    if getattr(settings, "RUNNING_TESTS", False):
+        return
+    env = str(getattr(settings, "LIVIA_ENVIRONMENT", "development") or "development").strip().lower()
+    if env in {"staging", "production"}:
+        raise EmbeddingConfigurationError(
+            "LIVIA_RAG_EMBEDDING_PROVIDER=fake is not allowed when LIVIA_ENVIRONMENT "
+            f"is '{env}'."
+        )
+    if bool(getattr(settings, "LIVIA_ALLOW_FAKE_EMBEDDINGS", False)):
+        return
+    raise EmbeddingConfigurationError(
+        "LIVIA_RAG_EMBEDDING_PROVIDER=fake is only allowed during tests or when "
+        "LIVIA_ALLOW_FAKE_EMBEDDINGS=True."
+    )
+
+
 def load_embedding_config() -> EmbeddingConfig:
     provider = str(getattr(settings, "LIVIA_RAG_EMBEDDING_PROVIDER", "openai") or "openai").strip().lower()
     model = str(getattr(settings, "LIVIA_RAG_EMBEDDING_MODEL", "text-embedding-3-small") or "").strip()
@@ -55,6 +73,8 @@ def load_embedding_config() -> EmbeddingConfig:
 
     if provider not in {"openai", "fake"}:
         raise EmbeddingConfigurationError("LIVIA_RAG_EMBEDDING_PROVIDER must be 'openai' or 'fake'.")
+    if provider == "fake":
+        _assert_fake_embedding_provider_allowed()
     if not model:
         raise EmbeddingConfigurationError("LIVIA_RAG_EMBEDDING_MODEL is required.")
     if dimension <= 0:
@@ -174,6 +194,9 @@ class FakeEmbeddingProvider(EmbeddingProvider):
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     endpoint = "https://api.openai.com/v1/embeddings"
 
+    def __init__(self):
+        self.last_usage: dict = {}
+
     def embed_texts(self, texts: Sequence[str], *, config: EmbeddingConfig) -> list[list[float]]:
         import requests
 
@@ -203,6 +226,8 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
                 if response.status_code >= 400:
                     raise EmbeddingProviderError(f"embedding_http_{response.status_code}")
                 body = response.json()
+                usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+                self.last_usage = usage
                 data = body.get("data")
                 if not isinstance(data, list):
                     raise EmbeddingProviderError("embedding_invalid_response")

@@ -1,4 +1,4 @@
-# Integracao RAG Multi-tenant com Google Drive (Fases 1-4)
+# Integracao RAG Multi-tenant com Google Drive (Fases 1-5)
 
 ## Limites desta fase
 
@@ -7,13 +7,11 @@
 - `--inventory-only` nao exporta conteudo.
 - `--export-text` exporta apenas Google Docs em `text/plain`.
 - `--build-chunks` nao acessa Google Drive; usa somente staging local.
-- Fase 4 cria embeddings locais versionados por tenant, ainda desconectados do chat.
+- Fase 4 cria embeddings locais versionados por tenant.
+- Fase 5 conecta a recuperacao semantica ao fluxo real de `/api/chat/` via `build_knowledge_context`.
 - Nao cria Vector Store remoto da OpenAI.
-- Nao ativa o retriever publico nem `LIVIA_RAG_ENABLED`.
-- Nao altera `/api/chat/` nem respostas da Livia.
-- Nao modifica itens no Google Drive.
-- Conteudo exportado fica apenas em staging interno por tenant.
-- Retriever publico atual continua usando somente `KnowledgeDocument`.
+- Nao substitui discovery, qualification, handoff ou maquina de estados.
+- Retriever textual antigo (`KnowledgeDocument`) permanece como fallback.
 
 ## Variavel de ambiente
 
@@ -327,12 +325,13 @@ Se necessario pausar rapidamente:
 
 ## Custos e cuidados antes da primeira indexacao real
 
-- confirmar migrations aplicadas (`knowledge_base.0006`, `audit.0006`);
+- confirmar migrations aplicadas (`knowledge_base.0006`, `audit.0006`, e `knowledge_base.0007` para retrieval);
 - validar provider/modelo/dimensao e `LIVIA_RAG_EMBEDDING_API_KEY`;
 - executar primeiro `--dry-run` e revisar contadores;
 - habilitar `LIVIA_RAG_INDEXING_ENABLED=True` somente com autorizacao manual;
+- para o chat: `LIVIA_RAG_ENABLED=True`, `LIVIA_RAG_DRY_RUN=False` e `--enable-retrieval` no tenant;
+- ver detalhes de retrieval em `docs/rag_architecture.md`;
 - primeira indexacao cobra embeddings de todos os chunks ativos;
 - reindexacoes futuras cobram apenas pending/reindex (ou tudo se a assinatura mudar);
 - modelo `text-embedding-3-small` / 1536 dims: custo tipicamente baixo por token, mas depende do volume total de chunks;
-- apos indexar, repetir o comando para provar idempotencia (`unchanged` esperados);
-- o retriever publico e `/api/chat/` permanecem desconectados desta camada.
+- apos indexar, repetir o comando para provar idempotencia (`unchanged` esperados).

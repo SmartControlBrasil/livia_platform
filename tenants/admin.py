@@ -100,6 +100,7 @@ class AssistantProfileAdmin(admin.ModelAdmin):
         "is_widget_enabled",
         "human_handoff_status",
         "use_ai",
+        "grounded_synthesis_enabled",
         "primary_goal",
     ]
     list_filter = ["is_widget_enabled", "position", "show_branding", "human_handoff_enabled", "human_handoff_channel", "use_ai", "tenant"]
@@ -114,6 +115,17 @@ class AssistantProfileAdmin(admin.ModelAdmin):
     readonly_fields = ["created_at", "updated_at"]
     fieldsets = (
         (None, {"fields": ("tenant", "name", "initial_message", "tone", "primary_goal", "use_ai", "is_active")}),
+        (
+            "Identidade conversacional",
+            {
+                "fields": (
+                    "business_name",
+                    "business_domain",
+                    "short_description",
+                    "grounded_synthesis_enabled",
+                )
+            },
+        ),
         (
             "Widget",
             {
@@ -160,6 +172,10 @@ class AssistantProfileAdmin(admin.ModelAdmin):
             "name",
             "tone",
             "primary_goal",
+            "business_name",
+            "business_domain",
+            "short_description",
+            "grounded_synthesis_enabled",
             "use_ai",
             "widget_title",
             "launcher_label",
