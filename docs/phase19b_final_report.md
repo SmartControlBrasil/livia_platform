@@ -1,6 +1,6 @@
 # Fase 19B — Relatório Final
 
-**Data:** 2026-07-31  
+**Data:** 2026-07-31
 **Estado inicial:**
 
 ```text

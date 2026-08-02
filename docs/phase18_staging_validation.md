@@ -1,6 +1,6 @@
 # Fase 18 — Validação Staging
 
-Modo: **staging-like local** com perfil `LIVIA_ENVIRONMENT=staging`  
+Modo: **staging-like local** com perfil `LIVIA_ENVIRONMENT=staging`
 **Staging físico (`livia.smartcontrolbrasil.com.br`): não executado nesta sessão**
 
 ---
@@ -74,21 +74,21 @@ Soak `idem-replay`: reply idêntica, latência ~17 ms, sem crescimento de mensag
 
 ## Tenant isolation
 
-GP allowlisted → grounded quando KB hit  
+GP allowlisted → grounded quando KB hit
 Outro tenant / origin inválida → fail-closed (403)
 
 ---
 
 ## Widget
 
-Validação visual em host staging: **não realizada** (backend-only nesta sessão).  
+Validação visual em host staging: **não realizada** (backend-only nesta sessão).
 API `/api/chat/` validada via Django test Client (mesmo entrypoint).
 
 ---
 
 ## OpenAI failures
 
-Cobertura unitária: timeout, empty response (`integrations/tests.py`, `test_grounded_response.py`).  
+Cobertura unitária: timeout, empty response (`integrations/tests.py`, `test_grounded_response.py`).
 Provider real não degradado intencionalmente.
 
 ---

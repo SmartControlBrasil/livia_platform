@@ -291,4 +291,15 @@ produção intacta (8011 / SQLite / main)
 | `scripts/phase19_http_soak.py` | soak físico |
 | `tenants/management/commands/staging_deployment_report.py` | relatório sanitizado |
 
-Proteções compartilhadas: `tenants/services/staging_deployment.py`
+| `tenants/services/staging_deployment.py` | proteções compartilhadas |
+
+### Monitoramento operacional (Fase 12 — template only)
+
+| Arquivo | Função |
+|---|---|
+| `deploy/staging/livia-operational-monitoring.service` | worker oneshot de monitoramento |
+| `deploy/staging/livia-operational-monitoring.timer` | timer 15 min (não habilitar até runbook) |
+| `deploy/staging/livia-operational-notifications.service` | worker oneshot de notificações |
+| `deploy/staging/livia-operational-notifications.timer` | timer 5 min (não habilitar nesta fase) |
+
+Ver `docs/phase12_operational_monitoring.md` § Runbook de ativação.

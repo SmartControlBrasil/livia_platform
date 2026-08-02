@@ -1,7 +1,7 @@
 # Fase 19 — Provisionamento de staging físico GP
 
-**Data:** 2026-07-31  
-**Tenant alvo:** `granimarmores-pitondo`  
+**Data:** 2026-07-31
+**Tenant alvo:** `granimarmores-pitondo`
 **Status nesta sessão:** **NÃO EXECUTADO** na VPS (SSH recusado; ver `docs/phase19_vps_audit.md`).
 
 Este documento registra **o que foi tentado**, **o que falhou**, e o **runbook exato** para execução quando houver acesso ao servidor — sem descrever passos já concluídos como se fossem factuais.

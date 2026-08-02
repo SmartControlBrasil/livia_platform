@@ -1,7 +1,7 @@
 # Fase 17 — Relatório de Staging Contínuo (GP)
 
-Tenant: `granimarmores-pitondo`  
-Modo executado: **staging-like local** (PostgreSQL `127.0.0.1:55432/livia_platform`)  
+Tenant: `granimarmores-pitondo`
+Modo executado: **staging-like local** (PostgreSQL `127.0.0.1:55432/livia_platform`)
 **Não houve deploy em staging físico nem alteração de produção.**
 
 ---
@@ -65,7 +65,7 @@ Testes: `FakeEmbeddingProviderGuardTests` (4 casos) — **OK**.
 
 ## 4. Soak test operacional
 
-Script: `scripts/phase17_staging_soak.py`  
+Script: `scripts/phase17_staging_soak.py`
 Resultado: `docs/phase17_soak_results.json`
 
 ```text

@@ -1,7 +1,7 @@
 # Fase 16 — Relatório de Reindex (GP)
 
-Tenant: `granimarmores-pitondo`  
-Data: 2026-07-31  
+Tenant: `granimarmores-pitondo`
+Data: 2026-07-31
 Banco: PostgreSQL `127.0.0.1:55432/livia_platform`
 
 ## 1. Estado inicial (Fase 15)

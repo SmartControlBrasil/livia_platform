@@ -1,7 +1,7 @@
 # Fase 19 — Soak físico (staging GP)
 
-**Data:** 2026-07-31  
-**Script:** `scripts/phase18_staging_soak.py` → `scripts/phase17_staging_soak.py`  
+**Data:** 2026-07-31
+**Script:** `scripts/phase18_staging_soak.py` → `scripts/phase17_staging_soak.py`
 **Endpoint físico de staging:** **indisponível** (host DNS ausente; serviço não provisionado).
 
 ---

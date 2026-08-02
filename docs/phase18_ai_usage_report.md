@@ -1,6 +1,6 @@
 # Fase 18 — Relatório AI Usage
 
-Tenant: `granimarmores-pitondo`  
+Tenant: `granimarmores-pitondo`
 Janela: 1 dia (pós-migration + soak staging profile)
 
 ---

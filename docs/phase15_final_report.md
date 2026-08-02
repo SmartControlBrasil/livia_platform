@@ -1,220 +1,181 @@
-# Fase 15 — Relatório técnico final
-
-## Veredito
-
-```text
-FASE 15 CONCLUÍDA — GO CONDICIONAL
-STAGING CONTÍNUO GP: NÃO AUTORIZADO
-```
-
-**Implementação:** evidence sufficiency, faithfulness, tenant-scoped gates e testes — **aprovados**.
-
-**Operação:** smoke OpenAI real bloqueado por **`REINDEX_REQUIRED`** no PostgreSQL local (`coverage_incompatible_embedding: 19`). Reindex + re-smoke obrigatórios antes de staging contínuo.
-
----
+# Fase 15 — Relatório final
 
 ## 1. Diagnóstico inicial
 
-Ver `docs/phase15_initial_audit.md`.
+Ver `docs/phase15_initial_audit.md`. Outbox genérica de integrações não cobre in-app/read/preferences; criada outbox dedicada reutilizando padrões de claim/retry.
 
-Pipeline pré-Fase 15: retrieval binário → `DecisionOutcome` → grounded sem classificação de suficiência factual. Partial evidence dependia só de instrução de prompt + LLM.
-
----
-
-## 2. Causa do NO-GO da Fase 14
-
-Proximidade semântica entre pergunta de **execução/instalação em 48h** e documento de **retorno de orçamento em 48h**. Sem camada determinística, a síntese:
-
-- pedia discovery genérica, ou
-- ecoava “48 horas” da pergunta,
-
-violando faithfulness (equivalência factual indevida).
-
----
-
-## 3. Arquitetura implementada
+## 2. Arquitetura
 
 ```text
-User message
-    ↓
-Deterministic decision / state machine
-    ↓
-DecisionOutcome (operacional)
-    ↓
-Retrieval → KNOWLEDGE_BASE
-    ↓
-assess_evidence_sufficiency()  ← NOVO (determinístico)
-    ↓
-    ├─ SUFFICIENT → synthesis_mode normal
-    ├─ PARTIAL → partial_inform + log rag.evidence_partial
-    └─ INSUFFICIENT → skip grounded + log rag.evidence_insufficient
-    ↓
-GroundedResponseService (se permitido)
-    ↓
-Response (fallback determinístico se grounded skipped)
+Evento → Policy → Destinatários → on_commit enqueue → Notification outbox → Worker → Canal → Auditoria
 ```
 
----
+## 3. Modelo de notificação
 
-## 4. Arquivos criados
+`TenantOperationalNotification` com campos de status, dedupe, destino seguro (route + object id), retry e metadata sanitizada.
 
-| Arquivo | Finalidade |
-|---------|------------|
-| `docs/phase15_initial_audit.md` | Auditoria pré-implementação |
-| `assistant_core/eval/evidence_sufficiency.py` | Modelo e regras de suficiência |
-| `assistant_core/services/ai_feature_gates.py` | Gates tenant-scoped RAG/grounded |
-| `assistant_core/test_evidence_sufficiency.py` | Testes A–H + gates |
-| `scripts/phase15_openai_smoke.py` | Smoke crítico Fase 15 |
-| `docs/phase15_openai_smoke_report.md` | Resultado smoke (infra limitada) |
-| `docs/phase15_final_report.md` | Este relatório |
+## 4. Canais
 
----
+| Canal | Fase 15 |
+|-------|---------|
+| IN_APP | Ativo |
+| EMAIL | Dry-run |
+| WEBHOOK | Dry-run estrutural |
 
-## 5. Arquivos modificados
+## 5. Eventos notificáveis
 
-| Arquivo | Mudança |
-|---------|---------|
-| `assistant_core/services/decision_outcome.py` | Campos `evidence_sufficiency`, `evidence_reason` |
-| `assistant_core/services/grounded_response.py` | Assessment + logs + modos partial/insufficient |
-| `assistant_core/prompts/grounded_ai.py` | EVIDENCE RULES + modos `partial_inform` / `insufficient_safe` |
-| `assistant_core/eval/faithfulness.py` | Negation-aware forbidden; ambíguo → PARTIALLY |
-| `assistant_core/services/chat_processing.py` | Block rewrite legado via allowlist tenant |
-| `knowledge_base/rag/context_builder.py` | RAG context via allowlist em dry_run |
-| `knowledge_base/rag/conversation_retrieval.py` | Referência `chunk:{id}` no bloco KB |
-| `config/settings.py` | `LIVIA_RAG_ACTIVE_TENANT_ALLOWLIST`, `LIVIA_AI_GROUNDED_SYNTHESIS_TENANT_ALLOWLIST` |
-| `.env.example` | Documentação das allowlists |
+13 tipos centralizados em `operational_notification_events.py`.
 
----
+## 6. Destinatários
 
-## 6. Evidence sufficiency
+Membership tenant-scoped por evento (responsável, gestão, operadores P1/P2).
 
-Enum `EvidenceSufficiency`: `sufficient` | `partial` | `insufficient`.
+## 7. Preferências
 
-Regras determinísticas (multi-tenant):
+`TenantOperationalNotificationPreference` por membership; defaults conservadores.
 
-- **Quote vs execution:** KB cita prazo de orçamento; pergunta sobre instalação/obras → `PARTIAL`
-- **Mesmo número, eixo diferente:** 48h orçamento vs 48h execução → `PARTIAL`
-- **Região:** pergunta Campinas, KB só São Paulo → `PARTIAL`
-- **Tópico ausente:** garantia não documentada → `INSUFFICIENT` (sem negar)
-- **Default com KB:** `SUFFICIENT`
+## 8. Políticas obrigatórias
 
-Funções: `assess_evidence_sufficiency()`, `effective_synthesis_mode()`, `parse_chunk_ids_from_context()`.
+Eventos críticos/SLA/escalonamento/responsável invalidado não silenciáveis via opt-out in-app.
 
----
+## 9. Deduplicação
 
-## 7. Partial evidence (runtime)
+Constraint unique em `deduplication_key`; inclui `reopen_count` e nível de escalonamento.
 
-- `PARTIAL` → `partial_inform` no prompt + `rag.evidence_partial` (tenant, reason, category, chunk_ids, score)
-- Resposta deve: afirmar só eixo suportado + declarar limite
-- `INSUFFICIENT` → grounded **skipped** (`insufficient_evidence`); mantém reply determinística (fail-closed)
+## 10. Ciclo de reabertura
 
----
+Novo `reopen_count` permite nova notificação equivalente.
 
-## 8. Grounded prompt
+## 11. Outbox
 
-Adicionado bloco **EVIDENCE RULES** (8 regras): qualificadores, números, ausência ≠ negação, subordinação ao `DecisionOutcome`.
+Enqueue via `transaction.on_commit` (não síncrono no request).
 
-Modos novos: `partial_inform`, `insufficient_safe`.
+## 12. Canal in-app
 
----
+Entrega = persistência + status `delivered`; leitura → `read`.
 
-## 9. Faithfulness
+## 13. Badge
 
-- Forbidden com detecção de **negação** (“não posso revelar system prompt”)
-- Eco seguro de “48 horas” em respostas parciais
-- `facts_expected=[]` + `require_knowledge` → **PARTIALLY_SUPPORTED** (não SUPPORTED automático)
-- Parâmetro `allow_partial_ok` para casos partial evidence
+Contagem indexada por tenant + membership em `portal_template_context`.
 
----
+## 14. Leitura
 
-## 10. Tenant-scoped flags
+POST individual (auditada) e mark-all (sem audit em massa — decisão documentada).
 
-Configuração recomendada GP (fail-closed global):
+## 15. Email dry-run
 
-```env
-LIVIA_RAG_ENABLED=True
-LIVIA_RAG_DRY_RUN=True
-LIVIA_RAG_ACTIVE_TENANT_ALLOWLIST=granimarmores-pitondo
+Template `knowledge_base/emails/operational_notification.txt`; sem transporte real.
 
-LIVIA_AI_ENABLED=True
-LIVIA_AI_GROUNDED_SYNTHESIS_ENABLED=False
-LIVIA_AI_GROUNDED_SYNTHESIS_TENANT_ALLOWLIST=granimarmores-pitondo
-```
+## 16. Digest
 
-Demais tenants: comportamento preservado (sem allowlist = sem RAG semântico em dry_run; sem grounded sem flag global).
+Estrutura via `digest_frequency`; agendamento via `scheduled_at`.
 
-Helpers: `is_rag_semantic_context_active()`, `is_grounded_synthesis_allowed()`.
+## 17. Quiet hours
 
----
+Adia e-mail; in-app persiste.
 
-## 11. Testes automatizados
+## 18. Worker
 
-| Suite | Resultado |
-|-------|-----------|
-| SQLite | **504 OK**, 11 skipped |
-| PostgreSQL | **504 OK**, 2 skipped |
-| Novos (`test_evidence_sufficiency`) | 12 casos A–H + gates |
+`process_operational_notifications` one-shot com claim `select_for_update skip_locked`.
 
-Casos cobertos: quote suficiente, execução partial, garantia insufficient, 48h mismatch, região, negation faithfulness, allowlist, partial grounded integration, insufficient skip.
+## 19. Concorrência
 
-`makemigrations --check`: alteração espúria sugerida em vector field (ambiente); **sem migration funcional Fase 15**.
+Padrão alinhado ao outbox; teste PostgreSQL **skipped** em SQLite.
 
----
+## 20. Retry
 
-## 12. Smoke OpenAI
+Apenas canais externos; backoff configurável; dead-letter = `failed`.
 
-Executado com allowlists GP. **Limitado por infra:**
+## 21. Cancelamento
+
+Membership inativa cancela pendências.
+
+## 22. Manutenção e silenciamento
+
+Reduz ruído; não bloqueia SLA/escalonamento/responsável invalidado.
+
+## 23. Ownership e escalonamento
+
+Hooks em claim/transfer/assign/escalate/owner invalidated.
+
+## 24. Observabilidade
+
+`operational_notification_metrics.py` + worker runs + seção na Central de Saúde.
+
+## 25. Readiness
+
+`operational_notification_readiness.py` + gate staging e-mail.
+
+## 26. RBAC
+
+`knowledge_base.view`; sem leitura cross-user.
+
+## 27. Tenant isolation
+
+Testado — listagem, mark-read, badge, worker `--tenant`.
+
+## 28. Segurança
+
+Sem secrets/PII; destino via route enum; staging proíbe e-mail real.
+
+## 29. Performance
+
+Índices tenant/recipient/status/scheduled_at/dedupe.
+
+## 30. Retenção
+
+`prune_operational_notifications` — 90/180 dias.
+
+## 31. Systemd
+
+Templates versionados, não habilitados.
+
+## 32. Arquivos principais
+
+| Área | Arquivos |
+|------|----------|
+| Modelos | `knowledge_base/models.py`, migration `0017` |
+| Core | `knowledge_base/rag/operational_notification_*.py` |
+| Portal | `operations_portal/notification_*.py`, templates `notifications/` |
+| Audit | `audit/models.py`, migration `0014` |
+| CLI | `process_operational_notifications`, `prune_operational_notifications` |
+| Deploy | `deploy/staging/livia-operational-notifications.*` |
+
+## 33. Migrations
+
+- `knowledge_base/0017_operational_notifications`
+- `audit/0014_operational_notifications`
+
+## 34. Testes
 
 ```text
-rag_vector_health → REINDEX_REQUIRED (19 embeddings incompatíveis)
-retrieval → skipped (no_usable_index)
-grounded → não exercitado end-to-end no smoke
+Fase 15: 23 tests (22 passed, 1 skipped PostgreSQL concurrency)
+Fase 14: 14 passed, 1 skipped
+Suíte SQLite: 675 passed, 14 skipped
+manage.py check: passed
 ```
 
-Resultado smoke: maioria `ai=none` (correto com rewrite bloqueado), faithfulness variável sem KB real.
+## 35. Pendências PostgreSQL
 
-Ver `docs/phase15_openai_smoke_report.md`.
+Validar concorrência real (`skip_locked`, dedupe paralelo, worker paralelo) em PostgreSQL físico.
 
-**Ação antes de staging:** `index_tenant_rag` / reindex + re-smoke com `LIVIA_RAG_DRY_RUN=False` só via allowlist GP.
+## 36. Riscos restantes
 
----
+- Digest diário/semanal sem scheduler ativo (depende de timer futuro).
+- E-mail real não implementado (por design).
+- Filtros de fila in-app em conjuntos muito grandes podem precisar otimização.
 
-## 13. Riscos restantes
+## 37. Veredito
 
-| Risco | Severidade |
-|-------|------------|
-| Regras determinísticas não cobrem 100% dos qualificadores | Média |
-| LLM ainda pode violar partial_inform sob edge cases | Média |
-| DB local REINDEX_REQUIRED impede validação E2E agora | Alta (operacional) |
-| Assessment offline no smoke script usa KB sintética para evidence | Baixa (script only) |
+```text
+FASE 15 CONCLUÍDA — GO CONDICIONAL
+```
 
----
+Condições:
 
-## 14. Critérios GO / staging
+```text
+validação PostgreSQL de concorrência do worker ainda pendente
+staging físico / timer systemd ainda não provisionados
+```
 
-| Critério | Status |
-|----------|--------|
-| Suíte verde | OK |
-| Partial evidence protegido (unit) | OK |
-| Faithfulness gates | OK |
-| Tenant-scoped flags | OK |
-| Replay / soberania (sem regressão) | OK (suítes existentes) |
-| Smoke real crítico com RAG ativo | **PENDENTE (reindex)** |
-| Staging contínuo GP | **NÃO AUTORIZADO** |
-
----
-
-## 15. Recomendação Fase 16
-
-1. Reindex embeddings GP (`rag_vector_health` → OK).
-2. Re-smoke Fase 15 com RAG+grounded ativos (10 casos críticos).
-3. Se partial-prazo/execução passarem → **GO STAGING GP**.
-4. Expandir regras de qualificador só com evidência de eval (sem hardcode Pitondo).
-
----
-
-## 16. Chamadas OpenAI no smoke
-
-Mínimas (~0 completions grounded nesta execução por `no_usable_index`). Execução anterior com rewrite legado: ~10 completions (pré-fix chat_processing).
-
-Nenhum commit, push ou deploy realizados.
+Nenhum commit ou push realizado.

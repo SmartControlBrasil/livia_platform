@@ -1,6 +1,6 @@
 # Fase 18 — Auditoria de Ambientes
 
-Data: 2026-07-31  
+Data: 2026-07-31
 Repositório: `livia-platform`
 
 ---

@@ -1,8 +1,8 @@
 # Fase 5 — Integração segura da recuperação vetorial ao chat
 
-**Branch:** `chore/postgresql-readiness`  
-**Commit base da auditoria:** `1c4afab`  
-**Data:** 2026-07-31  
+**Branch:** `chore/postgresql-readiness`
+**Commit base da auditoria:** `1c4afab`
+**Data:** 2026-07-31
 **Escopo:** integração RAG ↔ chat público (sem commit, push, deploy ou migrate em VPS)
 
 ---

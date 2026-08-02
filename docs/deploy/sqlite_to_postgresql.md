@@ -175,6 +175,14 @@ ALTER DATABASE livia_platform REFRESH COLLATION VERSION;
 
 Não execute `REINDEX DATABASE` indiscriminadamente. Em staging/produção, planeje janela e backup antes de qualquer rebuild de collation.
 
+## Validação local Fase 17 (2026-07-29)
+
+- Ambiente: `docker-compose.postgres.yml`, `127.0.0.1:55432`, PostgreSQL 16 + pgvector.
+- Contrato produtivo: `vector(1536)`, `LIVIA_RAG_EMBEDDING_DIMENSION=1536`.
+- Testes que persistem embeddings no PostgreSQL devem usar dimensão **1536** (helper `knowledge_base/testing/rag_dimensions.py`).
+- Suíte completa local: **701 testes OK** (PG e SQLite); ver `docs/phase17_final_report.md`.
+- Script reproduzível: `scripts/run_postgresql_validation.sh`.
+
 ## Evolução de dimensão de embedding
 
 A coluna `vector(n)` é tipada no schema. Mudar `LIVIA_RAG_EMBEDDING_DIMENSION` sozinho **não** altera a coluna. Exige migration explícita + reindexação.

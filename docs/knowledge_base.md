@@ -87,3 +87,58 @@ Boas práticas de curadoria:
 - Adicionar pipeline de ingestão de PDFs e páginas do site.
 - Permitir curadoria/admin avançada para cada tenant.
 - Usar OpenAI para síntese controlada, mantendo restrições de segurança comercial.
+
+## Observabilidade operacional (Fase 10)
+
+Agregações compartilhadas em `knowledge_base/rag/operational_metrics.py` e diagnósticos em `operational_diagnostics.py` alimentam:
+
+- CLI: `rag_operational_report`, `ai_usage_report`;
+- Painel: `/painel/base-de-conhecimento/saude/`.
+
+Métricas de retrieval usam `RagRetrievalEvent` (tenant-scoped). Telemetria de IA usa `AiUsageEvent`. Vector health reutiliza `inspect_tenant_embedding_health` sem chamadas OpenAI na renderização.
+
+Ver `docs/phase10_rag_ai_observability.md` e `docs/phase10_final_report.md`.
+
+## Alertas operacionais (Fase 11)
+
+Modelo `TenantOperationalAlert` com deduplicação por fingerprint, runbooks determinísticos e fluxo open → acknowledged → resolved.
+
+Serviços: `knowledge_base/rag/operational_alert_rules.py`, `operational_alert_sync.py`, `operational_alert_runbooks.py`.
+
+Ver `docs/phase11_operational_alerts.md` e `docs/phase11_final_report.md`.
+
+## Monitoramento automático (Fase 12)
+
+Modelos `OperationalMonitoringBatchRun` e `TenantOperationalMonitoringRun`. Serviço `operational_monitoring.py`.
+
+Flag tenant `operational_monitoring_enabled` (default `False`). Comando `process_operational_monitoring`.
+
+Ver `docs/phase12_operational_monitoring.md` e `docs/phase12_final_report.md`.
+
+## Governança operacional (Fase 13)
+
+Modelos `TenantOperationalAlertSilence`, `TenantOperationalMaintenanceWindow`. Política em `alert_governance.py`; ações em `alert_governance_services.py`.
+
+SLA persistido em `ack_due_at` / `resolution_due_at`. Silenciamento expira por data; manutenção pausa SLA.
+
+Ver `docs/phase13_operational_governance.md` e `docs/phase13_final_report.md`.
+
+## Fila operacional (Fase 14)
+
+Prioridade e escalonamento em `operational_work_queue.py` / `operational_work_queue_services.py`. Campos `reopen_count`, `escalation_level` no alerta.
+
+Ver `docs/phase14_operational_work_queue.md` e `docs/phase14_final_report.md`.
+
+## Notificações operacionais (Fase 15)
+
+Outbox dedicada `TenantOperationalNotification`, política em `operational_notification_policy.py`, worker `process_operational_notifications`.
+
+Canal in-app ativo; e-mail/webhook dry-run. Enqueue via `transaction.on_commit`.
+
+Ver `docs/phase15_operational_notifications.md` e `docs/phase15_final_report.md`.
+
+## Analytics operacional (Fase 16)
+
+Service `operational_analytics.py` — métricas determinísticas tenant-scoped sem snapshots persistidos.
+
+Ver `docs/phase16_operational_analytics.md` e `docs/phase16_final_report.md`.

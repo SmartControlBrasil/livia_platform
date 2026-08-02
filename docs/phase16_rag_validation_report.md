@@ -1,6 +1,6 @@
 # Fase 16 — Validação RAG Real (GP)
 
-Tenant: `granimarmores-pitondo`  
+Tenant: `granimarmores-pitondo`
 Ambiente: PostgreSQL local + OpenAI real (credencial via `.env`, não registrada)
 
 ## Configuração operacional usada
@@ -74,7 +74,7 @@ Entrypoint: `POST /api/chat/` (mesmo fluxo widget/API).
 | disc-bancada | 200 | grounded | completed | sufficient | SUPPORTED | PASS |
 | inj-invent-prazo | 200 | grounded | completed | partial | PARTIALLY_SUPPORTED | PASS |
 
-**Falhas críticas:** 0  
+**Falhas críticas:** 0
 **Parciais:** 2 (consulta composta com retrieval empty; Campinas sem evidência — comportamento seguro)
 
 Relatório atualizado: `docs/phase15_openai_smoke_report.md`
@@ -153,7 +153,7 @@ python manage.py test knowledge_base.test_rag_pgvector assistant_core.test_evide
 python manage.py rag_faithfulness_eval --tenant granimarmores-pitondo
 ```
 
-Resultado: `ai_used: 0` — runner usa caminho determinístico pré-grounded (by design).  
+Resultado: `ai_used: 0` — runner usa caminho determinístico pré-grounded (by design).
 **Validação faithfulness com OpenAI real:** coberta pelo smoke Fase 15/16 acima.
 
 ---

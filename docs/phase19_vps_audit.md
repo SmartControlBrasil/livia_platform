@@ -1,6 +1,6 @@
 # Fase 19 — Auditoria da VPS (somente leitura remota)
 
-**Data:** 2026-07-31 (sessão local `marcelo-HP-250-15-6-inch-G9-Notebook-PC`)  
+**Data:** 2026-07-31 (sessão local `marcelo-HP-250-15-6-inch-G9-Notebook-PC`)
 **Escopo:** inspeção **sem alterar produção** e **sem shell na VPS** (SSH indisponível nesta sessão).
 
 ---
@@ -93,7 +93,7 @@ Body:
 curl -sS -D - 'https://livia.smartcontrolbrasil.com.br/health/?readiness=1'
 ```
 
-Resposta **idêntica** ao liveness simples (mesmo body de 45 bytes).  
+Resposta **idêntica** ao liveness simples (mesmo body de 45 bytes).
 **Interpretação:** código em produção **não expõe** (ou não deployou) o payload de readiness da Fase 18 nesta URL. Isso é observação read-only; **não** implica alteração nesta fase.
 
 ### 4.3 Assets públicos
@@ -186,7 +186,7 @@ ssh: connect to host 129.121.55.23 port 22: Connection refused
 
 ## 7. Serviços que não podem ser impactados
 
-Sem shell na VPS, **não foi possível** enumerar outros serviços.  
+Sem shell na VPS, **não foi possível** enumerar outros serviços.
 Regra operacional mantida: **nenhuma alteração em produção** nesta fase.
 
 ---

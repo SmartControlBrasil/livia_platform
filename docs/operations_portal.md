@@ -150,6 +150,91 @@ O dashboard consulta dados reais de Tenant, Conversation, rascunho de lead e Han
 
 As listas são intencionalmente mais discretas: contatos de leads aparecem mascarados em `/painel/leads/`. O detalhe do lead exibe os dados completos necessários para operação humana autorizada.
 
+## Central de Saúde RAG/IA
+
+Rota tenant-scoped:
+
+```text
+/painel/base-de-conhecimento/saude/?tenant=<id>&period=24h|7d|30d
+```
+
+Capability: `knowledge_base.view` (VIEWER+). A página consolida readiness, vector health, operações RAG, métricas de retrieval, telemetria `AiUsageEvent` e recomendações operacionais determinísticas. Não exibe secrets, prompts integrais nem vetores.
+
+Links operacionais reutilizam a central de atualização (`/painel/base-de-conhecimento/atualizacao/`) e busca diagnóstica existentes — não duplica ações mutáveis de sync/index.
+
+Documentação detalhada: `docs/phase10_rag_ai_observability.md`.
+
+## Alertas operacionais (Fase 11)
+
+Rotas tenant-scoped:
+
+```text
+/painel/base-de-conhecimento/alertas/
+/painel/base-de-conhecimento/alertas/<id>/
+```
+
+Sincronização explícita via POST em `/painel/base-de-conhecimento/saude/sincronizar/` ou CLI `sync_operational_alerts`.
+
+Capabilities: visualização `knowledge_base.view`; reconhecer/resolver/sincronizar `knowledge_base.operate`.
+
+Documentação: `docs/phase11_operational_alerts.md`.
+
+## Monitoramento automático (Fase 12)
+
+Execução periódica via `process_operational_monitoring` (one-shot). Templates systemd em `deploy/staging/livia-operational-monitoring.*` — **não habilitar por padrão**.
+
+Gate global `LIVIA_OPERATIONAL_MONITORING_ENABLED=false` (default). Portal manual continua disponível via POST na Central de Saúde.
+
+Documentação: `docs/phase12_operational_monitoring.md`.
+
+## Governança operacional (Fase 13)
+
+Rotas adicionais:
+
+```text
+/painel/base-de-conhecimento/manutencoes/
+/painel/base-de-conhecimento/manutencoes/nova/
+/painel/base-de-conhecimento/alertas/<id>/atribuir|desatribuir|silenciar|dessilenciar
+```
+
+Manutenção programada, silenciamento temporário, atribuição de responsável, SLA por severidade, scorecards na Central de Saúde.
+
+Capabilities: visualizar `knowledge_base.view`; operar alertas `knowledge_base.operate`; manutenção ampla `knowledge_base.configure`.
+
+Documentação: `docs/phase13_operational_governance.md`.
+
+## Fila operacional (Fase 14)
+
+```text
+/painel/operacoes/minhas-pendencias/
+/painel/operacoes/fila/
+```
+
+Prioridade P1–P4 derivada, claim/transferência/escalonamento interno integrados ao monitoramento.
+
+Documentação: `docs/phase14_operational_work_queue.md`.
+
+## Notificações operacionais (Fase 15)
+
+```text
+/painel/notificacoes/
+/painel/notificacoes/preferencias/
+```
+
+Central in-app tenant-scoped, badge no menu, mark-read POST, preferências por membership. E-mail operacional permanece dry-run.
+
+Documentação: `docs/phase15_operational_notifications.md`.
+
+## Analytics operacional (Fase 16)
+
+```text
+/painel/operacoes/analytics/
+```
+
+Indicadores tenant-scoped: backlog, SLA, tempos, capacity, notificações, monitoramento.
+
+Documentação: `docs/phase16_operational_analytics.md`.
+
 ## Assets
 
 Os assets do Hando copiados ficam sob `static/operations_portal/hando/`. O runtime não lê arquivos de `./hando/`.
