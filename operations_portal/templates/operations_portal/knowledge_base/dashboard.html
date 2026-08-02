@@ -1,0 +1,73 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Base de conhecimento{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Base de conhecimento</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-6 col-xl-4">
+      <div class="card h-100"><div class="card-body">
+        <p class="text-muted mb-1">Prontidão</p>
+        <span class="badge bg-{{ metrics.readiness.tone }}-subtle text-{{ metrics.readiness.tone }} fs-13">{{ metrics.readiness.label }}</span>
+        <p class="mb-0 mt-2 text-muted fs-13">{{ metrics.readiness.detail }}</p>
+      </div></div>
+    </div>
+    <div class="col-md-6 col-xl-4">
+      <div class="card h-100"><div class="card-body">
+        <p class="text-muted mb-1">Recuperação no chat</p>
+        <p class="mb-1"><strong>RAG tenant:</strong> {% if metrics.retrieval_enabled %}Habilitado{% else %}Desabilitado{% endif %}</p>
+        <p class="mb-1"><strong>Global:</strong> {% if metrics.global_rag_enabled %}Ativo{% else %}Inativo{% endif %}</p>
+        <p class="mb-0"><strong>Dry-run:</strong> {% if metrics.global_dry_run %}Sim{% else %}Não{% endif %}</p>
+      </div></div>
+    </div>
+    <div class="col-md-6 col-xl-4">
+      <div class="card h-100"><div class="card-body">
+        <p class="text-muted mb-1">Configuração</p>
+        <p class="mb-1"><strong>Presente:</strong> {% if metrics.configuration_present %}Sim{% else %}Não{% endif %}</p>
+        <p class="mb-1"><strong>Última indexação:</strong> {% if metrics.last_index_at %}{{ metrics.last_index_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</p>
+        <p class="mb-0"><strong>Resultado:</strong> {{ metrics.last_index_status|default:"-" }}</p>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Documentos</p><h4 class="mb-0">{{ metrics.documents_total }}</h4><small class="text-muted">{{ metrics.documents_active }} ativos</small></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Chunks ativos</p><h4 class="mb-0">{{ metrics.chunks_active }}</h4></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Com embedding</p><h4 class="mb-0">{{ metrics.chunks_with_embedding }}</h4></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Sem embedding</p><h4 class="mb-0">{{ metrics.chunks_without_embedding }}</h4></div></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Limites efetivos</h5></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-3"><strong>Score mínimo</strong><br>{{ metrics.limits.effective_min_similarity_score }}</div>
+        <div class="col-md-3"><strong>Máx. chunks</strong><br>{{ metrics.limits.effective_max_chunks }}</div>
+        <div class="col-md-3"><strong>Orçamento de contexto</strong><br>{{ metrics.limits.effective_max_context_chars }} caracteres</div>
+        <div class="col-md-3"><strong>Timeout efetivo</strong><br>{{ metrics.limits.effective_timeout_seconds }}s</div>
+        <div class="col-md-6">
+          <strong>Provider / model</strong><br>
+          {% if metrics.embedding_profile %}
+            {{ metrics.embedding_profile.provider }} / {{ metrics.embedding_profile.model }}
+          {% else %}
+            {{ metrics.embedding_profile_error|default:"Indisponível" }}
+          {% endif %}
+        </div>
+        <div class="col-md-6">
+          <strong>Cobertura de embeddings</strong><br>
+          {{ metrics.coverage.compatible }} compatíveis de {{ metrics.coverage.indexable_chunks }} chunks indexáveis
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

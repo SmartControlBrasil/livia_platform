@@ -61,23 +61,25 @@ class WebhookDispatchService:
             "created_at": _iso(lead_draft.created_at),
         }
 
-    def dispatch_handoff_created(self, handoff):
+    def dispatch_handoff_created(self, handoff, *, event_id="", envelope=None):
         return self.dispatch_event(
             handoff.tenant,
             TenantWebhookConfig.EventType.HANDOFF_CREATED,
-            self.build_handoff_payload(handoff),
+            envelope or self.build_handoff_payload(handoff),
             related_handoff=handoff,
+            event_id=event_id,
         )
 
-    def dispatch_lead_qualified(self, lead_draft):
+    def dispatch_lead_qualified(self, lead_draft, *, event_id="", envelope=None):
         return self.dispatch_event(
             lead_draft.tenant,
             TenantWebhookConfig.EventType.LEAD_QUALIFIED,
-            self.build_lead_payload(lead_draft),
+            envelope or self.build_lead_payload(lead_draft),
             related_lead=lead_draft,
+            event_id=event_id,
         )
 
-    def dispatch_event(self, tenant, event_type, payload, related_handoff=None, related_lead=None):
+    def dispatch_event(self, tenant, event_type, payload, related_handoff=None, related_lead=None, event_id="", envelope=None):
         configs = list(
             TenantWebhookConfig.objects.filter(tenant=tenant, is_active=True).filter(
                 event_type__in=[event_type, TenantWebhookConfig.EventType.ALL]
@@ -95,11 +97,13 @@ class WebhookDispatchService:
                     payload,
                     related_handoff=related_handoff,
                     related_lead=related_lead,
+                    event_id=event_id,
+                    envelope=envelope,
                 )
             )
         return logs
 
-    def _dispatch_to_config(self, config, event_type, payload, related_handoff=None, related_lead=None):
+    def _dispatch_to_config(self, config, event_type, payload, related_handoff=None, related_lead=None, event_id="", envelope=None):
         if self._already_delivered(config, event_type, related_handoff=related_handoff, related_lead=related_lead):
             return self._create_log(
                 config,
@@ -111,12 +115,14 @@ class WebhookDispatchService:
                 related_lead=related_lead,
             )
 
+        delivery_payload = self._with_event_envelope(payload, event_type=event_type, event_id=event_id, tenant_slug=config.tenant.slug)
+
         if not getattr(settings, "LIVIA_WEBHOOKS_ENABLED", False):
             return self._create_log(
                 config,
                 event_type,
                 WebhookDeliveryLog.Status.SKIPPED,
-                payload,
+                delivery_payload,
                 error_message="Webhooks desabilitados globalmente.",
                 related_handoff=related_handoff,
                 related_lead=related_lead,
@@ -127,7 +133,7 @@ class WebhookDispatchService:
                 config,
                 event_type,
                 WebhookDeliveryLog.Status.DRY_RUN,
-                payload,
+                delivery_payload,
                 status_code=202,
                 related_handoff=related_handoff,
                 related_lead=related_lead,
@@ -138,6 +144,9 @@ class WebhookDispatchService:
             "X-Livia-Event": event_type,
             "X-Livia-Tenant": config.tenant.slug,
         }
+        if event_id:
+            headers["X-Livia-Event-ID"] = event_id
+            headers["Idempotency-Key"] = event_id
         if config.secret_token:
             headers["Authorization"] = f"Bearer {config.secret_token}"
             headers["X-Livia-Signature"] = config.secret_token
@@ -145,7 +154,7 @@ class WebhookDispatchService:
         try:
             response = requests.post(
                 config.target_url,
-                json=payload,
+                json=delivery_payload,
                 headers=headers,
                 timeout=int(getattr(settings, "LIVIA_WEBHOOK_TIMEOUT_SECONDS", 6)),
             )
@@ -161,7 +170,7 @@ class WebhookDispatchService:
                 config,
                 event_type,
                 WebhookDeliveryLog.Status.FAILED,
-                payload,
+                delivery_payload,
                 error_message=_short_text(str(exc), 500),
                 related_handoff=related_handoff,
                 related_lead=related_lead,
@@ -172,7 +181,7 @@ class WebhookDispatchService:
                 config,
                 event_type,
                 WebhookDeliveryLog.Status.SENT,
-                payload,
+                delivery_payload,
                 status_code=response.status_code,
                 related_handoff=related_handoff,
                 related_lead=related_lead,
@@ -182,7 +191,7 @@ class WebhookDispatchService:
             config,
             event_type,
             WebhookDeliveryLog.Status.FAILED,
-            payload,
+            delivery_payload,
             status_code=response.status_code,
             error_message=_short_text(getattr(response, "text", ""), 500),
             related_handoff=related_handoff,
@@ -235,3 +244,17 @@ class WebhookDispatchService:
             else:
                 safe_payload[key] = value
         return safe_payload
+
+    def _with_event_envelope(self, payload, *, event_type, event_id, tenant_slug):
+        data = dict(payload or {})
+        if "event_id" not in data:
+            data["event_id"] = str(event_id or "")
+        if "event_type" not in data:
+            data["event_type"] = event_type
+        if "tenant" not in data:
+            data["tenant"] = {"slug": tenant_slug}
+        if "tenant_slug" not in data:
+            data["tenant_slug"] = tenant_slug
+        if "schema_version" not in data:
+            data["schema_version"] = "legacy"
+        return data

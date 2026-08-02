@@ -95,3 +95,7 @@ Validação manual após ativar:
 3. Enviar uma frase como “quero falar com uma pessoa”.
 4. Confirmar que o `HandoffRequest` fica pendente no Admin/painel e que a resposta JSON contém `human_handoff.active=true`.
 5. Conferir que o botão abre nova aba com `https://wa.me/551151968525?...` e mensagem pré-preenchida, sem envio automático.
+
+## Entrega externa via outbox
+
+A criação de `HandoffRequest` grava `handoff.created` na outbox na mesma transação. Notificações e webhooks de handoff são processados posteriormente por `process_outbox`, preservando o atendimento local mesmo se a integração externa estiver indisponível.

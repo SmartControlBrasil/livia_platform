@@ -58,17 +58,87 @@ monta um texto curto com até poucos trechos relevantes para a Lívia usar no fl
 
 ## Limitações atuais
 
-- Busca textual simples, sem embeddings vetoriais.
-- Sem OpenAI nesta fase.
+- O retriever textual (`retrieve_relevant_knowledge`) usa somente `KnowledgeDocument` e serve de fallback.
+- A fase 5 conecta embeddings locais (`TenantRagChunkEmbedding`) ao chat via `retrieve_context` + `build_knowledge_context`, atrás de feature flags.
+- A busca vetorial filtra por tenant antes do cosseno e não é endpoint público.
+- SQLite não oferece busca vetorial de produção; pgvector fica para evolução em PostgreSQL.
 - Sem parser de PDF complexo.
-- Sem dashboard/admin customizado.
-- Ranking heurístico e pequeno, adequado para base inicial por tenant.
+
+## Política de corpus (tenant RAG Google Drive)
+
+Critérios operacionais para `sync_tenant_rag`:
+
+- `INCLUDE`: catálogo de materiais, aplicações, serviços, triagem/orçamento, FAQ de manutenção, processos comerciais de atendimento.
+- `EXCLUDE`: credenciais, segredos, folha de pagamento, contratos sigilosos, documentos administrativos sem valor para atendimento.
+- `REVIEW`: conteúdo ambíguo que depende de curadoria manual.
+
+Boas práticas de curadoria:
+
+- manter escopo no folder aprovado do tenant;
+- revisar documentos vazios e falhas de exportação;
+- evitar duplicatas integrais (versões/cópias iguais);
+- revisar amostra de chunks (sentido semântico, corte de contexto, repetição);
+- manter rastreabilidade por `manifest`, `drive_file_id`, `ordinal`, `hash`.
 
 ## Plano futuro
 
-- Criar chunks dedicados por documento.
-- Adicionar embeddings e busca vetorial por tenant.
+- Evoluir `build_retrieval_query` com summary/discovery.
+- Migrar armazenamento vetorial para pgvector em PostgreSQL quando a escala exigir.
 - Adicionar pipeline de ingestão de PDFs e páginas do site.
-- Guardar fontes e auditoria de atualização.
-- Permitir curadoria/admin para cada tenant.
+- Permitir curadoria/admin avançada para cada tenant.
 - Usar OpenAI para síntese controlada, mantendo restrições de segurança comercial.
+
+## Observabilidade operacional (Fase 10)
+
+Agregações compartilhadas em `knowledge_base/rag/operational_metrics.py` e diagnósticos em `operational_diagnostics.py` alimentam:
+
+- CLI: `rag_operational_report`, `ai_usage_report`;
+- Painel: `/painel/base-de-conhecimento/saude/`.
+
+Métricas de retrieval usam `RagRetrievalEvent` (tenant-scoped). Telemetria de IA usa `AiUsageEvent`. Vector health reutiliza `inspect_tenant_embedding_health` sem chamadas OpenAI na renderização.
+
+Ver `docs/phase10_rag_ai_observability.md` e `docs/phase10_final_report.md`.
+
+## Alertas operacionais (Fase 11)
+
+Modelo `TenantOperationalAlert` com deduplicação por fingerprint, runbooks determinísticos e fluxo open → acknowledged → resolved.
+
+Serviços: `knowledge_base/rag/operational_alert_rules.py`, `operational_alert_sync.py`, `operational_alert_runbooks.py`.
+
+Ver `docs/phase11_operational_alerts.md` e `docs/phase11_final_report.md`.
+
+## Monitoramento automático (Fase 12)
+
+Modelos `OperationalMonitoringBatchRun` e `TenantOperationalMonitoringRun`. Serviço `operational_monitoring.py`.
+
+Flag tenant `operational_monitoring_enabled` (default `False`). Comando `process_operational_monitoring`.
+
+Ver `docs/phase12_operational_monitoring.md` e `docs/phase12_final_report.md`.
+
+## Governança operacional (Fase 13)
+
+Modelos `TenantOperationalAlertSilence`, `TenantOperationalMaintenanceWindow`. Política em `alert_governance.py`; ações em `alert_governance_services.py`.
+
+SLA persistido em `ack_due_at` / `resolution_due_at`. Silenciamento expira por data; manutenção pausa SLA.
+
+Ver `docs/phase13_operational_governance.md` e `docs/phase13_final_report.md`.
+
+## Fila operacional (Fase 14)
+
+Prioridade e escalonamento em `operational_work_queue.py` / `operational_work_queue_services.py`. Campos `reopen_count`, `escalation_level` no alerta.
+
+Ver `docs/phase14_operational_work_queue.md` e `docs/phase14_final_report.md`.
+
+## Notificações operacionais (Fase 15)
+
+Outbox dedicada `TenantOperationalNotification`, política em `operational_notification_policy.py`, worker `process_operational_notifications`.
+
+Canal in-app ativo; e-mail/webhook dry-run. Enqueue via `transaction.on_commit`.
+
+Ver `docs/phase15_operational_notifications.md` e `docs/phase15_final_report.md`.
+
+## Analytics operacional (Fase 16)
+
+Service `operational_analytics.py` — métricas determinísticas tenant-scoped sem snapshots persistidos.
+
+Ver `docs/phase16_operational_analytics.md` e `docs/phase16_final_report.md`.

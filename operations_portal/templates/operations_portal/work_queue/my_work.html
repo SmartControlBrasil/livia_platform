@@ -1,0 +1,68 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Minhas pendências{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column gap-2">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Minhas pendências operacionais</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    <a class="btn btn-sm btn-light border" href="{% url 'operations_portal:operational_work_queue' %}?tenant={{ selected_tenant.pk }}">Fila do tenant</a>
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="card mb-3">
+    <div class="card-body fs-13">
+      <p class="mb-0">Atribuídos a você: <strong>{{ personal_count }}</strong> · Inclui alertas sem responsável que você pode assumir.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Pendências</h5></div>
+    <div class="card-body">
+      {% if page_obj.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 fs-13">
+          <thead>
+            <tr>
+              <th>Prioridade</th>
+              <th>Título</th>
+              <th>Status</th>
+              <th>SLA</th>
+              <th>Escalonamento</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in page_obj.object_list %}
+            <tr>
+              <td><span class="badge bg-dark-subtle text-dark">{{ item.priority_label }}</span></td>
+              <td><a href="{% url 'operations_portal:knowledge_base_alert_detail' item.id %}?tenant={{ selected_tenant.pk }}">{{ item.title }}</a></td>
+              <td>{{ item.status_label }}</td>
+              <td>{{ item.sla_state_label }}</td>
+              <td>{{ item.escalation_level_label }}</td>
+              <td>
+                {% if can_operate_kb and not item.assigned_to_id %}
+                <form method="post" action="{% url 'operations_portal:operational_alert_claim' item.id %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+                  <button type="submit" class="btn btn-sm btn-outline-primary">Assumir</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% include 'operations_portal/partials/pagination.html' %}
+      {% else %}
+      <p class="text-muted mb-0">Nenhuma pendência atribuída ou disponível para assunção.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

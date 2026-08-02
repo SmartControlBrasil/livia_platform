@@ -1,0 +1,46 @@
+# Lívia Platform — worker RAG operacional (template de staging)
+# NÃO instalar automaticamente. Ver docs/rag_operations_staging_runbook.md
+#
+# Instalação manual (operador, no staging):
+#   sudo cp deploy/staging/livia-rag-operations-worker.service /etc/systemd/system/
+#   sudo cp deploy/staging/livia-rag-operations-worker.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now livia-rag-operations-worker.timer
+#
+# Execução sob demanda:
+#   sudo systemctl start livia-rag-operations-worker.service
+#
+# Logs:
+#   journalctl -u livia-rag-operations-worker.service -f
+
+[Unit]
+Description=Livia RAG operations worker (oneshot)
+Documentation=file:///opt/livia-platform/docs/rag_operations_staging_runbook.md
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=livia-staging
+Group=livia-staging
+WorkingDirectory=/opt/livia-platform
+EnvironmentFile=/opt/livia-platform/.env
+
+# Recupera stale antes de consumir pendentes; limita carga por ciclo.
+ExecStart=/opt/livia-platform/.venv/bin/python manage.py process_tenant_rag_operations --limit 3
+ExecStartPost=/opt/livia-platform/.venv/bin/python manage.py tenant_rag_operations_status
+
+# oneshot não reinicia automaticamente; o timer dispara novos ciclos.
+Restart=no
+TimeoutStartSec=7200
+
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

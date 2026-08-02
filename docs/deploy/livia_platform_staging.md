@@ -11,11 +11,18 @@ Checklist operacional para preparar `livia.smartcontrolbrasil.com.br` sem execut
 5. Manter `DJANGO_DEBUG=False` em staging/produção.
 6. Configurar `DJANGO_ALLOWED_HOSTS=livia.smartcontrolbrasil.com.br` e hosts auxiliares necessários.
 7. Configurar `DJANGO_CSRF_TRUSTED_ORIGINS=https://livia.smartcontrolbrasil.com.br`.
-8. Configurar `LIVIA_ALLOWED_WIDGET_ORIGINS` somente com domínios autorizados para embed.
+8. Cadastrar origins autorizadas por tenant em `TenantAllowedOrigin`.
 
 ## 2. Banco de dados
 
-O projeto mantém SQLite como padrão local. Para staging/produção, defina a estratégia de banco antes do deploy. Ainda não há helper `DATABASE_URL` no projeto; se PostgreSQL/MySQL for adotado, incluir a dependência de driver, ajustar `DATABASES` e validar migrations em staging antes de produção.
+O projeto mantém SQLite como fallback local em `DEBUG=True`, mas staging/produção exigem `DATABASE_URL` apontando para PostgreSQL quando `DEBUG=False`.
+
+Checklist mínimo:
+
+1. Definir `DATABASE_URL` de staging para PostgreSQL.
+2. Confirmar `DJANGO_ALLOW_EXTERNAL_TEST_DATABASE_URL=False` fora de ambiente de teste local.
+3. Rodar `python manage.py database_readiness` antes e depois das migrations.
+4. Rodar `python manage.py database_validation_report` após carga inicial para comparar contagens sem PII.
 
 ## 3. Instalar aplicação
 
@@ -69,7 +76,7 @@ Configurar OpenLiteSpeed/LiteSpeed como proxy/app server para o processo WSGI/AS
 1. Abrir `https://livia.smartcontrolbrasil.com.br/demo/`.
 2. Abrir `https://livia.smartcontrolbrasil.com.br/widget.js`.
 3. Testar `POST /api/chat/` com tenant válido.
-4. Testar embed em site externo autorizado via `LIVIA_ALLOWED_WIDGET_ORIGINS`.
+4. Testar embed em site externo cadastrado em `TenantAllowedOrigin`.
 5. Testar origin não autorizado e confirmar ausência de headers CORS permissivos.
 6. Criar lead qualificado com dispatch dry-run.
 7. Conferir logs do app para eventos `crm_dispatch_*`.

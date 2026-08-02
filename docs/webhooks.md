@@ -127,3 +127,7 @@ Para interromper envios reais rapidamente:
 3. Desative configs específicas com is_active=False no admin.
 
 Essas ações não afetam Smart360, IA, handoff interno ou a resposta ao usuário.
+
+## Outbox transacional
+
+Webhooks de lead, handoff e resumo agora devem ser entregues pelo processamento de `OutboxEvent`. O payload enviado inclui `event_id`, `event_type`, `tenant`, `tenant_slug` e `schema_version`; os headers incluem `X-Livia-Event-ID` e `Idempotency-Key` quando há HTTP real. O enqueue não faz HTTP dentro da transação local.

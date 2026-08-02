@@ -76,9 +76,11 @@
               </div>
             </div>
 
+            {% if can_change_settings %}
             <div class="d-flex justify-content-end mt-4">
               <button type="submit" class="btn btn-primary">Salvar</button>
             </div>
+            {% endif %}
           </form>
           {% else %}
           <p class="text-muted mb-0">Cadastre um tenant antes de configurar atendimento humano.</p>

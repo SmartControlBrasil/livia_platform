@@ -18,7 +18,7 @@ https://livia.smartcontrolbrasil.com.br/install/granimarmores-pitondo/
 https://livia.smartcontrolbrasil.com.br/install/caneca-de-garagem/
 ~~~
 
-A página mostra status do tenant, domínio/origin configurado, configurações visuais atuais, snippet do widget, instruções curtas e um exemplo de curl para validar a API.
+A página mostra status do tenant, origins autorizadas, configurações visuais atuais, snippet do widget, instruções curtas e um exemplo de curl para validar a API.
 
 ## Pacote JSON
 
@@ -106,7 +106,7 @@ A página mostra aviso de tenant inativo. Ative o tenant no Django Admin em Tena
 
 ### Origin bloqueado
 
-Se `LIVIA_ALLOWED_WIDGET_ORIGINS` estiver preenchido, o origin do site precisa estar na lista exatamente com o esquema correto, por exemplo `https://www.granimarmorespitondo.com.br`.
+O origin do site precisa estar cadastrado em `TenantAllowedOrigin` exatamente com o esquema correto, por exemplo `https://www.granimarmorespitondo.com.br`. A lista global antiga não autoriza tenants nesta fase.
 
 ### Domínio errado
 
@@ -123,3 +123,7 @@ Confira se o snippet usa `data-api-url="https://livia.smartcontrolbrasil.com.br/
 ## Personalização visual
 
 Veja `docs/widget_customization.md` para campos disponíveis, defaults, endpoint `/api/widget/config/` e exemplos de onboarding com aparência por tenant.
+
+## Idempotência do envio
+
+O widget gera um `request_id` UUID para cada mensagem enviada, envia o valor no JSON e no header `X-Livia-Request-ID`, e reutiliza o mesmo valor apenas em retries de rede/timeout daquela mesma tentativa. Erros `400`, `403`, `409 request_id_conflict` e `429` não são repetidos automaticamente; `409 request_in_progress` usa uma espera curta e consulta novamente com o mesmo `request_id`.

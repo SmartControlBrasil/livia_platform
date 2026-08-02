@@ -27,7 +27,7 @@
       </span>
     </p>
     <p>Tenant: <code>{{ package.tenant.slug }}</code></p>
-    <p>Domínio/origin configurado: <code>{{ package.allowed_origin|default:package.tenant.domain|default:"não configurado" }}</code></p>
+    <p>Origins autorizadas:</p><ul>{% for origin in package.allowed_origins %}<li><code>{{ origin }}</code></li>{% empty %}<li><code>não configurado</code></li>{% endfor %}</ul>
 
     <section>
       <h2>Configuração visual</h2>

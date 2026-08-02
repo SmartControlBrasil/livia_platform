@@ -42,13 +42,25 @@
         <p><span class="text-muted">Status CRM:</span> <span class="badge bg-{{ lead.crm_state.tone }}-subtle text-{{ lead.crm_state.tone }}">{{ lead.crm_state.label }}</span></p>
         <p><span class="text-muted">External ID:</span> {{ lead.crm_external_id|default:"-" }}</p>
         <p><span class="text-muted">Enviado em:</span> {{ lead.sent_to_crm_at|date:"d/m/Y H:i"|default:"-" }}</p>
-        <p><span class="text-muted">Erro:</span> {{ lead.crm_error|default:"-" }}</p>
+        <p><span class="text-muted">Erro:</span> {{ lead.crm_error_sanitized|default:"-" }}</p>
         {% if lead.can_retry_crm_dispatch %}<p class="text-warning mb-0">Reprocessamento disponível para este lead.</p>{% endif %}
+      </div></div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Outbox e retries</h5></div><div class="card-body">
+        <p><span class="text-muted">Estado da outbox:</span> <span class="badge bg-{{ lead.outbox_status_tone }}-subtle text-{{ lead.outbox_status_tone }}">{{ lead.outbox_status_label }}</span></p>
+        <p><span class="text-muted">Event ID:</span> {% if lead.outbox_event_id %}<code>{{ lead.outbox_event_id_compact }}</code>{% else %}-{% endif %}</p>
+        <p><span class="text-muted">Tentativas:</span> {{ lead.outbox_attempts }}{% if lead.outbox_max_attempts %}/{{ lead.outbox_max_attempts }}{% endif %}</p>
+        <p><span class="text-muted">Última tentativa:</span> {{ lead.outbox_last_attempt_at|date:"d/m/Y H:i"|default:"-" }}</p>
+        <p><span class="text-muted">Próximo retry:</span> {{ lead.outbox_next_retry_at|date:"d/m/Y H:i"|default:"-" }}</p>
+        <p><span class="text-muted">Tipo da falha:</span> {{ lead.failure_kind_label }}</p>
+        <p><span class="text-muted">Último erro técnico:</span> {{ lead.outbox_last_error_message|default:"-" }}</p>
+        {% if lead.outbox_note %}<p class="text-muted mb-0">{{ lead.outbox_note }}</p>{% endif %}
       </div></div>
 
       <div class="card"><div class="card-header"><h5 class="card-title mb-0">Origem e histórico</h5></div><div class="card-body">
         <p><span class="text-muted">Criado:</span> {{ lead.created_at|date:"d/m/Y H:i" }}</p>
         <p><span class="text-muted">Atualizado:</span> {{ lead.updated_at|date:"d/m/Y H:i" }}</p>
+        <p><span class="text-muted">Origem:</span> {{ lead.conversation.source_page|default:"-" }}</p>
         {% if lead.conversation %}<p><span class="text-muted">Conversa:</span> <a href="{% url 'operations_portal:conversation_detail' lead.conversation.pk %}">{{ lead.conversation.session_id }}</a></p>{% else %}<p class="text-muted">Sem conversa vinculada.</p>{% endif %}
         {% if lead.latest_handoff %}<p><span class="text-muted">Handoff:</span> <a href="{% url 'admin:conversations_handoffrequest_change' lead.latest_handoff.pk %}">#{{ lead.latest_handoff.pk }}</a> <span class="badge bg-warning-subtle text-warning">{{ lead.latest_handoff.priority_label }}</span></p>{% endif %}
       </div></div>

@@ -5,6 +5,7 @@ from django.test import TestCase
 
 from conversations.admin import mark_handoffs_cancelled, mark_handoffs_resolved
 from conversations.models import Conversation, HandoffRequest, Message
+from integrations.models import OutboxEvent
 from knowledge_base.admin import activate_knowledge_documents, deactivate_knowledge_documents
 from knowledge_base.models import KnowledgeDocument
 from leads.admin import retry_failed_crm_dispatch
@@ -150,17 +151,13 @@ class AdminActionTests(TestCase):
             status=LeadDraft.Status.FAILED,
             crm_external_id="crm-already-created",
         )
-        result = Mock(success=True)
-        service = Mock()
-        service.dispatch_if_qualified.return_value = result
         modeladmin = Mock()
 
-        with patch("leads.admin.CRMDispatchService", return_value=service):
-            retry_failed_crm_dispatch(
-                modeladmin,
-                Mock(),
-                LeadDraft.objects.filter(pk__in=[failed_lead.pk, sent_lead.pk, inconsistent_lead.pk]),
-            )
+        retry_failed_crm_dispatch(
+            modeladmin,
+            Mock(user=None, META={}),
+            LeadDraft.objects.filter(pk__in=[failed_lead.pk, sent_lead.pk, inconsistent_lead.pk]),
+        )
 
         failed_lead.refresh_from_db()
         sent_lead.refresh_from_db()
@@ -168,8 +165,8 @@ class AdminActionTests(TestCase):
         self.assertEqual(failed_lead.status, LeadDraft.Status.QUALIFIED)
         self.assertEqual(failed_lead.crm_error, "")
         self.assertEqual(sent_lead.status, LeadDraft.Status.SENT_TO_CRM)
+        self.assertEqual(OutboxEvent.objects.filter(event_type=OutboxEvent.EventType.LEAD_QUALIFIED, aggregate_id=str(failed_lead.pk)).count(), 1)
         self.assertEqual(inconsistent_lead.status, LeadDraft.Status.FAILED)
-        service.dispatch_if_qualified.assert_called_once()
         modeladmin.message_user.assert_called_once()
 
     def test_short_admin_text_methods_do_not_dump_large_values(self):

@@ -25,6 +25,7 @@ class Command(BaseCommand):
         parser.add_argument("--widget-enabled", action="store_true")
         parser.add_argument("--seed-knowledge", action="store_true")
         parser.add_argument("--dry-run", action="store_true")
+        parser.add_argument("--allowed-origin", action="append", dest="allowed_origins", default=[])
 
     def handle(self, *args, **options):
         try:
@@ -45,6 +46,7 @@ class Command(BaseCommand):
                 widget_enabled=not options["disable_widget"],
                 seed_knowledge=options["seed_knowledge"],
                 dry_run=options["dry_run"],
+                allowed_origins=options["allowed_origins"],
             )
         except (ValueError, ValidationError) as exc:
             raise CommandError(str(exc)) from exc
@@ -55,6 +57,10 @@ class Command(BaseCommand):
         self.stdout.write(f"AssistantProfile: {result.assistant_profile.name} ({'criado' if result.created_profile else 'atualizado'})")
         self.stdout.write(f"Knowledge criada: {result.created_knowledge_count}")
         self.stdout.write(f"Allowed origin: {result.allowed_origin}")
+        if result.allowed_origins:
+            self.stdout.write("Origins autorizadas:")
+            for origin in result.allowed_origins:
+                self.stdout.write(f"- {origin}")
         self.stdout.write(f"Widget: {'ativo' if result.assistant_profile.is_widget_enabled else 'inativo'}")
 
         if result.warnings:

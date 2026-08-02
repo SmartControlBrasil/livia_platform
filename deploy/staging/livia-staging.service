@@ -1,0 +1,58 @@
+# Lívia Platform — unit systemd de staging (template)
+# Instalação na VPS (operador):
+#   sudo cp deploy/staging/livia-staging.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable livia-staging.service
+#   sudo systemctl start livia-staging.service
+#
+# Produção: livia-platform.service @ 127.0.0.1:8011 — NÃO ALTERAR neste unit.
+#
+# Trade-offs de hardening:
+# - ProtectSystem=full: bloqueia escrita em /usr e /boot; projeto fica em /home (OK).
+# - ProtectHome=false: necessário para WorkingDirectory em /home/staging-livia... e leitura do .env.
+# - PrivateTmp=true: /tmp isolado por serviço (seguro; logs vão para journal via gunicorn -).
+# - NoNewPrivileges=true: impede elevação via setuid (compatível com Gunicorn normal).
+# - ReadWritePaths: staticfiles/collected e media se habilitados futuramente.
+
+[Unit]
+Description=Livia Platform Staging (GP pilot gate)
+Documentation=file:///home/staging-livia.smartcontrolbrasil.com.br/livia_platform/docs/deploy/staging_physical_deployment.md
+After=network.target postgresql-16.service
+Requires=postgresql-16.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=livia-staging
+Group=livia-staging
+WorkingDirectory=/home/staging-livia.smartcontrolbrasil.com.br/livia_platform
+EnvironmentFile=/home/staging-livia.smartcontrolbrasil.com.br/livia_platform/.env
+
+ExecStart=/home/staging-livia.smartcontrolbrasil.com.br/livia_platform/.venv/bin/gunicorn \
+    config.wsgi:application \
+    --bind 127.0.0.1:8012 \
+    --workers 2 \
+    --timeout 90 \
+    --access-logfile - \
+    --error-logfile -
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+# Ajuste se collectstatic/media forem gravados fora do WorkingDirectory:
+# ReadWritePaths=/home/staging-livia.smartcontrolbrasil.com.br/livia_platform/staticfiles
+
+[Install]
+WantedBy=multi-user.target

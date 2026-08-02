@@ -49,6 +49,57 @@ class Conversation(models.Model):
         return f"{self.tenant.slug} / {self.session_id}"
 
 
+class ChatRequest(models.Model):
+    class Status(models.TextChoices):
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="chat_requests",
+    )
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="chat_requests",
+    )
+    session_id = models.CharField(max_length=120)
+    request_id = models.UUIDField()
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PROCESSING,
+    )
+    request_fingerprint = models.CharField(max_length=64)
+    response_payload = models.JSONField(default=dict, blank=True)
+    response_status_code = models.PositiveSmallIntegerField(default=200)
+    error_code = models.CharField(max_length=80, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),
+            models.Index(fields=["status", "updated_at"]),
+            models.Index(fields=["tenant", "session_id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "session_id", "request_id"],
+                name="unique_chat_request_per_tenant_session_request",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.tenant.slug} / {self.session_id} / {self.request_id} / {self.status}"
+
+
 class Message(models.Model):
     class Role(models.TextChoices):
         USER = "user", "User"

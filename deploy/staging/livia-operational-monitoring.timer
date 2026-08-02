@@ -1,0 +1,22 @@
+# Timer periódico do monitoramento operacional (template de staging)
+# NÃO habilitar automaticamente. Ver docs/phase12_operational_monitoring.md
+#
+# Instalação manual (operador):
+#   sudo cp deploy/staging/livia-operational-monitoring.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   # Após gate LIVIA_OPERATIONAL_MONITORING_ENABLED=true e validação:
+#   # sudo systemctl enable --now livia-operational-monitoring.timer
+
+[Unit]
+Description=Run Livia operational monitoring periodically
+Requires=livia-operational-monitoring.service
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=15min
+Persistent=true
+RandomizedDelaySec=120
+Unit=livia-operational-monitoring.service
+
+[Install]
+WantedBy=timers.target

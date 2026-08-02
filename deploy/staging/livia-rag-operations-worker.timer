@@ -1,0 +1,20 @@
+# Timer periódico do worker RAG operacional (template de staging)
+# NÃO instalar automaticamente. Ver docs/rag_operations_staging_runbook.md
+#
+# Instalação manual (operador):
+#   sudo cp deploy/staging/livia-rag-operations-worker.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now livia-rag-operations-worker.timer
+
+[Unit]
+Description=Run Livia RAG operations worker periodically
+Requires=livia-rag-operations-worker.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=2min
+Persistent=true
+Unit=livia-rag-operations-worker.service
+
+[Install]
+WantedBy=timers.target

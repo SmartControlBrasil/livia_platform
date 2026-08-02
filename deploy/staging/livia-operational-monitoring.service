@@ -1,0 +1,42 @@
+# Lívia Platform — monitoramento operacional RAG/IA (template de staging)
+# NÃO instalar/habilitar automaticamente. Ver docs/phase12_operational_monitoring.md
+#
+# Instalação manual (operador, no staging):
+#   sudo cp deploy/staging/livia-operational-monitoring.service /etc/systemd/system/
+#   sudo cp deploy/staging/livia-operational-monitoring.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   # Somente após validação manual e gate global:
+#   # sudo systemctl enable --now livia-operational-monitoring.timer
+#
+# Execução sob demanda:
+#   sudo systemctl start livia-operational-monitoring.service
+
+[Unit]
+Description=Livia operational monitoring worker (oneshot)
+Documentation=file:///opt/livia-platform/docs/phase12_operational_monitoring.md
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=livia-staging
+Group=livia-staging
+WorkingDirectory=/opt/livia-platform
+EnvironmentFile=/opt/livia-platform/.env
+
+ExecStart=/opt/livia-platform/.venv/bin/python manage.py process_operational_monitoring --all-eligible --limit 20 --period 7d
+ExecStartPost=/opt/livia-platform/.venv/bin/python manage.py process_operational_monitoring --recover-stale-only
+
+Restart=no
+TimeoutStartSec=3600
+
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

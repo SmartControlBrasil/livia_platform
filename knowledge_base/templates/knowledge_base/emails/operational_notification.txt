@@ -1,0 +1,8 @@
+Tenant: {{ tenant_name }}
+Severidade: {{ notification.get_severity_display }}
+Título: {{ notification.title }}
+
+Resumo:
+{{ notification.summary }}
+
+Acesse o portal operacional para detalhes.

@@ -36,4 +36,4 @@
 
 `data-api-url` define a URL absoluta do endpoint de chat. Em sites externos, prefira informar este atributo para evitar que o navegador chame o domínio do site hospedeiro. Se ele não for informado, o widget usa a origem do próprio `script src` e completa com `/api/chat/`.
 
-Em produção, inclua os domínios autorizados para embed em `LIVIA_ALLOWED_WIDGET_ORIGINS`, separados por vírgula.
+Em produção, cadastre os domínios autorizados por tenant em `TenantAllowedOrigin`, com scheme exato e sem path. Consulte `docs/widget_origin_security.md`.

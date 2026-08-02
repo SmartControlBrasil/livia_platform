@@ -1,16 +1,25 @@
 import json
+import threading
+import time
+import unittest
+import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.conf import settings
 from django.core.cache import cache
-from django.test import TestCase, override_settings
+from django.db import close_old_connections, connection, transaction
+from django.test import TestCase, TransactionTestCase, override_settings
+from django.utils import timezone
 
-from conversations.models import Conversation, HandoffRequest, Message
+from conversations.models import ChatRequest, Conversation, HandoffRequest, Message
+from integrations.models import OutboxEvent
 from integrations.openai.client import OpenAIChatResult
 from assistant_core.state import LeadState
+from assistant_core.services.chat_idempotency import build_request_fingerprint, reserve_chat_request
 from assistant_core.services import LiviaDecisionService
 from leads.models import LeadDraft
-from tenants.models import AssistantProfile, Tenant
+from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
 
 
 class LiviaDecisionServiceTests(TestCase):
@@ -51,6 +60,21 @@ class LiviaDecisionServiceTests(TestCase):
 class ChatApiTests(TestCase):
     def setUp(self):
         cache.clear()
+        original_post = self.client.post
+
+        def post_with_request_id(path, *args, **kwargs):
+            if path == "/api/chat/" and kwargs.get("content_type") == "application/json" and "data" in kwargs:
+                try:
+                    payload = json.loads(kwargs["data"])
+                except (TypeError, ValueError):
+                    payload = None
+                if isinstance(payload, dict) and "request_id" not in payload:
+                    payload["request_id"] = str(uuid.uuid4())
+                    kwargs["data"] = json.dumps(payload)
+                    kwargs.setdefault("HTTP_X_LIVIA_REQUEST_ID", payload["request_id"])
+            return original_post(path, *args, **kwargs)
+
+        self.client.post = post_with_request_id
         self.tenant = Tenant.objects.create(
             name="Smart Control Brasil",
             slug="smart-control-brasil",
@@ -215,20 +239,21 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.json()["session_key"], "session-key-123")
         self.assertTrue(Conversation.objects.filter(session_id="session-key-123").exists())
 
-    @override_settings(DEBUG=True, LIVIA_ALLOWED_WIDGET_ORIGINS=[])
+    @override_settings(DEBUG=True, LIVIA_DEV_ALLOWED_WIDGET_ORIGINS=["http://localhost:3000"])
     def test_chat_api_options_allows_debug_localhost_origin(self):
         response = self.client.options(
             "/api/chat/",
             HTTP_ORIGIN="http://localhost:3000",
             HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
-            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type, authorization",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type, x-livia-tenant",
+            HTTP_X_LIVIA_TENANT=self.tenant.slug,
         )
 
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response["Access-Control-Allow-Origin"], "http://localhost:3000")
         self.assertIn("POST", response["Access-Control-Allow-Methods"])
         self.assertIn("Content-Type", response["Access-Control-Allow-Headers"])
-        self.assertIn("Authorization", response["Access-Control-Allow-Headers"])
+        self.assertIn("X-Livia-Tenant", response["Access-Control-Allow-Headers"])
 
     def test_chat_api_uses_active_assistant_profile(self):
         AssistantProfile.objects.create(
@@ -398,6 +423,10 @@ class ChatApiTests(TestCase):
         self.assertIn("nome", response.json()["reply"].lower())
 
     def test_chat_api_vague_budget_asks_area_before_contact(self):
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            business_domain="automação industrial, robótica, manutenção técnica e sistemas web",
+        )
         payload = {
             "tenant": self.tenant.slug,
             "session_id": "session-discovery-budget",
@@ -582,9 +611,10 @@ class ChatApiTests(TestCase):
         self.assertEqual(LeadDraft.objects.count(), 1)
         self.assertEqual(response.json()["intent"], "contact_data")
         lead_draft = LeadDraft.objects.get()
-        self.assertEqual(lead_draft.status, LeadDraft.Status.SENT_TO_CRM)
-        self.assertTrue(lead_draft.crm_external_id.startswith("dry-run-smart-control-brasil-"))
-        self.assertIsNotNone(lead_draft.sent_to_crm_at)
+        self.assertEqual(lead_draft.status, LeadDraft.Status.QUALIFIED)
+        self.assertEqual(OutboxEvent.objects.filter(event_type=OutboxEvent.EventType.LEAD_QUALIFIED, aggregate_id=str(lead_draft.pk)).count(), 1)
+        self.assertFalse(lead_draft.crm_external_id)
+        self.assertIsNone(lead_draft.sent_to_crm_at)
         self.assertIn("encaminhar", response.json()["reply"].lower())
 
     def test_chat_api_does_not_create_lead_draft_on_technical_question(self):
@@ -678,7 +708,8 @@ class ChatApiTests(TestCase):
         self.assertEqual(first_response.status_code, 200)
         lead_draft = LeadDraft.objects.get()
         first_external_id = lead_draft.crm_external_id
-        self.assertEqual(lead_draft.status, LeadDraft.Status.SENT_TO_CRM)
+        self.assertEqual(lead_draft.status, LeadDraft.Status.QUALIFIED)
+        self.assertEqual(OutboxEvent.objects.filter(event_type=OutboxEvent.EventType.LEAD_QUALIFIED, aggregate_id=str(lead_draft.pk)).count(), 1)
 
         second_payload = {
             "tenant": self.tenant.slug,
@@ -696,6 +727,7 @@ class ChatApiTests(TestCase):
         self.assertEqual(LeadDraft.objects.count(), 1)
         lead_draft.refresh_from_db()
         self.assertEqual(lead_draft.crm_external_id, first_external_id)
+        self.assertEqual(OutboxEvent.objects.filter(event_type=OutboxEvent.EventType.LEAD_QUALIFIED, aggregate_id=str(lead_draft.pk)).count(), 1)
         self.assertIn("já encaminhei", second_response.json()["reply"].lower())
 
     def test_chat_api_does_not_force_lead_on_ambiguous_message(self):
@@ -744,6 +776,25 @@ class LiviaDecisionKnowledgeTests(TestCase):
         self.assertIn("HygiBot", decision.reply)
         self.assertIn("ambientes profissionais", decision.reply)
         self.assertIn("ambiente", decision.reply.lower())
+
+    def test_livia_decision_does_not_echo_semantic_rag_block(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="semantic-no-echo")
+        semantic = (
+            "[KNOWLEDGE_BASE]\n"
+            "Fonte: GP — Soluções para banheiros\n"
+            "Score: 0.8123\n"
+            "Conteúdo:\n"
+            "GP — Soluções para banheiros com mármores e cuidados com ácidos.\n"
+            "[/KNOWLEDGE_BASE]"
+        )
+        decision = self.service.generate_reply(
+            [],
+            "Posso usar mármore no banheiro?",
+            conversation=conversation,
+            knowledge_context=semantic,
+        )
+        self.assertNotIn("GP — Soluções", decision.reply)
+        self.assertNotIn("Score:", decision.reply)
 
     def test_livia_decision_keeps_current_reply_without_knowledge(self):
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="no-knowledge-session")
@@ -868,6 +919,7 @@ class LiviaOptionalAIResponseTests(TestCase):
             is_active=True,
         )
 
+    @override_settings(LIVIA_AI_ENABLED=False, LIVIA_AI_GROUNDED_SYNTHESIS_ENABLED=False)
     def test_ai_disabled_by_default_keeps_deterministic_reply(self):
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-default-off")
         ai_client = FakeAIClient(OpenAIChatResult(text="Resposta por IA", success=True, dry_run=False))
@@ -999,3 +1051,546 @@ class LiviaOptionalAIResponseTests(TestCase):
 
         prompt_text = "\n".join(message["content"] for message in ai_client.calls[0])
         self.assertNotIn("secret-key-123", prompt_text)
+
+
+class ChatIdempotencyApiTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.tenant = Tenant.objects.create(
+            name="Smart Control Brasil",
+            slug="smart-control-brasil",
+            domain="smart-control-brasil.example",
+            is_active=True,
+        )
+
+    def post_chat(self, payload, **headers):
+        return self.client.post(
+            "/api/chat/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            **headers,
+        )
+
+    def payload(self, *, request_id=None, session_id="idem-session", message="Olá!", source_page="https://example.com/pagina"):
+        return {
+            "tenant": self.tenant.slug,
+            "session_id": session_id,
+            "request_id": str(request_id or uuid.uuid4()),
+            "message": message,
+            "source_page": source_page,
+        }
+
+    def test_request_id_is_required(self):
+        response = self.post_chat({"tenant": self.tenant.slug, "session_id": "missing", "message": "Olá"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "request_id_required")
+        self.assertEqual(ChatRequest.objects.count(), 0)
+
+    def test_invalid_request_id_returns_400(self):
+        response = self.post_chat(self.payload(request_id="not-a-uuid"))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "request_id_invalid")
+        self.assertEqual(ChatRequest.objects.count(), 0)
+
+    def test_request_id_header_must_match_payload(self):
+        response = self.post_chat(
+            self.payload(request_id=uuid.uuid4()),
+            HTTP_X_LIVIA_REQUEST_ID=str(uuid.uuid4()),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "request_id_header_mismatch")
+        self.assertEqual(ChatRequest.objects.count(), 0)
+
+    def test_first_request_completes_and_identical_retry_replays_same_payload(self):
+        request_id = uuid.uuid4()
+        payload = self.payload(request_id=request_id, message="Olá, quero saber mais.")
+
+        first = self.post_chat(payload, HTTP_X_LIVIA_REQUEST_ID=str(request_id))
+        second = self.post_chat(payload, HTTP_X_LIVIA_REQUEST_ID=str(request_id))
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+        self.assertEqual(first["X-Livia-Idempotent-Replay"], "false")
+        self.assertEqual(second["X-Livia-Idempotent-Replay"], "true")
+        self.assertEqual(ChatRequest.objects.count(), 1)
+        self.assertEqual(Message.objects.count(), 2)
+
+    def test_retry_does_not_duplicate_lead_or_messages(self):
+        request_id = uuid.uuid4()
+        payload = self.payload(
+            request_id=request_id,
+            session_id="lead-idempotent",
+            message="Sou Maria da ACME, meu telefone é 11999998888 e preciso de automação industrial.",
+        )
+
+        first = self.post_chat(payload)
+        second = self.post_chat(payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(LeadDraft.objects.count(), 1)
+        self.assertEqual(Message.objects.count(), 2)
+        self.assertEqual(OutboxEvent.objects.filter(event_type=OutboxEvent.EventType.LEAD_QUALIFIED, aggregate_id=str(LeadDraft.objects.get().pk)).count(), 1)
+
+    def test_retry_does_not_duplicate_handoff(self):
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            human_handoff_enabled=True,
+            human_handoff_channel="whatsapp",
+            handoff_whatsapp_number="551151968525",
+        )
+        request_id = uuid.uuid4()
+        payload = self.payload(request_id=request_id, session_id="handoff-idem", message="quero falar com uma pessoa")
+
+        first = self.post_chat(payload)
+        second = self.post_chat(payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(HandoffRequest.objects.count(), 1)
+        self.assertEqual(Message.objects.count(), 2)
+        self.assertEqual(first.json()["human_handoff"], second.json()["human_handoff"])
+
+    def test_same_request_id_with_different_payload_returns_conflict(self):
+        request_id = uuid.uuid4()
+        first = self.post_chat(self.payload(request_id=request_id, session_id="conflict", message="Olá"))
+        second = self.post_chat(self.payload(request_id=request_id, session_id="conflict", message="Mensagem diferente"))
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(second.json()["error"], "request_id_conflict")
+        self.assertEqual(ChatRequest.objects.count(), 1)
+        self.assertEqual(Message.objects.count(), 2)
+
+    @override_settings(DEBUG=False, LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=False)
+    def test_blocked_origin_does_not_create_chat_request(self):
+        TenantAllowedOrigin.objects.create(tenant=self.tenant, origin="https://allowed.example")
+        response = self.post_chat(self.payload(), HTTP_ORIGIN="https://evil.example", HTTP_X_LIVIA_TENANT=self.tenant.slug)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(ChatRequest.objects.count(), 0)
+
+    def test_inactive_tenant_does_not_create_chat_request(self):
+        self.tenant.is_active = False
+        self.tenant.save(update_fields=["is_active"])
+
+        response = self.post_chat(self.payload())
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(ChatRequest.objects.count(), 0)
+
+    @override_settings(LIVIA_CHAT_RATE_LIMIT_ENABLED=True, LIVIA_CHAT_RATE_LIMIT_REQUESTS=1, LIVIA_CHAT_RATE_LIMIT_WINDOW_SECONDS=300)
+    def test_rate_limited_request_is_completed_and_replayed(self):
+        first = self.post_chat(self.payload(session_id="rate-a"), REMOTE_ADDR="10.1.1.1")
+        request_id = uuid.uuid4()
+        limited_payload = self.payload(request_id=request_id, session_id="rate-b")
+        second = self.post_chat(limited_payload, REMOTE_ADDR="10.1.1.1")
+        replay = self.post_chat(limited_payload, REMOTE_ADDR="10.1.1.1")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+        self.assertEqual(replay.status_code, 429)
+        self.assertEqual(replay["X-Livia-Idempotent-Replay"], "true")
+        self.assertEqual(ChatRequest.objects.count(), 2)
+
+    def test_spam_request_is_completed_without_conversation_and_replayed(self):
+        payload = self.payload(message="Veja http://a.example www.b.example https://c.example para free money")
+
+        first = self.post_chat(payload)
+        replay = self.post_chat(payload)
+
+        self.assertEqual(first.status_code, 400)
+        self.assertEqual(replay.status_code, 400)
+        self.assertEqual(replay["X-Livia-Idempotent-Replay"], "true")
+        self.assertEqual(Conversation.objects.count(), 0)
+        self.assertEqual(ChatRequest.objects.count(), 1)
+
+    @override_settings(LIVIA_CHAT_PROCESSING_TIMEOUT_SECONDS=30)
+    def test_recent_processing_request_returns_in_progress(self):
+        request_id = uuid.uuid4()
+        payload = self.payload(request_id=request_id, session_id="processing", message="Olá")
+        fingerprint = __import__("assistant_core.services.chat_idempotency", fromlist=["build_request_fingerprint"]).build_request_fingerprint(
+            tenant_slug=self.tenant.slug,
+            session_id="processing",
+            request_id=request_id,
+            message="Olá",
+            source_page="https://example.com/pagina",
+        )
+        ChatRequest.objects.create(
+            tenant=self.tenant,
+            session_id="processing",
+            request_id=request_id,
+            request_fingerprint=fingerprint,
+            status=ChatRequest.Status.PROCESSING,
+        )
+
+        response = self.post_chat(payload)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "request_in_progress")
+        self.assertEqual(Message.objects.count(), 0)
+
+    @override_settings(LIVIA_CHAT_PROCESSING_TIMEOUT_SECONDS=1)
+    def test_abandoned_processing_request_can_be_recovered(self):
+        request_id = uuid.uuid4()
+        payload = self.payload(request_id=request_id, session_id="abandoned", message="Olá")
+        fingerprint = __import__("assistant_core.services.chat_idempotency", fromlist=["build_request_fingerprint"]).build_request_fingerprint(
+            tenant_slug=self.tenant.slug,
+            session_id="abandoned",
+            request_id=request_id,
+            message="Olá",
+            source_page="https://example.com/pagina",
+        )
+        chat_request = ChatRequest.objects.create(
+            tenant=self.tenant,
+            session_id="abandoned",
+            request_id=request_id,
+            request_fingerprint=fingerprint,
+            status=ChatRequest.Status.PROCESSING,
+        )
+        ChatRequest.objects.filter(pk=chat_request.pk).update(updated_at=timezone.now() - timedelta(seconds=5))
+
+        response = self.post_chat(payload)
+
+        self.assertEqual(response.status_code, 200)
+        chat_request.refresh_from_db()
+        self.assertEqual(chat_request.status, ChatRequest.Status.COMPLETED)
+        self.assertEqual(Message.objects.count(), 2)
+
+    def test_unexpected_processing_error_marks_failed_and_is_not_replayed_as_success(self):
+        request_id = uuid.uuid4()
+        payload = self.payload(request_id=request_id, session_id="boom", message="Olá")
+
+        with patch("assistant_core.views.process_chat_request", side_effect=RuntimeError("boom")):
+            response = self.post_chat(payload)
+        retry = self.post_chat(payload)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(retry.status_code, 409)
+        self.assertEqual(retry.json()["error"], "request_failed_retry")
+        self.assertEqual(ChatRequest.objects.get().status, ChatRequest.Status.FAILED)
+        self.assertEqual(Message.objects.count(), 0)
+
+    @override_settings(LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=True)
+    def test_ai_refinement_runs_outside_atomic_and_is_not_replayed(self):
+        from assistant_core.services.chat_processing import (
+            _DeterministicChatResult,
+            _refine_response_with_ai_if_enabled,
+        )
+        from assistant_core.services.livia_decision import LiviaReply
+
+        profile = AssistantProfile.objects.create(tenant=self.tenant, use_ai=True, is_active=True)
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-replay")
+        assistant_message = Message.objects.create(
+            conversation=conversation,
+            role=Message.Role.ASSISTANT,
+            content="Resposta determinística",
+        )
+        chat_request = ChatRequest.objects.create(
+            tenant=self.tenant,
+            conversation=conversation,
+            session_id="ai-replay",
+            request_id=uuid.uuid4(),
+            request_fingerprint="a" * 64,
+            status=ChatRequest.Status.COMPLETED,
+            response_payload={"reply": "Resposta determinística", "intent": "quote_request"},
+            response_status_code=200,
+        )
+        deterministic_result = _DeterministicChatResult(
+            chat_request=chat_request,
+            tenant=self.tenant,
+            conversation=conversation,
+            assistant_profile=profile,
+            history=[],
+            user_message="Quero orçamento para automação industrial.",
+            decision=LiviaReply(intent="quote_request", reply="Resposta determinística"),
+            assistant_message=assistant_message,
+            response_payload={"reply": "Resposta determinística", "intent": "quote_request"},
+        )
+        def fake_finalize(*args, **kwargs):
+            decision = kwargs["decision"]
+            return LiviaReply(
+                intent=decision.intent,
+                reply="Resposta refinada por IA.",
+                handoff_request_id=decision.handoff_request_id,
+                handoff_reason=decision.handoff_reason,
+            )
+
+        with patch("assistant_core.services.chat_processing._can_refine_with_ai", return_value=True), patch(
+            "assistant_core.services.chat_processing.LiviaDecisionService._finalize_ai_response",
+            side_effect=fake_finalize,
+        ):
+            payload = _refine_response_with_ai_if_enabled(
+                deterministic_result=deterministic_result,
+                decision_service=LiviaDecisionService(),
+            )
+
+        self.assertEqual(payload["reply"], "Resposta refinada por IA.")
+        assistant_message.refresh_from_db()
+        self.assertEqual(assistant_message.content, "Resposta refinada por IA.")
+        chat_request.refresh_from_db()
+        self.assertEqual(chat_request.response_payload.get("reply"), "Resposta refinada por IA.")
+
+    @override_settings(LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=True)
+    def test_ai_failure_keeps_request_completed_with_deterministic_payload(self):
+        from assistant_core.services.chat_processing import (
+            _DeterministicChatResult,
+            _refine_response_with_ai_if_enabled,
+        )
+        from assistant_core.services.livia_decision import LiviaReply
+
+        profile = AssistantProfile.objects.create(tenant=self.tenant, use_ai=True, is_active=True)
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-timeout")
+        assistant_message = Message.objects.create(
+            conversation=conversation,
+            role=Message.Role.ASSISTANT,
+            content="Resposta determinística",
+        )
+        chat_request = ChatRequest.objects.create(
+            tenant=self.tenant,
+            conversation=conversation,
+            session_id="ai-timeout",
+            request_id=uuid.uuid4(),
+            request_fingerprint="b" * 64,
+            status=ChatRequest.Status.COMPLETED,
+            response_payload={"reply": "Resposta determinística", "intent": "quote_request"},
+            response_status_code=200,
+        )
+        deterministic_result = _DeterministicChatResult(
+            chat_request=chat_request,
+            tenant=self.tenant,
+            conversation=conversation,
+            assistant_profile=profile,
+            history=[],
+            user_message="Quero orçamento para automação industrial.",
+            decision=LiviaReply(intent="quote_request", reply="Resposta determinística"),
+            assistant_message=assistant_message,
+            response_payload={"reply": "Resposta determinística", "intent": "quote_request"},
+        )
+
+        with patch("assistant_core.services.chat_processing._can_refine_with_ai", return_value=True), patch(
+            "assistant_core.services.chat_processing.LiviaDecisionService._finalize_ai_response",
+            side_effect=RuntimeError("ai failure"),
+        ):
+            payload = _refine_response_with_ai_if_enabled(
+                deterministic_result=deterministic_result,
+                decision_service=LiviaDecisionService(),
+            )
+
+        self.assertEqual(payload["reply"], "Resposta determinística")
+        assistant_message.refresh_from_db()
+        self.assertEqual(assistant_message.content, "Resposta determinística")
+        chat_request.refresh_from_db()
+        self.assertEqual(chat_request.status, ChatRequest.Status.COMPLETED)
+        self.assertEqual(chat_request.response_payload.get("reply"), "Resposta determinística")
+
+
+class ChatProcessingTransactionBoundaryTests(TransactionTestCase):
+    def test_ai_refinement_hook_runs_outside_application_atomic_block(self):
+        from assistant_core.services.chat_processing import (
+            _DeterministicChatResult,
+            _refine_response_with_ai_if_enabled,
+        )
+        from assistant_core.services.livia_decision import LiviaReply
+
+        tenant = Tenant.objects.create(name="Tenant", slug="tenant")
+        profile = AssistantProfile.objects.create(tenant=tenant, use_ai=True, is_active=True)
+        conversation = Conversation.objects.create(tenant=tenant, session_id="tx-boundary")
+        assistant_message = Message.objects.create(
+            conversation=conversation,
+            role=Message.Role.ASSISTANT,
+            content="Resposta determinística",
+        )
+        chat_request = ChatRequest.objects.create(
+            tenant=tenant,
+            conversation=conversation,
+            session_id="tx-boundary",
+            request_id=uuid.uuid4(),
+            request_fingerprint="c" * 64,
+            status=ChatRequest.Status.COMPLETED,
+            response_payload={"reply": "Resposta determinística", "intent": "quote_request"},
+            response_status_code=200,
+        )
+        deterministic_result = _DeterministicChatResult(
+            chat_request=chat_request,
+            tenant=tenant,
+            conversation=conversation,
+            assistant_profile=profile,
+            history=[],
+            user_message="Quero orçamento",
+            decision=LiviaReply(intent="quote_request", reply="Resposta determinística"),
+            assistant_message=assistant_message,
+            response_payload={"reply": "Resposta determinística", "intent": "quote_request"},
+        )
+        atomic_flags: list[bool] = []
+
+        def fake_finalize(*args, **kwargs):
+            atomic_flags.append(connection.in_atomic_block)
+            decision = kwargs["decision"]
+            return LiviaReply(
+                intent=decision.intent,
+                reply="Resposta refinada por IA.",
+                handoff_request_id=decision.handoff_request_id,
+                handoff_reason=decision.handoff_reason,
+            )
+
+        with patch("assistant_core.services.chat_processing._can_refine_with_ai", return_value=True), patch(
+            "assistant_core.services.chat_processing.LiviaDecisionService._finalize_ai_response",
+            side_effect=fake_finalize,
+        ):
+            _refine_response_with_ai_if_enabled(
+                deterministic_result=deterministic_result,
+                decision_service=LiviaDecisionService(),
+            )
+
+        self.assertEqual(atomic_flags, [False])
+
+
+@unittest.skipUnless(connection.vendor == "postgresql", "PostgreSQL-specific lock semantics.")
+class ChatIdempotencyPostgresConcurrencyTests(TransactionTestCase):
+    reset_sequences = True
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Tenant A", slug="tenant-a")
+        self.other_tenant = Tenant.objects.create(name="Tenant B", slug="tenant-b")
+
+    def _fingerprint(self, tenant_slug: str, session_id: str, request_id: uuid.UUID, message: str = "Olá") -> str:
+        return build_request_fingerprint(
+            tenant_slug=tenant_slug,
+            session_id=session_id,
+            request_id=request_id,
+            message=message,
+            source_page="https://example.com/pagina",
+        )
+
+    def test_select_for_update_blocks_second_reservation_until_lock_release(self):
+        request_id = uuid.uuid4()
+        session_id = "lock-session"
+        fingerprint = self._fingerprint(self.tenant.slug, session_id, request_id)
+        chat_request = ChatRequest.objects.create(
+            tenant=self.tenant,
+            session_id=session_id,
+            request_id=request_id,
+            request_fingerprint=fingerprint,
+            status=ChatRequest.Status.PROCESSING,
+        )
+
+        lock_acquired = threading.Event()
+        release_lock = threading.Event()
+        probe_done = threading.Event()
+        elapsed_seconds = {"value": 0.0}
+        reservation_state = {"value": ""}
+
+        def locker():
+            close_old_connections()
+            try:
+                with transaction.atomic():
+                    ChatRequest.objects.select_for_update().get(pk=chat_request.pk)
+                    lock_acquired.set()
+                    release_lock.wait(timeout=5)
+            finally:
+                connection.close()
+
+        def probe_reservation():
+            close_old_connections()
+            try:
+                lock_acquired.wait(timeout=5)
+                started = time.monotonic()
+                reservation = reserve_chat_request(
+                    tenant=self.tenant,
+                    session_id=session_id,
+                    request_id=request_id,
+                    fingerprint=fingerprint,
+                )
+                elapsed_seconds["value"] = time.monotonic() - started
+                reservation_state["value"] = reservation.state
+            finally:
+                probe_done.set()
+                connection.close()
+
+        locker_thread = threading.Thread(target=locker, daemon=True)
+        probe_thread = threading.Thread(target=probe_reservation, daemon=True)
+        locker_thread.start()
+        probe_thread.start()
+        self.assertTrue(lock_acquired.wait(timeout=5))
+        time.sleep(0.35)
+        release_lock.set()
+        self.assertTrue(probe_done.wait(timeout=5))
+        locker_thread.join(timeout=5)
+        probe_thread.join(timeout=5)
+
+        self.assertGreaterEqual(elapsed_seconds["value"], 0.30)
+        self.assertEqual(reservation_state["value"], "in_progress")
+
+    @override_settings(LIVIA_CHAT_PROCESSING_TIMEOUT_SECONDS=1)
+    def test_stale_recovery_allows_only_one_processing_winner(self):
+        request_id = uuid.uuid4()
+        session_id = "stale-session"
+        fingerprint = self._fingerprint(self.tenant.slug, session_id, request_id)
+        chat_request = ChatRequest.objects.create(
+            tenant=self.tenant,
+            session_id=session_id,
+            request_id=request_id,
+            request_fingerprint=fingerprint,
+            status=ChatRequest.Status.PROCESSING,
+        )
+        ChatRequest.objects.filter(pk=chat_request.pk).update(updated_at=timezone.now() - timedelta(seconds=5))
+
+        start_barrier = threading.Barrier(3)
+        states: list[str] = []
+        errors: list[str] = []
+
+        def worker():
+            close_old_connections()
+            try:
+                start_barrier.wait(timeout=5)
+                reservation = reserve_chat_request(
+                    tenant=self.tenant,
+                    session_id=session_id,
+                    request_id=request_id,
+                    fingerprint=fingerprint,
+                )
+                states.append(reservation.state)
+            except Exception as exc:
+                errors.append(str(exc))
+            finally:
+                connection.close()
+
+        first = threading.Thread(target=worker, daemon=True)
+        second = threading.Thread(target=worker, daemon=True)
+        first.start()
+        second.start()
+        start_barrier.wait(timeout=5)
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+        self.assertEqual(errors, [])
+        self.assertCountEqual(states, ["process", "in_progress"])
+        self.assertEqual(states.count("process"), 1)
+
+    def test_request_id_isolation_between_tenants(self):
+        request_id = uuid.uuid4()
+        session_id = "shared-session"
+        first_fingerprint = self._fingerprint(self.tenant.slug, session_id, request_id)
+        second_fingerprint = self._fingerprint(self.other_tenant.slug, session_id, request_id)
+
+        first = reserve_chat_request(
+            tenant=self.tenant,
+            session_id=session_id,
+            request_id=request_id,
+            fingerprint=first_fingerprint,
+        )
+        second = reserve_chat_request(
+            tenant=self.other_tenant,
+            session_id=session_id,
+            request_id=request_id,
+            fingerprint=second_fingerprint,
+        )
+
+        self.assertEqual(first.state, "process")
+        self.assertEqual(second.state, "process")
+        self.assertEqual(ChatRequest.objects.count(), 2)

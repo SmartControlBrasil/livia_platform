@@ -130,3 +130,7 @@ SMART360_LEAD_DISPATCH_DRY_RUN=True
 ~~~
 
 8. Reprocesse manualmente apenas LeadDrafts failed depois de corrigir a causa.
+
+## Outbox transacional
+
+Lead qualificado gera `lead.qualified` na outbox. O envio ao Smart360 acontece somente no processor, com `event_id` usado como `X-Livia-Event-ID` e `Idempotency-Key`. Dry-run permanece explícito e nenhuma chamada real é feita sem flags/configuração.

@@ -1,0 +1,186 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Atualização da base{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3">
+    <h4 class="fs-18 fw-semibold m-0">Atualização da base</h4>
+    <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Origem e configuração</h5></div>
+        <div class="card-body">
+          {% if dashboard.configuration %}
+          <p class="mb-1"><strong>Pasta aprovada:</strong> {% if dashboard.approved_folder_id %}Configurada{% else %}Não configurada{% endif %}</p>
+          <p class="mb-1"><strong>Sincronização tenant:</strong> {% if dashboard.sync_enabled %}Habilitada{% else %}Desabilitada{% endif %}</p>
+          <p class="mb-1"><strong>Último inventário/sync:</strong> {% if dashboard.last_inventory_at %}{{ dashboard.last_inventory_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</p>
+          <p class="mb-1"><strong>Status sync:</strong> {{ dashboard.last_inventory_status|default:"-" }}</p>
+          <p class="mb-1"><strong>Última indexação:</strong> {% if dashboard.last_index_at %}{{ dashboard.last_index_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</p>
+          <p class="mb-0"><strong>Status indexação:</strong> {{ dashboard.last_index_status|default:"-" }}</p>
+          {% else %}
+          <p class="text-muted mb-0">Este tenant ainda não possui configuração RAG cadastrada.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Controle operacional</h5></div>
+        <div class="card-body">
+          <p class="mb-1"><strong>Operações globais:</strong> {% if dashboard.gate.enabled %}Habilitadas{% else %}Desabilitadas{% endif %}</p>
+          <p class="mb-1"><strong>Dry-run forçado:</strong> {% if dashboard.gate.dry_run %}Sim{% else %}Não{% endif %}</p>
+          {% if not dashboard.gate.enabled %}
+          <p class="text-muted mb-2">{{ dashboard.gate.reason }}</p>
+          {% endif %}
+          <p class="mb-1"><strong>Worker:</strong> <code>{{ dashboard.worker_command }}</code></p>
+          <p class="mb-1"><strong>Lease configurado:</strong> {{ dashboard.lease_seconds }}s · tentativas máx.: {{ dashboard.max_attempts }}</p>
+          <p class="mb-1"><strong>Modo:</strong>
+            {% if dashboard.simulation_mode %}Simulação (dry-run){% elif dashboard.real_execution_allowed %}Execução real permitida{% else %}Operações desabilitadas{% endif %}
+          </p>
+          {% if dashboard.stale_running_count %}
+          <div class="alert alert-danger mb-0 mt-3">
+            {{ dashboard.stale_running_count }} execução(ões) stale detectada(s). Recupere via worker com <code>--recover-stale-only</code>.
+          </div>
+          {% elif dashboard.active_request %}
+          <div class="alert alert-warning mb-0 mt-3">
+            Execução ativa: {{ dashboard.active_request.operation_label }} ({{ dashboard.active_request.status_label }}).
+            {% if dashboard.active_request.lease_expires_at %}
+            Lease até {{ dashboard.active_request.lease_expires_at|date:"d/m/Y H:i" }}.
+            {% endif %}
+            {% if dashboard.active_request.last_heartbeat_at %}
+            Último heartbeat {{ dashboard.active_request.last_heartbeat_at|date:"d/m/Y H:i" }}.
+            {% endif %}
+            Tentativa {{ dashboard.active_request.attempt_count }}/{{ dashboard.max_attempts }}.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if dashboard.latest_request %}
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Última execução</h5></div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-3"><strong>Operação</strong><br>{{ dashboard.latest_request.operation_label }}</div>
+        <div class="col-md-3"><strong>Status</strong><br>{{ dashboard.latest_request.status_label }}</div>
+        <div class="col-md-3"><strong>Início</strong><br>{% if dashboard.latest_request.started_at %}{{ dashboard.latest_request.started_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</div>
+        <div class="col-md-3"><strong>Término</strong><br>{% if dashboard.latest_request.finished_at %}{{ dashboard.latest_request.finished_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</div>
+        <div class="col-md-3"><strong>Duração</strong><br>{{ dashboard.latest_request.duration_ms }} ms</div>
+        <div class="col-md-3"><strong>Dry-run</strong><br>{% if dashboard.latest_request.dry_run %}Sim{% else %}Não{% endif %}</div>
+        <div class="col-md-3"><strong>Tentativas</strong><br>{{ dashboard.latest_request.attempt_count }}/{{ dashboard.max_attempts }}</div>
+        <div class="col-md-6"><strong>Mensagem</strong><br>{{ dashboard.latest_request.error_message|default:"Concluída sem mensagem adicional." }}</div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Solicitar operação</h5></div>
+    <div class="card-body">
+      {% if dashboard.gate.enabled and dashboard.configuration and not dashboard.active_request %}
+        {% if can_operate or can_reindex %}
+        <form method="post" action="{% url 'operations_portal:knowledge_base_operation_submit' %}">
+          {% csrf_token %}
+          <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+          <div class="row g-3 align-items-end">
+            <div class="col-md-5">
+              <label class="form-label" for="{{ form.operation.id_for_label }}">Operação</label>
+              {{ form.operation }}
+            </div>
+            <div class="col-md-5">
+              <div class="form-check mt-4" id="reindex-confirm-block" style="display:none;">
+                {{ form.confirm_reindex }}
+                <label class="form-check-label" for="{{ form.confirm_reindex.id_for_label }}">{{ form.confirm_reindex.label }}</label>
+              </div>
+            </div>
+            <div class="col-md-2">
+              <button type="submit" class="btn btn-primary w-100" id="operation-submit-btn">Solicitar</button>
+            </div>
+          </div>
+          <p class="text-muted fs-13 mt-3 mb-0">
+            A solicitação fica pendente no banco e só é executada pelo worker controlado.
+            Reindexação completa exige confirmação explícita e permissão administrativa.
+          </p>
+        </form>
+        {% else %}
+        <p class="text-muted mb-0">Seu perfil pode visualizar o histórico, mas não solicitar operações.</p>
+        {% endif %}
+      {% elif dashboard.active_request %}
+      <p class="text-muted mb-0">Aguarde a conclusão da execução ativa antes de solicitar outra operação.</p>
+      {% elif not dashboard.configuration %}
+      <p class="text-muted mb-0">Configure a origem RAG antes de solicitar atualizações.</p>
+      {% else %}
+      <p class="text-muted mb-0">Operações desabilitadas globalmente. O histórico permanece disponível para consulta.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Histórico de execuções</h5></div>
+    <div class="card-body">
+      {% if page_obj.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Data</th>
+              <th>Operação</th>
+              <th>Status</th>
+              <th>Solicitante</th>
+              <th>Dry-run</th>
+              <th>Duração</th>
+              <th>Resumo</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in page_obj.object_list %}
+            <tr>
+              <td>{{ item.created_at|date:"d/m/Y H:i" }}</td>
+              <td>{{ item.operation_label }}</td>
+              <td>{{ item.status_label }}</td>
+              <td>{{ item.requested_by }}</td>
+              <td>{% if item.dry_run %}Sim{% else %}Não{% endif %}</td>
+              <td>{{ item.duration_ms }} ms</td>
+              <td>{{ item.error_message|default:"-"|truncatechars:80 }}</td>
+              <td><a class="btn btn-sm btn-light border" href="{% url 'operations_portal:knowledge_base_operation_detail' item.id %}?tenant={{ selected_tenant.pk }}">Detalhe</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% include 'operations_portal/partials/pagination.html' %}
+      {% else %}
+      <div class="text-center text-muted py-5">Nenhuma solicitação operacional registrada para este tenant.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const operationField = document.getElementById("{{ form.operation.id_for_label }}");
+    const confirmBlock = document.getElementById("reindex-confirm-block");
+    const submitBtn = document.getElementById("operation-submit-btn");
+    if (!operationField || !confirmBlock) return;
+    function syncConfirm() {
+      const isReindex = operationField.value === "full_reindex";
+      confirmBlock.style.display = isReindex ? "block" : "none";
+      if (submitBtn) {
+        submitBtn.classList.toggle("btn-danger", isReindex);
+        submitBtn.classList.toggle("btn-primary", !isReindex);
+      }
+    }
+    operationField.addEventListener("change", syncConfirm);
+    syncConfirm();
+  })();
+</script>
+{% endblock %}

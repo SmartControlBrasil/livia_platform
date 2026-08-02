@@ -71,12 +71,12 @@ Use --dry-run para conferir o resultado sem gravar nada no banco.
 
 ## Configurar origins permitidas
 
-O comando normaliza --domain e imprime o Allowed origin. Quando CORS estiver restrito, inclua esse valor em LIVIA_ALLOWED_WIDGET_ORIGINS, separado por vírgula quando houver mais de um site.
+O comando normaliza `--domain` e pode criar origins explícitas com `--allowed-origin`. `TenantAllowedOrigin` é a fonte principal de autorização do widget; a lista global antiga não deve ser usada como fonte de permissão por tenant.
 
 Exemplo:
 
 ~~~env
-LIVIA_ALLOWED_WIDGET_ORIGINS=https://www.smartcontrolbrasil.com.br,https://www.granimarmorespitondo.com.br
+.venv/bin/python manage.py onboard_tenant --slug exemplo --name "Exemplo" --domain https://www.exemplo.com.br --allowed-origin https://www.exemplo.com.br
 ~~~
 
 Domínios sem esquema recebem https:// por padrão. Domínios http:// ou localhost geram alertas para evitar uso acidental em produção.

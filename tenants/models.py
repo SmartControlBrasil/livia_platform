@@ -1,6 +1,7 @@
 import re
 
 from django.core.exceptions import ValidationError
+from django.conf import settings
 from django.core.validators import RegexValidator
 from django.db import models
 
@@ -77,7 +78,11 @@ class AssistantProfile(models.Model):
     )
     tone = models.CharField(max_length=120, default="consultivo, claro e profissional")
     primary_goal = models.CharField(max_length=160, default="qualificar leads")
+    business_name = models.CharField(max_length=160, blank=True, default="")
+    business_domain = models.CharField(max_length=220, blank=True, default="")
+    short_description = models.TextField(blank=True, default="")
     use_ai = models.BooleanField(default=False)
+    grounded_synthesis_enabled = models.BooleanField(default=False)
     widget_title = models.CharField(max_length=80, blank=True)
     launcher_label = models.CharField(max_length=80, default=DEFAULT_WIDGET_LAUNCHER_LABEL)
     primary_color = models.CharField(
@@ -144,6 +149,10 @@ class AssistantProfile(models.Model):
         return self.widget_title.strip() or self.name
 
     @property
+    def effective_business_name(self):
+        return self.business_name.strip() or self.tenant.name
+
+    @property
     def has_valid_whatsapp_handoff(self):
         number = normalize_whatsapp_number(self.handoff_whatsapp_number)
         return (
@@ -151,3 +160,90 @@ class AssistantProfile(models.Model):
             and self.human_handoff_channel == HUMAN_HANDOFF_CHANNEL_WHATSAPP
             and MIN_WHATSAPP_NUMBER_LENGTH <= len(number) <= MAX_WHATSAPP_NUMBER_LENGTH
         )
+
+
+class TenantMembership(models.Model):
+    class Role(models.TextChoices):
+        TENANT_ADMIN = "tenant_admin", "Tenant admin"
+        MANAGER = "manager", "Manager"
+        OPERATOR = "operator", "Operator"
+        VIEWER = "viewer", "Viewer"
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="memberships",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tenant_memberships",
+    )
+    role = models.CharField(max_length=30, choices=Role.choices)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_tenant_memberships",
+    )
+
+    class Meta:
+        ordering = ["tenant__name", "user__username"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "user"], name="unique_tenant_membership_per_user"),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "is_active"]),
+            models.Index(fields=["user", "is_active"]),
+            models.Index(fields=["tenant", "role"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user} / {self.tenant.slug} / {self.role}"
+
+
+class TenantAllowedOrigin(models.Model):
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="allowed_origins",
+    )
+    origin = models.CharField(max_length=255)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_tenant_allowed_origins",
+    )
+
+    class Meta:
+        ordering = ["tenant__name", "origin"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "origin"], name="unique_tenant_allowed_origin"),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "is_active"]),
+        ]
+
+    def clean(self):
+        super().clean()
+        from tenants.origins import normalize_origin
+
+        self.origin = normalize_origin(self.origin)
+
+    def save(self, *args, **kwargs):
+        from tenants.origins import normalize_origin
+
+        self.origin = normalize_origin(self.origin)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.tenant.slug} / {self.origin}"

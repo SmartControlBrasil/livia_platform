@@ -148,19 +148,18 @@ class HandoffService:
         }
         handoff.save()
 
-        notification_result = self.notification_service.notify(handoff) if created else None
+        notification_result = None
         if created:
-            try:
-                from integrations.webhooks.service import WebhookDispatchService
+            from integrations.outbox.service import enqueue_handoff_created
 
-                WebhookDispatchService().dispatch_handoff_created(handoff)
-            except Exception as exc:
-                logger.info(
-                    "livia_webhook_handoff_dispatch_ignored handoff_id=%s tenant_slug=%s error_type=%s",
-                    handoff.id,
-                    handoff.tenant.slug,
-                    type(exc).__name__,
-                )
+            event, enqueued = enqueue_handoff_created(handoff)
+            logger.info(
+                "outbox_enqueue handoff_id=%s tenant_slug=%s event_id=%s created=%s",
+                handoff.id,
+                handoff.tenant.slug,
+                event.event_id,
+                enqueued,
+            )
         return HandoffServiceResult(handoff=handoff, created=created, notification_result=notification_result)
 
     def mark_sent(self, handoff):

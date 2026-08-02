@@ -1,0 +1,52 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Configuração RAG{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3"><h4 class="fs-18 fw-semibold m-0">Configuração RAG</h4><p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p></div>
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  {% if not configuration %}
+  <div class="card"><div class="card-body text-center text-muted py-5">
+    Este tenant ainda não possui configuração RAG cadastrada. A criação continua disponível apenas pela administração técnica.
+  </div></div>
+  {% else %}
+  <div class="row g-3">
+    <div class="col-xl-4">
+      <div class="card"><div class="card-body">
+        <h5 class="card-title">Limites globais</h5>
+        <p class="mb-1"><strong>Score mínimo:</strong> {{ limits.global_min_similarity_score }}</p>
+        <p class="mb-1"><strong>Máx. chunks:</strong> {{ limits.global_max_chunks }}</p>
+        <p class="mb-1"><strong>Contexto:</strong> {{ limits.global_max_context_chars }} caracteres</p>
+        <p class="mb-0"><strong>Timeout:</strong> {{ limits.global_timeout_seconds }}s</p>
+        <p class="text-muted fs-13 mt-3 mb-0">Campos vazios no formulário herdam estes tetos. O tenant só pode restringir.</p>
+      </div></div>
+    </div>
+    <div class="col-xl-8">
+      <div class="card"><div class="card-body">
+        <form method="post" novalidate>
+          {% csrf_token %}
+          <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+          {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+          <div class="form-check form-switch mb-3">
+            {{ form.retrieval_enabled }}
+            <label class="form-check-label" for="{{ form.retrieval_enabled.id_for_label }}">{{ form.retrieval_enabled.label }}</label>
+            {{ form.retrieval_enabled.errors }}
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6"><label class="form-label">{{ form.min_similarity_score.label }}</label>{{ form.min_similarity_score }}{{ form.min_similarity_score.errors }}</div>
+            <div class="col-md-6"><label class="form-label">{{ form.max_retrieved_chunks.label }}</label>{{ form.max_retrieved_chunks }}<div class="form-text">{{ form.max_retrieved_chunks.help_text }}</div>{{ form.max_retrieved_chunks.errors }}</div>
+            <div class="col-md-6"><label class="form-label">{{ form.max_context_chars.label }}</label>{{ form.max_context_chars }}<div class="form-text">{{ form.max_context_chars.help_text }}</div>{{ form.max_context_chars.errors }}</div>
+            <div class="col-md-6"><label class="form-label">{{ form.retrieval_timeout_seconds.label }}</label>{{ form.retrieval_timeout_seconds }}<div class="form-text">{{ form.retrieval_timeout_seconds.help_text }}</div>{{ form.retrieval_timeout_seconds.errors }}</div>
+          </div>
+          {% if can_change_settings %}
+          <div class="d-flex justify-content-end mt-4"><button type="submit" class="btn btn-primary">Salvar</button></div>
+          {% endif %}
+        </form>
+      </div></div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

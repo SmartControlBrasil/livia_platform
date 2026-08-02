@@ -1,0 +1,48 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Documentos da base{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3"><h4 class="fs-18 fw-semibold m-0">Documentos da base</h4><p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p></div>
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="card mb-3"><div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+      <div class="col-md-3"><label class="form-label">Status</label>{{ form.status }}</div>
+      <div class="col-md-3"><label class="form-label">Ativo</label>{{ form.is_active }}</div>
+      <div class="col-md-4"><label class="form-label">Busca</label>{{ form.q }}</div>
+      <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Filtrar</button></div>
+    </form>
+  </div></div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Documentos indexados</h5></div>
+    <div class="card-body">
+      {% if page_obj.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead><tr><th>Título</th><th>Origem</th><th>Status</th><th>Ativo</th><th>Chunks</th><th>Atualizado</th></tr></thead>
+          <tbody>
+            {% for item in page_obj.object_list %}
+            <tr>
+              <td>{{ item.title }}</td>
+              <td>{{ item.origin_label }}</td>
+              <td><span class="badge bg-secondary-subtle text-secondary">{{ item.index_status_label }}</span></td>
+              <td>{% if item.is_active %}Sim{% else %}Não{% endif %}</td>
+              <td>{{ item.chunk_count }}</td>
+              <td>{{ item.updated_at_display|date:"d/m/Y H:i" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% include 'operations_portal/partials/pagination.html' %}
+      {% else %}
+      <div class="text-center text-muted py-5">Nenhum documento encontrado para este tenant.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

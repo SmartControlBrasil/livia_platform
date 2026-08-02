@@ -195,12 +195,29 @@ GENERIC_NEED_TEXTS = {
     "quero proposta",
 }
 
+NATURAL_STONE_PATTERNS = (
+    "marmore",
+    "granito",
+    "quartzito",
+    "travertino",
+    "bancada",
+    "pedra",
+    "revestimento",
+    "piso de pedra",
+    "escada",
+    "fachada",
+    "marmoraria",
+    "silestone",
+    "dekton",
+)
+
 AREA_QUESTIONS = {
     "automation": "Claro. Para eu te direcionar melhor: é automação com CLP/IHM, inversor, servo, SCADA, retrofit ou painel?",
     "robotics": "Perfeito. É para academia, indústria, hospital, condomínio ou outro ambiente?",
     "maintenance": "Entendi. É uma esteira residencial, profissional de academia ou equipamento industrial? E qual o problema principal?",
     "software_web": "Legal. Esse sistema ou site é para vendas, atendimento, operação interna, dashboard ou integração com IA?",
-    "unknown": "Claro. Para eu te direcionar melhor: você precisa de automação industrial, robótica, manutenção técnica ou sistema web?",
+    "natural_stone": "Perfeito. É para cozinha, banheiro, escada, fachada ou outra área?",
+    "unknown": "Claro. Para eu te orientar melhor, pode me contar um pouco mais do contexto ou da aplicação que você tem em mente?",
 }
 
 
@@ -386,6 +403,8 @@ def _result(
 
 
 def _detect_service_area(normalized_text: str) -> str:
+    if _matches_any(normalized_text, NATURAL_STONE_PATTERNS):
+        return "natural_stone"
     if _matches_any(normalized_text, ROBOTICS_PATTERNS):
         return "robotics"
     if _matches_any(normalized_text, MAINTENANCE_PATTERNS):

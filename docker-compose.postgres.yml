@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: livia-platform-postgres-local
+    environment:
+      POSTGRES_DB: livia_platform
+      POSTGRES_USER: livia_local
+      POSTGRES_PASSWORD: livia_local_password
+      TZ: America/Sao_Paulo
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - livia_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U livia_local -d livia_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  livia_postgres_data:

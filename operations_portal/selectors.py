@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db.models import Case, Count, IntegerField, Prefetch, Q, Value, When
+from django.db.utils import OperationalError, ProgrammingError
 from django.shortcuts import get_object_or_404
 
 from conversations.models import Conversation, HandoffRequest, Message
-from integrations.models import TenantWebhookConfig
+from integrations.models import OutboxEvent, TenantWebhookConfig
 from leads.models import LeadDraft
 from tenants.models import Tenant
 
@@ -55,6 +56,42 @@ HANDOFF_PRIORITY_LABELS = {
 }
 
 PAGE_SIZE = 12
+OUTBOX_STATUS_LABELS = {
+    OutboxEvent.Status.PENDING: "Pendente",
+    OutboxEvent.Status.PROCESSING: "Processando",
+    OutboxEvent.Status.SUCCEEDED: "Concluído",
+    OutboxEvent.Status.RETRY: "Retry agendado",
+    OutboxEvent.Status.DEAD_LETTER: "Dead letter",
+    OutboxEvent.Status.SKIPPED: "Ignorado",
+}
+OUTBOX_STATUS_TONES = {
+    OutboxEvent.Status.PENDING: "warning",
+    OutboxEvent.Status.PROCESSING: "info",
+    OutboxEvent.Status.SUCCEEDED: "success",
+    OutboxEvent.Status.RETRY: "warning",
+    OutboxEvent.Status.DEAD_LETTER: "danger",
+    OutboxEvent.Status.SKIPPED: "secondary",
+}
+RETRYABLE_ERROR_HINTS = (
+    "timeout",
+    "temporar",
+    "temporar",
+    "unavailable",
+    "connection",
+    "429",
+    "503",
+    "504",
+    "502",
+    "requestsunavailableerror",
+)
+SENSITIVE_ERROR_HINTS = (
+    "authorization",
+    "token",
+    "secret",
+    "api_key",
+    "apikey",
+    "password",
+)
 
 
 @dataclass(frozen=True)
@@ -65,14 +102,14 @@ class IntegrationStatus:
     tone: str
 
 
-def get_dashboard_context(period_value=None):
+def get_dashboard_context(period_value=None, *, tenant=None, user=None):
     from .analytics import get_dashboard_analytics
 
-    analytics = get_dashboard_analytics(period_value)
-    recent_conversations = list(Conversation.objects.select_related("tenant").order_by("-updated_at")[:8])
+    analytics = get_dashboard_analytics(period_value, tenant=tenant)
+    recent_conversations = list(_scope_queryset(Conversation.objects.select_related("tenant"), tenant).order_by("-updated_at")[:8])
     for conversation in recent_conversations:
         decorate_conversation(conversation)
-    recent_leads = list(LeadDraft.objects.select_related("tenant", "conversation").order_by("-updated_at")[:8])
+    recent_leads = list(_scope_queryset(LeadDraft.objects.select_related("tenant", "conversation"), tenant).order_by("-updated_at")[:8])
     for lead in recent_leads:
         decorate_lead(lead)
 
@@ -92,12 +129,34 @@ def get_dashboard_context(period_value=None):
         "dashboard_charts": analytics,
         "recent_conversations": recent_conversations,
         "recent_leads": recent_leads,
-        "integration_statuses": get_integration_statuses(),
-        "active_tenants": Tenant.objects.filter(is_active=True).order_by("name")[:8],
+        "integration_statuses": get_integration_statuses(tenant=tenant),
+        "active_tenants": _active_tenant_queryset(tenant)[:8],
+        "operational_work": _operational_work_dashboard(tenant=tenant, user=user),
     }
 
 
-def get_integration_statuses():
+def _operational_work_dashboard(*, tenant, user=None):
+    if tenant is None:
+        return None
+    from knowledge_base.rag.operational_work_queue import build_personal_work_count, build_work_queue_summary
+    from tenants.access import CAPABILITY_KNOWLEDGE_BASE_VIEW, get_active_membership, user_has_tenant_capability
+
+    if user is not None and not user_has_tenant_capability(user, tenant, CAPABILITY_KNOWLEDGE_BASE_VIEW):
+        return None
+    summary = build_work_queue_summary(tenant=tenant)
+    membership = get_active_membership(user, tenant) if user is not None else None
+    summary = dict(summary)
+    summary["my_count"] = build_personal_work_count(tenant=tenant, membership=membership) if membership else 0
+    from knowledge_base.rag.operational_analytics import build_operational_health_summary
+
+    try:
+        summary["health"] = build_operational_health_summary(tenant=tenant)
+    except Exception:
+        summary["health"] = None
+    return summary
+
+
+def get_integration_statuses(*, tenant=None):
     return [
         get_crm_status(),
         _status(
@@ -110,7 +169,7 @@ def get_integration_statuses():
             "Webhooks",
             bool(getattr(settings, "LIVIA_WEBHOOKS_ENABLED", False)),
             bool(getattr(settings, "LIVIA_WEBHOOKS_DRY_RUN", True)),
-            f"{TenantWebhookConfig.objects.filter(is_active=True).count()} config. ativas",
+            f"{_scope_queryset(TenantWebhookConfig.objects.filter(is_active=True), tenant).count()} config. ativas",
         ),
         get_notification_status(),
     ]
@@ -159,25 +218,15 @@ def _status(label, enabled, dry_run, detail):
     return IntegrationStatus(label=label, state="Ativo", detail=detail, tone="success")
 
 
-def has_secure_portal_scope(user):
-    return bool(user.is_authenticated and user.is_staff and user.is_superuser)
-
-
-def tenant_scope_note(user):
-    if user.is_superuser:
-        return "Consolidação administrativa de todos os tenants."
-    return "Painel consolidado restrito a superusers até existir vínculo seguro entre usuário e tenant."
-
-
 def clean_querystring(querydict):
     params = querydict.copy()
     params.pop("page", None)
     return params.urlencode()
 
 
-def get_conversation_list(form, *, page_number=1):
+def get_conversation_list(form, *, page_number=1, tenant=None):
     queryset = (
-        Conversation.objects.select_related("tenant", "lead_draft")
+        _scope_queryset(Conversation.objects.select_related("tenant", "lead_draft"), tenant)
         .prefetch_related(
             Prefetch(
                 "handoff_requests",
@@ -195,9 +244,9 @@ def get_conversation_list(form, *, page_number=1):
     return page
 
 
-def get_conversation_detail(pk):
+def get_conversation_detail(pk, *, tenant=None):
     conversation = get_object_or_404(
-        Conversation.objects.select_related("tenant", "lead_draft").prefetch_related(
+        _scope_queryset(Conversation.objects.select_related("tenant", "lead_draft"), tenant).prefetch_related(
             Prefetch("messages", queryset=Message.objects.order_by("created_at")),
             Prefetch(
                 "handoff_requests",
@@ -215,9 +264,9 @@ def get_conversation_detail(pk):
     return conversation
 
 
-def get_lead_list(form, *, page_number=1):
+def get_lead_list(form, *, page_number=1, tenant=None):
     queryset = (
-        LeadDraft.objects.select_related("tenant", "conversation")
+        _scope_queryset(LeadDraft.objects.select_related("tenant", "conversation"), tenant)
         .prefetch_related(
             Prefetch(
                 "handoff_requests",
@@ -229,14 +278,15 @@ def get_lead_list(form, *, page_number=1):
     )
     queryset = _filter_leads(queryset, form)
     page = Paginator(queryset, PAGE_SIZE).get_page(page_number)
+    _decorate_lead_outbox(page.object_list)
     for lead in page.object_list:
         decorate_lead(lead)
     return page
 
 
-def get_lead_detail(pk):
+def get_lead_detail(pk, *, tenant=None):
     lead = get_object_or_404(
-        LeadDraft.objects.select_related("tenant", "conversation").prefetch_related(
+        _scope_queryset(LeadDraft.objects.select_related("tenant", "conversation"), tenant).prefetch_related(
             Prefetch(
                 "handoff_requests",
                 queryset=HandoffRequest.objects.select_related("conversation").order_by("-created_at"),
@@ -245,6 +295,7 @@ def get_lead_detail(pk):
         ),
         pk=pk,
     )
+    _decorate_lead_outbox([lead])
     decorate_lead(lead)
     for handoff in getattr(lead, "prefetched_handoffs", []):
         decorate_handoff(handoff)
@@ -274,6 +325,7 @@ def decorate_lead(lead):
     lead.masked_email = mask_email(lead.email)
     lead.masked_phone = mask_phone(lead.phone)
     lead.can_retry_crm_dispatch = can_retry_crm_dispatch(lead)
+    lead.crm_error_sanitized = sanitize_error_message(lead.crm_error)
     handoffs = list(getattr(lead, "prefetched_handoffs", []))
     lead.latest_handoff = handoffs[0] if handoffs else None
     if lead.latest_handoff is not None:
@@ -290,6 +342,113 @@ def decorate_handoff(handoff, *, detail=False):
     handoff.summary_short = short_text(handoff.summary, limit=100)
     handoff.contact = handoff_contact_summary(handoff, masked=not detail)
     return handoff
+
+
+def sanitize_error_message(value):
+    text = short_text(value, limit=220)
+    lowered = text.lower()
+    if "traceback" in lowered:
+        return "Detalhe técnico interno ocultado."
+    if any(fragment in lowered for fragment in SENSITIVE_ERROR_HINTS):
+        return "Detalhe técnico sensível ocultado."
+    return text or "-"
+
+
+def classify_failure_kind(*, lead, outbox_event):
+    if outbox_event is not None:
+        if outbox_event.status in {OutboxEvent.Status.PENDING, OutboxEvent.Status.PROCESSING, OutboxEvent.Status.RETRY}:
+            return "temporaria", "Temporária"
+        if outbox_event.status in {OutboxEvent.Status.DEAD_LETTER, OutboxEvent.Status.SKIPPED}:
+            return "definitiva", "Definitiva"
+        if outbox_event.status == OutboxEvent.Status.SUCCEEDED:
+            return "resolvida", "Resolvida"
+    lowered = str(getattr(lead, "crm_error", "") or "").lower()
+    if lowered and any(fragment in lowered for fragment in RETRYABLE_ERROR_HINTS):
+        return "temporaria", "Temporária"
+    if lowered:
+        return "indefinida", "Indefinida"
+    return "sem_falha", "Sem falha"
+
+
+def _decorate_lead_outbox(leads):
+    leads = list(leads or [])
+    if not leads:
+        return
+    lead_ids = [str(lead.pk) for lead in leads]
+    tenant_ids = list({lead.tenant_id for lead in leads})
+    latest_by_key = {}
+    try:
+        events = (
+            OutboxEvent.objects.filter(
+                event_type=OutboxEvent.EventType.LEAD_QUALIFIED,
+                aggregate_id__in=lead_ids,
+                tenant_id__in=tenant_ids,
+            )
+            .order_by("aggregate_id", "-created_at")
+        )
+        for event in events:
+            key = (event.tenant_id, event.aggregate_id)
+            if key not in latest_by_key:
+                latest_by_key[key] = event
+    except (OperationalError, ProgrammingError):
+        for lead in leads:
+            _set_outbox_defaults(
+                lead,
+                schema_available=False,
+                note="Outbox indisponível neste banco local (migration pendente).",
+            )
+        return
+
+    for lead in leads:
+        event = latest_by_key.get((lead.tenant_id, str(lead.pk)))
+        if event is None:
+            _set_outbox_defaults(lead, schema_available=True, note="Sem evento de outbox para este lead.")
+            _set_failure_kind(lead, outbox_event=None)
+            continue
+        _set_outbox_from_event(lead, event)
+        _set_failure_kind(lead, outbox_event=event)
+
+
+def _set_failure_kind(lead, *, outbox_event):
+    code, label = classify_failure_kind(lead=lead, outbox_event=outbox_event)
+    lead.failure_kind_code = code
+    lead.failure_kind_label = label
+
+
+def _set_outbox_defaults(lead, *, schema_available: bool, note: str):
+    lead.outbox_schema_available = schema_available
+    lead.outbox_note = note
+    lead.outbox_status_code = ""
+    lead.outbox_status_label = "Indisponível" if not schema_available else "Sem evento"
+    lead.outbox_status_tone = "secondary"
+    lead.outbox_event_id = ""
+    lead.outbox_event_id_compact = "-"
+    lead.outbox_attempts = 0
+    lead.outbox_max_attempts = 0
+    lead.outbox_last_attempt_at = None
+    lead.outbox_next_retry_at = None
+    lead.outbox_last_error_code = ""
+    lead.outbox_last_error_message = "-"
+    lead.outbox_is_active = False
+    lead.outbox_processed_at = None
+
+
+def _set_outbox_from_event(lead, event):
+    lead.outbox_schema_available = True
+    lead.outbox_note = ""
+    lead.outbox_status_code = event.status
+    lead.outbox_status_label = OUTBOX_STATUS_LABELS.get(event.status, event.status)
+    lead.outbox_status_tone = OUTBOX_STATUS_TONES.get(event.status, "secondary")
+    lead.outbox_event_id = str(event.event_id)
+    lead.outbox_event_id_compact = compact_external_id(str(event.event_id))
+    lead.outbox_attempts = int(event.attempts or 0)
+    lead.outbox_max_attempts = int(event.max_attempts or 0)
+    lead.outbox_last_attempt_at = event.last_attempt_at
+    lead.outbox_next_retry_at = event.available_at if event.status in {OutboxEvent.Status.PENDING, OutboxEvent.Status.RETRY} else None
+    lead.outbox_last_error_code = str(event.last_error_code or "")
+    lead.outbox_last_error_message = sanitize_error_message(event.last_error_message)
+    lead.outbox_is_active = event.status in {OutboxEvent.Status.PENDING, OutboxEvent.Status.PROCESSING, OutboxEvent.Status.RETRY}
+    lead.outbox_processed_at = event.processed_at
 
 
 def _filter_conversations(queryset, form):
@@ -394,9 +553,9 @@ def get_notification_status():
     )
 
 
-def get_handoff_list(form, *, page_number=1):
+def get_handoff_list(form, *, page_number=1, tenant=None):
     queryset = (
-        HandoffRequest.objects.select_related("tenant", "conversation", "lead_draft")
+        _scope_queryset(HandoffRequest.objects.select_related("tenant", "conversation", "lead_draft"), tenant)
         .prefetch_related(Prefetch("conversation__messages", queryset=Message.objects.order_by("created_at")))
         .annotate(
             status_rank=Case(
@@ -423,9 +582,9 @@ def get_handoff_list(form, *, page_number=1):
     return page
 
 
-def get_handoff_detail(pk):
+def get_handoff_detail(pk, *, tenant=None):
     handoff = get_object_or_404(
-        HandoffRequest.objects.select_related("tenant", "conversation", "lead_draft").prefetch_related(
+        _scope_queryset(HandoffRequest.objects.select_related("tenant", "conversation", "lead_draft"), tenant).prefetch_related(
             Prefetch("conversation__messages", queryset=Message.objects.order_by("created_at"))
         ),
         pk=pk,
@@ -482,3 +641,15 @@ def _filter_handoffs(queryset, form):
             | Q(lead_draft__phone__icontains=query)
         )
     return queryset
+
+
+def _scope_queryset(queryset, tenant):
+    if tenant is None:
+        return queryset
+    return queryset.filter(tenant=tenant)
+
+
+def _active_tenant_queryset(tenant):
+    if tenant is None:
+        return Tenant.objects.filter(is_active=True).order_by("name")
+    return Tenant.objects.filter(pk=tenant.pk, is_active=True).order_by("name")

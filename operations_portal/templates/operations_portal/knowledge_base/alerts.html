@@ -1,0 +1,162 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Alertas operacionais{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column gap-2">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Alertas operacionais RAG/IA</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    {% if can_operate_kb %}
+    <form method="post" action="{% url 'operations_portal:knowledge_base_health_sync' %}">
+      {% csrf_token %}
+      <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+      <input type="hidden" name="period" value="{{ filters.period|default:'7d' }}">
+      <button type="submit" class="btn btn-sm btn-primary">Atualizar diagnóstico e alertas</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+        <div class="col-md-3">
+          <label class="form-label fs-13">Status</label>
+          <select name="status" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="open" {% if filters.status == 'open' %}selected{% endif %}>Aberto</option>
+            <option value="acknowledged" {% if filters.status == 'acknowledged' %}selected{% endif %}>Reconhecido</option>
+            <option value="resolved" {% if filters.status == 'resolved' %}selected{% endif %}>Resolvido</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fs-13">Severidade</label>
+          <select name="severity" class="form-select form-select-sm">
+            <option value="">Todas</option>
+            <option value="critical" {% if filters.severity == 'critical' %}selected{% endif %}>Critical</option>
+            <option value="warning" {% if filters.severity == 'warning' %}selected{% endif %}>Warning</option>
+            <option value="info" {% if filters.severity == 'info' %}selected{% endif %}>Info</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fs-13">Categoria</label>
+          <select name="category" class="form-select form-select-sm">
+            <option value="">Todas</option>
+            <option value="environment" {% if filters.category == 'environment' %}selected{% endif %}>Environment</option>
+            <option value="database" {% if filters.category == 'database' %}selected{% endif %}>Database</option>
+            <option value="vector_health" {% if filters.category == 'vector_health' %}selected{% endif %}>Vector health</option>
+            <option value="rag_operations" {% if filters.category == 'rag_operations' %}selected{% endif %}>RAG operations</option>
+            <option value="retrieval" {% if filters.category == 'retrieval' %}selected{% endif %}>Retrieval</option>
+            <option value="openai_provider" {% if filters.category == 'openai_provider' %}selected{% endif %}>OpenAI provider</option>
+            <option value="token_usage" {% if filters.category == 'token_usage' %}selected{% endif %}>Token usage</option>
+            <option value="integration_safety" {% if filters.category == 'integration_safety' %}selected{% endif %}>Integration safety</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fs-13">Período</label>
+          <select name="period" class="form-select form-select-sm">
+            <option value="24h" {% if filters.period == '24h' %}selected{% endif %}>24 horas</option>
+            <option value="7d" {% if filters.period == '7d' %}selected{% endif %}>7 dias</option>
+            <option value="30d" {% if filters.period == '30d' %}selected{% endif %}>30 dias</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fs-13">Silenciado</label>
+          <select name="silenced" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="yes" {% if filters.silenced == 'yes' %}selected{% endif %}>Sim</option>
+            <option value="no" {% if filters.silenced == 'no' %}selected{% endif %}>Não</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fs-13">Manutenção</label>
+          <select name="under_maintenance" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="yes" {% if filters.under_maintenance == 'yes' %}selected{% endif %}>Sim</option>
+            <option value="no" {% if filters.under_maintenance == 'no' %}selected{% endif %}>Não</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fs-13">SLA vencido</label>
+          <select name="sla_breached" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="yes" {% if filters.sla_breached == 'yes' %}selected{% endif %}>Sim</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fs-13">Sem responsável</label>
+          <select name="unassigned" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="yes" {% if filters.unassigned == 'yes' %}selected{% endif %}>Sim</option>
+          </select>
+        </div>
+        <div class="col-md-1">
+          <button type="submit" class="btn btn-sm btn-light border w-100">Filtrar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="card-title mb-0">Alertas</h5>
+      <span class="text-muted fs-13">Abertos: {{ open_alert_counts.total }} (critical {{ open_alert_counts.critical }} · warning {{ open_alert_counts.warning }})</span>
+    </div>
+    <div class="card-body">
+      {% if not alerts_synced %}
+      <div class="alert alert-info fs-13">Execute a atualização de diagnóstico para gerar o primeiro snapshot de alertas.</div>
+      {% endif %}
+      {% if page_obj.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 fs-13">
+          <thead>
+            <tr>
+              <th>Severidade</th>
+              <th>Status</th>
+              <th>SLA</th>
+              <th>Responsável</th>
+              <th>Categoria</th>
+              <th>Título</th>
+              <th>Detectado</th>
+              <th>Última ocorrência</th>
+              <th>Ocorrências</th>
+              <th>Reconhecido por</th>
+              <th>Resolvido por</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in page_obj.object_list %}
+            <tr>
+              <td><span class="badge bg-{% if item.severity == 'critical' %}danger{% elif item.severity == 'warning' %}warning{% else %}info{% endif %}-subtle text-{% if item.severity == 'critical' %}danger{% elif item.severity == 'warning' %}warning{% else %}info{% endif %}">{{ item.severity_label }}</span></td>
+              <td>
+                {{ item.status_label }}
+                {% if item.is_silenced %}<span class="badge bg-secondary-subtle text-secondary ms-1">Silenciado</span>{% endif %}
+                {% if item.is_under_maintenance %}<span class="badge bg-info-subtle text-info ms-1">Manutenção</span>{% endif %}
+              </td>
+              <td><span class="badge bg-light text-dark border">{{ item.sla_state_label }}</span></td>
+              <td>{{ item.assignee_username|default:"-" }}</td>
+              <td>{{ item.category_label }}</td>
+              <td><a href="{% url 'operations_portal:knowledge_base_alert_detail' item.id %}?tenant={{ selected_tenant.pk }}">{{ item.title }}</a></td>
+              <td>{{ item.detected_at|date:"d/m/Y H:i" }}</td>
+              <td>{{ item.last_seen_at|date:"d/m/Y H:i" }}</td>
+              <td>{{ item.occurrence_count }}</td>
+              <td>{% if item.acknowledged_by %}{{ item.acknowledged_by }}{% else %}-{% endif %}</td>
+              <td>{% if item.resolved_by %}{{ item.resolved_by }}{% else %}-{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% include 'operations_portal/partials/pagination.html' %}
+      {% else %}
+      <p class="text-muted mb-0">Nenhum alerta operacional aberto{% if filters.status or filters.severity or filters.category %} para os filtros selecionados{% endif %}.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

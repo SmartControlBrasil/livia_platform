@@ -1,0 +1,203 @@
+{% extends "operations_portal/base.html" %}
+{% block title %}Analytics operacional{% endblock %}
+{% block page_content %}
+<div class="container-fluid py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <h4 class="mb-1">Analytics operacional</h4>
+      <p class="text-muted mb-0">{{ dashboard.period_label }} · {{ tenant_scope_note }}</p>
+    </div>
+    <form method="get" class="d-flex flex-wrap gap-2 align-items-end">
+      <div>
+        <label class="form-label mb-1" for="period">Período</label>
+        <select class="form-select form-select-sm" name="period" id="period">
+          <option value="24h" {% if dashboard.period == '24h' %}selected{% endif %}>24 horas</option>
+          <option value="7d" {% if dashboard.period == '7d' %}selected{% endif %}>7 dias</option>
+          <option value="30d" {% if dashboard.period == '30d' %}selected{% endif %}>30 dias</option>
+          <option value="90d" {% if dashboard.period == '90d' %}selected{% endif %}>90 dias</option>
+        </select>
+      </div>
+      <div>
+        <label class="form-label mb-1" for="priority">Prioridade</label>
+        <select class="form-select form-select-sm" name="priority" id="priority">
+          <option value="">Todas</option>
+          <option value="P1" {% if dashboard.filters.priority == 'P1' %}selected{% endif %}>P1</option>
+          <option value="P2" {% if dashboard.filters.priority == 'P2' %}selected{% endif %}>P2</option>
+          <option value="P3" {% if dashboard.filters.priority == 'P3' %}selected{% endif %}>P3</option>
+          <option value="P4" {% if dashboard.filters.priority == 'P4' %}selected{% endif %}>P4</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Aplicar</button>
+      {% if can_export %}
+      <a class="btn btn-outline-secondary btn-sm" href="{% url 'operations_portal:operational_analytics_export' %}?period={{ dashboard.period }}">Exportar CSV</a>
+      {% endif %}
+    </form>
+  </div>
+
+  <div class="row g-3 mb-3">
+    {% for card in dashboard.scorecards %}
+    <div class="col-xl-3 col-md-4 col-sm-6">
+      <div class="card h-100">
+        <div class="card-body">
+          <p class="text-muted mb-1 fs-13">{{ card.title }}</p>
+          <h4 class="mb-0 text-{{ card.status }}">{{ card.value }}</h4>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if dashboard.recommendations %}
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Recomendações</h5></div>
+    <div class="card-body">
+      {% for item in dashboard.recommendations %}
+      <div class="alert alert-{% if item.severity == 'warning' %}warning{% else %}info{% endif %} mb-2">
+        <strong>{{ item.message }}</strong><br><span class="fs-13">{{ item.action }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between"><h5 class="card-title mb-0">Backlog atual</h5><a class="fs-13" href="{{ dashboard.links.work_queue }}">Fila</a></div>
+        <div class="card-body fs-13">
+          <p class="mb-1">Total aberto: {{ dashboard.backlog.total_open }}</p>
+          <p class="mb-1">P1/P2/P3/P4: {{ dashboard.backlog.by_priority.P1 }}/{{ dashboard.backlog.by_priority.P2 }}/{{ dashboard.backlog.by_priority.P3 }}/{{ dashboard.backlog.by_priority.P4 }}</p>
+          <p class="mb-1">Sem responsável: {{ dashboard.backlog.unassigned }} · Escalonados: {{ dashboard.backlog.escalated }}</p>
+          <p class="mb-0">SLA ACK/resolução vencido: {{ dashboard.backlog.ack_sla_breached }}/{{ dashboard.backlog.resolution_sla_breached }}</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Volume no período</h5></div>
+        <div class="card-body fs-13">
+          <p class="mb-1">Criados: {{ dashboard.volume.created }} · Reconhecidos: {{ dashboard.volume.acknowledged }}</p>
+          <p class="mb-1">Resolvidos: {{ dashboard.volume.resolved }} · Reabertos: {{ dashboard.volume.reopened }}</p>
+          <p class="mb-1">Auto/Manual: {{ dashboard.volume.auto_resolved }}/{{ dashboard.volume.manual_resolved }}</p>
+          <p class="mb-0">Tendência: {{ dashboard.backlog_trend.label }}{% if dashboard.backlog_trend.net is not None %} (líquido {{ dashboard.backlog_trend.net }}){% endif %}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Tempos de ACK</h5></div>
+        <div class="card-body fs-13">
+          {% if dashboard.ack_times.has_data %}
+          <p class="mb-1">Mediana: {{ dashboard.ack_times.median_minutes }} min · P90: {{ dashboard.ack_times.p90_minutes }} min</p>
+          <p class="mb-0">{{ dashboard.ack_times.population_note }}</p>
+          {% else %}
+          <p class="mb-0">{{ dashboard.ack_times.population_note }}</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Tempos de resolução</h5></div>
+        <div class="card-body fs-13">
+          {% if dashboard.resolution_times.has_data %}
+          <p class="mb-1">Mediana: {{ dashboard.resolution_times.median_minutes }} min · P90: {{ dashboard.resolution_times.p90_minutes }} min</p>
+          <p class="mb-0">{{ dashboard.resolution_times.population_note }}</p>
+          {% else %}
+          <p class="mb-0">{{ dashboard.resolution_times.population_note }}</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Envelhecimento</h5></div>
+        <div class="card-body fs-13">
+          {% for bucket in dashboard.age_buckets.buckets %}
+          <p class="mb-1">{{ bucket.label }}: {{ bucket.count }}</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">SLA</h5></div>
+        <div class="card-body fs-13">
+          <p class="mb-1">ACK: {% if dashboard.ack_sla.compliance_percent is not None %}{{ dashboard.ack_sla.compliance_percent }}%{% else %}{{ dashboard.ack_sla.population_note }}{% endif %}</p>
+          <p class="mb-1">Resolução: {% if dashboard.resolution_sla.compliance_percent is not None %}{{ dashboard.resolution_sla.compliance_percent }}%{% else %}{{ dashboard.resolution_sla.population_note }}{% endif %}</p>
+          <p class="mb-0">{{ dashboard.ack_sla.population_note }}</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Notificações</h5></div>
+        <div class="card-body fs-13">
+          <p class="mb-1">Entregues: {{ dashboard.notifications.in_app_delivered }} · Lidas: {{ dashboard.notifications.in_app_read }}</p>
+          <p class="mb-1">Críticas não lidas: {{ dashboard.notifications.critical_unread }}</p>
+          <p class="mb-0">{{ dashboard.notifications.population_note }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if can_view_capacity_detail %}
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Capacidade da equipe</h5></div>
+    <div class="card-body fs-13">
+      <p class="text-muted">{{ dashboard.ownership.note }}</p>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Responsável</th><th>Total</th><th>P1/P2</th><th>Score</th><th>Estado</th></tr></thead>
+          <tbody>
+            {% for row in dashboard.capacity.assignees %}
+            <tr>
+              <td>{{ row.username }}</td>
+              <td>{{ row.total }}</td>
+              <td>{{ row.p1 }}/{{ row.p2 }}</td>
+              <td>{{ row.workload_score }}</td>
+              <td>{{ row.capacity_state }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5">Sem dados de capacidade.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Recorrência</h5></div>
+        <div class="card-body fs-13">
+          <p class="mb-1">Alertas reabertos: {{ dashboard.recurrence.alerts_with_reopen }}</p>
+          <p class="mb-1">Total reaberturas: {{ dashboard.recurrence.total_reopen_count }}</p>
+          {% for rule in dashboard.recurrence.top_rules %}
+          <p class="mb-1">{{ rule.rule_id }}: {{ rule.total }}</p>
+          {% empty %}
+          <p class="mb-0">Sem regras destacadas.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Monitoramento</h5></div>
+        <div class="card-body fs-13">
+          <p class="mb-1">Runs: {{ dashboard.monitoring.runs_total }} · Sucesso: {{ dashboard.monitoring.runs_succeeded }} · Falha: {{ dashboard.monitoring.runs_failed }}</p>
+          <p class="mb-0">Alertas criados/resolvidos por runs: {{ dashboard.monitoring.alerts_created }}/{{ dashboard.monitoring.alerts_resolved }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

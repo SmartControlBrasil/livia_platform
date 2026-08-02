@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 
 from tenants.models import AssistantProfile, Tenant
@@ -25,6 +24,7 @@ class TenantInstallPackage:
     api_url: str
     snippet: str
     allowed_origin: str
+    allowed_origins: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     install_instructions: list[str] = field(default_factory=list)
     widget_config: dict = field(default_factory=dict)
@@ -39,6 +39,7 @@ class TenantInstallPackage:
             "api_url": self.api_url,
             "snippet": self.snippet,
             "allowed_origin": self.allowed_origin,
+            "allowed_origins": self.allowed_origins,
             "warnings": self.warnings,
             "widget_config": self.widget_config,
         }
@@ -57,19 +58,16 @@ class TenantInstallPackageService:
 
     def build_for_tenant(self, tenant):
         warnings = []
-        allowed_origin = ""
+        allowed_origins = list(tenant.allowed_origins.filter(is_active=True).order_by("origin").values_list("origin", flat=True))
+        allowed_origin = allowed_origins[0] if allowed_origins else ""
+        if not allowed_origins:
+            warnings.append("Este tenant ainda não tem origins autorizadas ativas.")
         if tenant.domain:
             try:
-                allowed_origin, origin_warnings = normalize_allowed_origin(tenant.domain, required=False)
+                _domain_origin, origin_warnings = normalize_allowed_origin(tenant.domain, required=False)
                 warnings.extend(origin_warnings)
             except ValueError:
                 warnings.append("O domínio cadastrado não parece ser uma URL válida.")
-        else:
-            warnings.append("Este tenant ainda não tem domínio/origin configurado.")
-
-        configured_origins = set(getattr(settings, "LIVIA_ALLOWED_WIDGET_ORIGINS", []) or [])
-        if allowed_origin and configured_origins and allowed_origin not in configured_origins:
-            warnings.append("O domínio/origin deste tenant não está em LIVIA_ALLOWED_WIDGET_ORIGINS.")
 
         if not tenant.is_active:
             warnings.append("Este tenant está inativo. O widget não processará atendimentos até ser ativado.")
@@ -86,6 +84,7 @@ class TenantInstallPackageService:
             api_url=DEFAULT_API_URL,
             snippet=build_widget_snippet(tenant.slug, api_url=DEFAULT_API_URL, widget_src=DEFAULT_WIDGET_SRC),
             allowed_origin=allowed_origin,
+            allowed_origins=allowed_origins,
             warnings=warnings,
             install_instructions=[
                 "Copie o snippet do widget.",

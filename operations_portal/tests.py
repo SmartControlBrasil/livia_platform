@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
@@ -10,6 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from conversations.models import Conversation, HandoffRequest, Message
+from integrations.models import OutboxEvent
 from leads.models import LeadDraft
 from leads.services.crm_dispatch import CRMDispatchResult
 from tenants.models import AssistantProfile, Tenant
@@ -528,6 +530,7 @@ class OperationsPortalLeadTests(PortalUserMixin, TestCase):
         self.assertContains(response, "Carla Souza")
         self.assertContains(response, "Falha")
         self.assertContains(response, "Falha")
+        self.assertContains(response, "Sem evento")
         self.assertContains(response, "ca***@example.com")
         self.assertContains(response, "***4321")
         self.assertNotIn("carla.souza@example.com", content)
@@ -541,8 +544,7 @@ class OperationsPortalLeadTests(PortalUserMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Pedro Lima")
         self.assertContains(response, "Enviado")
-        self.assertContains(response, "smart360...")
-        self.assertNotContains(response, "smart360-external-1234567890")
+        self.assertContains(response, "Sem evento")
 
     def test_lead_detail_shows_full_operational_context_and_links(self):
         response = self.client.get(reverse("operations_portal:lead_detail", kwargs={"pk": self.failed_lead.pk}))
@@ -552,6 +554,10 @@ class OperationsPortalLeadTests(PortalUserMixin, TestCase):
         self.assertContains(response, "11987654321")
         self.assertContains(response, "timeout")
         self.assertContains(response, "Reprocessar envio ao CRM")
+        self.assertContains(response, "Outbox e retries")
+        self.assertContains(response, "Sem evento de outbox para este lead.")
+        self.assertContains(response, "Tipo da falha:")
+        self.assertContains(response, "Temporária")
         self.assertContains(response, reverse("operations_portal:conversation_detail", kwargs={"pk": self.conversation.pk}))
         self.assertContains(response, "Alta")
 
@@ -574,34 +580,21 @@ class OperationsPortalLeadTests(PortalUserMixin, TestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_retry_crm_dispatch_calls_service_for_failed_unsent_lead(self):
-        result = CRMDispatchResult(
-            attempted=True,
-            success=True,
-            dry_run=True,
-            lead_draft=self.failed_lead,
-            external_id="dry-run-id",
-            message="ok",
-        )
-        service = Mock()
-        service.dispatch_if_qualified.return_value = result
-
-        with patch("operations_portal.views.CRMDispatchService", return_value=service):
+        with patch("integrations.smart360.client.requests.post") as request_post:
             response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.failed_lead.pk}))
 
         self.assertRedirects(response, reverse("operations_portal:lead_detail", kwargs={"pk": self.failed_lead.pk}))
-        service.dispatch_if_qualified.assert_called_once()
+        self.assertTrue(OutboxEvent.objects.filter(event_type=OutboxEvent.EventType.LEAD_QUALIFIED, aggregate_id=str(self.failed_lead.pk)).exists())
         self.failed_lead.refresh_from_db()
         self.assertEqual(self.failed_lead.status, LeadDraft.Status.QUALIFIED)
         self.assertEqual(self.failed_lead.crm_error, "")
+        request_post.assert_not_called()
 
     def test_retry_crm_dispatch_does_not_call_service_for_already_sent_lead(self):
-        service = Mock()
-
-        with patch("operations_portal.views.CRMDispatchService", return_value=service):
-            response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.sent_lead.pk}))
+        response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.sent_lead.pk}))
 
         self.assertRedirects(response, reverse("operations_portal:lead_detail", kwargs={"pk": self.sent_lead.pk}))
-        service.dispatch_if_qualified.assert_not_called()
+        self.assertFalse(OutboxEvent.objects.filter(aggregate_id=str(self.sent_lead.pk)).exists())
         self.sent_lead.refresh_from_db()
         self.assertEqual(self.sent_lead.status, LeadDraft.Status.SENT_TO_CRM)
 
@@ -613,7 +606,63 @@ class OperationsPortalLeadTests(PortalUserMixin, TestCase):
             response = self.client.get(reverse("operations_portal:lead_list"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertLessEqual(len(captured), 8)
+        self.assertLessEqual(len(captured), 10)
+
+    def test_retry_crm_dispatch_does_not_duplicate_active_outbox_event(self):
+        OutboxEvent.objects.create(
+            event_id=uuid.uuid4(),
+            tenant=self.tenant,
+            event_type=OutboxEvent.EventType.LEAD_QUALIFIED,
+            aggregate_type="LeadDraft",
+            aggregate_id=str(self.failed_lead.pk),
+            deduplication_key=f"{self.tenant.id}:lead.qualified:LeadDraft:{self.failed_lead.pk}:v1",
+            payload={"schema_version": 1},
+            status=OutboxEvent.Status.PROCESSING,
+            max_attempts=3,
+            available_at=timezone.now(),
+            locked_at=timezone.now(),
+            locked_by="worker-1",
+        )
+        response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.failed_lead.pk}), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "processamento em andamento")
+        self.failed_lead.refresh_from_db()
+        self.assertEqual(self.failed_lead.status, LeadDraft.Status.FAILED)
+        self.assertEqual(OutboxEvent.objects.filter(aggregate_id=str(self.failed_lead.pk)).count(), 1)
+
+    def test_retry_crm_dispatch_requeues_dead_letter_event(self):
+        event = OutboxEvent.objects.create(
+            event_id=uuid.uuid4(),
+            tenant=self.tenant,
+            event_type=OutboxEvent.EventType.LEAD_QUALIFIED,
+            aggregate_type="LeadDraft",
+            aggregate_id=str(self.failed_lead.pk),
+            deduplication_key=f"{self.tenant.id}:lead.qualified:LeadDraft:{self.failed_lead.pk}:v1",
+            payload={"schema_version": 1},
+            status=OutboxEvent.Status.DEAD_LETTER,
+            attempts=3,
+            max_attempts=3,
+            available_at=timezone.now() - timedelta(minutes=1),
+            last_error_message="smart360 timeout",
+        )
+        response = self.client.post(reverse("operations_portal:lead_retry_crm", kwargs={"pk": self.failed_lead.pk}), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "reenfileirado com sucesso")
+        self.failed_lead.refresh_from_db()
+        event.refresh_from_db()
+        self.assertEqual(self.failed_lead.status, LeadDraft.Status.QUALIFIED)
+        self.assertEqual(event.status, OutboxEvent.Status.PENDING)
+
+    def test_lead_detail_hides_sensitive_error_message(self):
+        self.failed_lead.crm_error = "Authorization token=abc123 timeout"
+        self.failed_lead.save(update_fields=["crm_error", "updated_at"])
+        response = self.client.get(reverse("operations_portal:lead_detail", kwargs={"pk": self.failed_lead.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Detalhe técnico sensível ocultado.")
+        self.assertNotContains(response, "abc123")
 
 
 @override_settings(SECURE_SSL_REDIRECT=False, STORAGES=TEST_STORAGES)

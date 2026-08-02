@@ -7,6 +7,8 @@ from typing import Iterable
 from django.conf import settings
 
 from assistant_core.discovery import analyze_message
+from assistant_core.discovery.contextual import resolve_discovery_question
+from assistant_core.services.decision_outcome import has_semantic_knowledge_block, should_combine_kb_with_discovery, is_informational_knowledge_query
 from assistant_core.prompts import (
     DEFAULT_REPLY,
     build_contextual_reply,
@@ -36,11 +38,16 @@ class AssistantProfileContext:
     initial_message: str = "Olá! Sou a Lívia. Como posso te ajudar?"
     tone: str = "consultivo, claro e profissional"
     primary_goal: str = "qualificar leads"
+    business_name: str = ""
+    business_domain: str = ""
+    short_description: str = ""
 
     @classmethod
-    def from_profile(cls, profile) -> "AssistantProfileContext":
+    def from_profile(cls, profile, tenant=None) -> "AssistantProfileContext":
         if profile is None:
             return cls()
+        tenant_name = str(getattr(tenant, "name", "") or "").strip()
+        business_name = str(getattr(profile, "business_name", "") or "").strip() or tenant_name
         return cls(
             name=str(getattr(profile, "name", "") or "Lívia").strip() or "Lívia",
             initial_message=str(
@@ -49,6 +56,9 @@ class AssistantProfileContext:
             ).strip(),
             tone=str(getattr(profile, "tone", "") or cls.tone).strip(),
             primary_goal=str(getattr(profile, "primary_goal", "") or cls.primary_goal).strip(),
+            business_name=business_name,
+            business_domain=str(getattr(profile, "business_domain", "") or "").strip(),
+            short_description=str(getattr(profile, "short_description", "") or "").strip(),
         )
 
 
@@ -71,18 +81,23 @@ class LiviaDecisionService:
         current_message: str,
         conversation=None,
         assistant_profile=None,
+        knowledge_context: str | None = None,
     ) -> LiviaReply:
-        profile_context = AssistantProfileContext.from_profile(assistant_profile)
+        tenant = getattr(conversation, "tenant", None)
+        profile_context = AssistantProfileContext.from_profile(assistant_profile, tenant=tenant)
         discovery = analyze_message(current_message)
         classification = discovery.to_dict()
         intent = discovery.intent
-        tenant = getattr(conversation, "tenant", None)
-        knowledge_context = build_knowledge_context(
-            tenant,
-            current_message,
-            service_area=discovery.service_area,
-            limit=2,
-        ) if tenant is not None else ""
+        if knowledge_context is None:
+            knowledge_context = build_knowledge_context(
+                tenant,
+                current_message,
+                service_area=discovery.service_area,
+                limit=2,
+                conversation=conversation,
+            ) if tenant is not None else ""
+        else:
+            knowledge_context = str(knowledge_context or "")
         has_commercial_interest = bool(discovery.has_commercial_interest)
         has_quote_request = bool(discovery.has_quote_request)
         has_support_request = bool(discovery.has_support_request)
@@ -92,8 +107,16 @@ class LiviaDecisionService:
             decision = LiviaReply(intent=intent, reply=profile_context.initial_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if intent == "technical_question":
+            if self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
+                reply = build_contextual_reply(intent="technical_question")
+                decision = LiviaReply(intent=intent, reply=self._with_knowledge(reply, knowledge_context))
+                decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             if discovery.should_ask_discovery_question and discovery.suggested_next_question:
-                decision = self._ask_discovery_question(discovery, conversation, knowledge_context=knowledge_context)
+                decision = self._ask_discovery_question(
+                    discovery, conversation, knowledge_context=knowledge_context,
+                    assistant_profile=assistant_profile, tenant=tenant,
+                )
                 decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             reply = build_contextual_reply(intent="technical_question")
@@ -101,15 +124,35 @@ class LiviaDecisionService:
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if intent == "support_request":
-            decision = LiviaReply(intent=intent, reply=build_contextual_reply(intent="support_request"))
+            decision = LiviaReply(
+                intent=intent,
+                reply=self._with_knowledge(build_contextual_reply(intent="support_request"), knowledge_context),
+            )
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if intent in {"quote_request", "commercial_interest"}:
             if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
                 decision = self._locked_lead_reply(intent)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+            if should_combine_kb_with_discovery(discovery, conversation, knowledge_context):
+                decision = self._ask_discovery_question(
+                    discovery, conversation, knowledge_context=knowledge_context,
+                    assistant_profile=assistant_profile, tenant=tenant,
+                )
+                decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+            if self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
+                decision = LiviaReply(
+                    intent=intent,
+                    reply=self._with_knowledge(DEFAULT_REPLY, knowledge_context),
+                )
+                decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
-                decision = self._ask_discovery_question(discovery, conversation, knowledge_context=knowledge_context)
+                decision = self._ask_discovery_question(
+                    discovery, conversation, knowledge_context=knowledge_context,
+                    assistant_profile=assistant_profile, tenant=tenant,
+                )
                 decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             return self._handle_qualification(
@@ -143,7 +186,10 @@ class LiviaDecisionService:
                 decision = self._locked_lead_reply("contact_data")
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
-                decision = self._ask_discovery_question(discovery, conversation, knowledge_context=knowledge_context)
+                decision = self._ask_discovery_question(
+                    discovery, conversation, knowledge_context=knowledge_context,
+                    assistant_profile=assistant_profile, tenant=tenant,
+                )
                 decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             return self._handle_qualification(
@@ -156,14 +202,36 @@ class LiviaDecisionService:
                 knowledge_context=knowledge_context,
             )
         if has_support_request or has_technical_question:
-            decision = LiviaReply(intent=intent, reply=build_contextual_reply(intent=intent))
+            decision = LiviaReply(
+                intent=intent,
+                reply=self._with_knowledge(build_contextual_reply(intent=intent), knowledge_context),
+            )
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if self._is_followup_from_history(history):
-            decision = LiviaReply(intent="followup", reply="Perfeito. Me conte um pouco mais sobre o contexto para eu te orientar.")
+            decision = LiviaReply(
+                intent="followup",
+                reply=self._with_knowledge(
+                    "Perfeito. Me conte um pouco mais sobre o contexto para eu te orientar.",
+                    knowledge_context,
+                ),
+            )
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
-        decision = LiviaReply(intent=intent, reply=DEFAULT_REPLY)
+        if discovery.should_ask_discovery_question and has_semantic_knowledge_block(knowledge_context) and not is_informational_knowledge_query(discovery):
+            decision = self._ask_discovery_question(
+                discovery,
+                conversation,
+                knowledge_context=knowledge_context,
+                assistant_profile=assistant_profile,
+                tenant=tenant,
+            )
+            decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+        decision = LiviaReply(
+            intent=intent,
+            reply=self._with_knowledge(DEFAULT_REPLY, knowledge_context),
+        )
         decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
         return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
 
@@ -242,31 +310,112 @@ class LiviaDecisionService:
             reply="Perfeito, já encaminhei seus dados para sequência do atendimento. Se for uma nova demanda, me diga que é um novo pedido.",
         )
 
-    def _ask_discovery_question(self, discovery, conversation, knowledge_context: str = "") -> LiviaReply:
+    def _ask_discovery_question(self, discovery, conversation, knowledge_context: str = "", assistant_profile=None, tenant=None) -> LiviaReply:
         if conversation is not None:
             next_state = LeadState.COLLECT_NEED if discovery.intent in {"quote_request", "commercial_interest"} else LeadState.DISCOVERY
             set_state(conversation, next_state)
-        reply = discovery.suggested_next_question or "Entendi. Me conta um pouco mais do contexto para eu te orientar melhor."
+        profile_ctx = AssistantProfileContext.from_profile(assistant_profile, tenant=tenant or getattr(conversation, "tenant", None))
+        if profile_ctx.business_domain:
+            reply = resolve_discovery_question(
+                discovery.service_area,
+                business_domain=profile_ctx.business_domain,
+                business_name=profile_ctx.business_name,
+            )
+        elif discovery.suggested_next_question:
+            reply = discovery.suggested_next_question
+        else:
+            reply = resolve_discovery_question(
+                discovery.service_area,
+                business_domain=profile_ctx.business_domain,
+                business_name=profile_ctx.business_name,
+            )
         return LiviaReply(intent=discovery.intent, reply=self._with_knowledge(reply, knowledge_context))
 
     def _with_knowledge(self, reply: str, knowledge_context: str) -> str:
-        hints = self._knowledge_hints(knowledge_context)
+        """
+        Ecoa trechos curtos só do retriever textual (KnowledgeDocument).
+
+        Contexto semântico RAG (bloco com Score:) fica exclusivo do prompt de IA —
+        não deve ser prefixado na reply determinística ao visitante.
+        """
+        text = str(knowledge_context or "")
+        if not text.strip():
+            return reply
+        # Marcador presente apenas em format_knowledge_base_block (retrieval semântico).
+        if "\nScore:" in text or "\nscore:" in text.lower():
+            return reply
+        hints = self._knowledge_hints(text)
         if not hints:
             return reply
         return f"{hints}\n\n{reply}"
 
     def _knowledge_hints(self, knowledge_context: str) -> str:
-        lines = []
-        for line in str(knowledge_context or "").splitlines():
-            clean = line.strip()
-            if not clean or clean.lower().startswith("base de conhecimento"):
+        """Extrai trechos curtos e seguros para a resposta determinística ao visitante."""
+        text = str(knowledge_context or "")
+        if not text.strip():
+            return ""
+
+        contents: list[str] = []
+        capture = False
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
                 continue
-            if ". " in clean and clean.split(". ", 1)[0].isdigit():
-                clean = clean.split(". ", 1)[1]
-            lines.append(clean)
-            if len(lines) >= 2:
-                break
-        return " ".join(lines)
+            upper = line.upper()
+            if upper.startswith("[KNOWLEDGE_BASE]") or upper.startswith("[/KNOWLEDGE_BASE]"):
+                capture = False
+                continue
+            if line.lower().startswith("o bloco abaixo"):
+                continue
+            if line.lower().startswith("trate o conteúdo"):
+                continue
+            if line.lower().startswith("pedido de mudança"):
+                continue
+            if line.lower().startswith("fonte:") or line.lower().startswith("referência:") or line.lower().startswith("score:"):
+                capture = False
+                continue
+            if line.lower().startswith("conteúdo:"):
+                capture = True
+                continue
+            if capture:
+                contents.append(line)
+                capture = False
+
+        # Compatibilidade com formato legado numerado, se ainda aparecer.
+        if not contents:
+            for line in text.splitlines():
+                clean = line.strip()
+                if not clean or clean.lower().startswith("base de conhecimento"):
+                    continue
+                if ". " in clean and clean.split(". ", 1)[0].isdigit():
+                    clean = clean.split(". ", 1)[1]
+                if clean.upper().startswith("[KNOWLEDGE_BASE]") or clean.upper().startswith("[/KNOWLEDGE_BASE]"):
+                    continue
+                contents.append(clean)
+                if len(contents) >= 2:
+                    break
+
+        safe_bits = []
+        for item in contents[:2]:
+            clipped = item[:220].strip()
+            if not clipped:
+                continue
+            lowered = clipped.lower()
+            # Evita ecoar instruções operacionais vindas de documentos no reply ao visitante.
+            if any(
+                marker in lowered
+                for marker in (
+                    "marque qualquer",
+                    "ignore as regras",
+                    "altere o tenant",
+                    "system prompt",
+                    "você deve sempre",
+                    "crie lead",
+                )
+            ):
+                continue
+            safe_bits.append(clipped)
+        return " ".join(safe_bits)
 
     def _is_followup_from_history(self, history: Iterable[dict[str, str]]) -> bool:
         messages = list(history or [])
@@ -303,14 +452,15 @@ class LiviaDecisionService:
             message=current_message,
             history=history,
         )
-        if result.is_qualified:
-            self.crm_dispatch_service.dispatch_if_qualified(result.lead_draft)
         reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields, intent=intent, invalid_fields=result.invalid_fields)
         if result.is_qualified:
             reply = build_contextual_reply(intent=intent, missing_fields=[])
         decision = LiviaReply(intent=intent, reply=reply)
         decision = self._finalize_handoff(decision, conversation, result.lead_draft, discovery, current_message)
         return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+
+    def _should_answer_informatively_from_knowledge(self, discovery, knowledge_context: str) -> bool:
+        return has_semantic_knowledge_block(knowledge_context) and is_informational_knowledge_query(discovery)
 
     def _should_start_lead_from_contact(
         self,
