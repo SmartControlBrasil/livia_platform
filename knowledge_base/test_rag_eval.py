@@ -12,19 +12,20 @@ from django.utils import timezone
 from knowledge_base.models import TenantRagConfiguration, TenantRagDocumentChunk, TenantRagDriveFileManifest, TenantRagDriveTextStaging
 from knowledge_base.rag.eval.runner import EvalCase, EvalCaseResult, EvalReport, run_eval_for_tenant
 from knowledge_base.rag.embeddings import FakeEmbeddingProvider
+from knowledge_base.testing.rag_dimensions import RagTestDimensionMixin
 from tenants.models import Tenant
 
 
 @override_settings(
     LIVIA_RAG_ENABLED=True,
     LIVIA_RAG_DRY_RUN=True,
+    LIVIA_RAG_INDEXING_ENABLED=True,
     LIVIA_RAG_EMBEDDING_PROVIDER="fake",
     LIVIA_RAG_EMBEDDING_MODEL="fake-eval",
-    LIVIA_RAG_EMBEDDING_DIMENSION=8,
     LIVIA_RAG_MIN_SIMILARITY_SCORE=0.25,
     LIVIA_RAG_MAX_RETRIEVED_CHUNKS=5,
 )
-class RagEvalMetricsTests(TestCase):
+class RagEvalMetricsTests(RagTestDimensionMixin, TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Eval", slug="eval-tenant")
         self.config = TenantRagConfiguration.objects.create(
@@ -136,8 +137,7 @@ class RagEvalMetricsTests(TestCase):
 
     def test_rag_eval_command_compare_thresholds(self):
         self._chunk("doc-b", "granito preto absoluto")
-        with override_settings(LIVIA_RAG_INDEXING_ENABLED=True):
-            call_command("index_tenant_rag", "--tenant", self.tenant.slug)
+        call_command("index_tenant_rag", "--tenant", self.tenant.slug)
         out = StringIO()
         call_command(
             "rag_eval",
@@ -155,8 +155,7 @@ class RagEvalMetricsTests(TestCase):
         self._chunk("doc-thr", "granito preto absoluto para cozinha")
         self.config.min_similarity_score = 0.35
         self.config.save(update_fields=["min_similarity_score", "updated_at"])
-        with override_settings(LIVIA_RAG_INDEXING_ENABLED=True):
-            call_command("index_tenant_rag", "--tenant", self.tenant.slug)
+        call_command("index_tenant_rag", "--tenant", self.tenant.slug)
         dataset = Path("knowledge_base/rag/eval/datasets/tmp_eval_threshold.json")
         dataset.write_text(
             json.dumps(

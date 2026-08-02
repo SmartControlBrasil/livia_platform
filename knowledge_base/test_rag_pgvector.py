@@ -24,6 +24,11 @@ from knowledge_base.rag.vector_search import (
     RagVectorSearchError,
     get_vector_search_backend,
 )
+from knowledge_base.testing.rag_dimensions import (
+    RagTestDimensionMixin,
+    rag_test_embedding_dimension,
+    rag_test_zero_vector,
+)
 from tenants.models import Tenant
 
 
@@ -33,7 +38,6 @@ from tenants.models import Tenant
     LIVIA_RAG_VECTOR_BACKEND="in_memory",
     LIVIA_RAG_EMBEDDING_PROVIDER="fake",
     LIVIA_RAG_EMBEDDING_MODEL="fake-embed-v1",
-    LIVIA_RAG_EMBEDDING_DIMENSION=8,
     LIVIA_RAG_EMBEDDING_BATCH_SIZE=4,
     LIVIA_RAG_MIN_SIMILARITY_SCORE=0.10,
     LIVIA_RAG_MAX_RETRIEVED_CHUNKS=3,
@@ -42,7 +46,7 @@ from tenants.models import Tenant
     LIVIA_RAG_VECTOR_CANDIDATE_LIMIT=10,
     LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=True,
 )
-class RagPgvectorPhase6Tests(TestCase):
+class RagPgvectorPhase6Tests(RagTestDimensionMixin, TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Grani", slug="granimarmores-pitondo")
         self.other = Tenant.objects.create(name="Outro", slug="outro-tenant")
@@ -344,8 +348,9 @@ class RagPgvectorPhase6Tests(TestCase):
             text="ok",
         )
         emb = TenantRagChunkEmbedding.objects.get(chunk=chunk)
+        expected_dim = rag_test_embedding_dimension()
         emb.vector = [0.1, 0.2]
-        emb.dimension = 8
+        emb.dimension = expected_dim
         from django.core.exceptions import ValidationError
 
         with self.assertRaises(ValidationError):
@@ -355,8 +360,9 @@ class RagPgvectorPhase6Tests(TestCase):
         """Evita regressão: Vector() bruto quebra psycopg3 sem register_vector."""
         from knowledge_base.rag.vector_field import RagVectorField
 
-        field = RagVectorField(dimensions=8)
-        prepared = field.get_db_prep_value([1.0] + [0.0] * 7, connection)
+        field = RagVectorField(dimensions=rag_test_embedding_dimension())
+        dim = rag_test_embedding_dimension()
+        prepared = field.get_db_prep_value([1.0] + rag_test_zero_vector(dim - 1), connection)
         if connection.vendor == "postgresql":
             self.assertIsInstance(prepared, str)
             self.assertTrue(prepared.startswith("["))

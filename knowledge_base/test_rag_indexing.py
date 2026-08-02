@@ -37,6 +37,7 @@ from knowledge_base.rag.embeddings import (
 )
 from knowledge_base.rag.indexing import acquire_tenant_index_lock, run_index_for_tenant
 from knowledge_base.rag.retriever import retrieve_relevant_knowledge
+from knowledge_base.testing.rag_dimensions import RagTestDimensionMixin, rag_test_embedding_dimension
 from tenants.models import Tenant
 
 
@@ -44,22 +45,23 @@ def _make_config(
     *,
     provider: str = "fake",
     model: str = "fake-embed-v1",
-    dimension: int = 8,
+    dimension: int | None = None,
     batch_size: int = 2,
     indexing_enabled: bool = True,
     signature: str | None = None,
 ) -> EmbeddingConfig:
+    resolved_dimension = dimension if dimension is not None else rag_test_embedding_dimension()
     base = EmbeddingConfig(
         provider=provider,
         model=model,
-        dimension=dimension,
+        dimension=resolved_dimension,
         batch_size=batch_size,
         timeout_seconds=5,
         max_retries=1,
         retry_backoff_seconds=0.0,
         indexing_enabled=indexing_enabled,
         api_key_configured=False,
-        signature=signature or f"{provider}:{model}:{dimension}:{batch_size}",
+        signature=signature or f"{provider}:{model}:{resolved_dimension}:{batch_size}",
     )
     return base
 
@@ -68,7 +70,6 @@ def _make_config(
     LIVIA_RAG_INDEXING_ENABLED=True,
     LIVIA_RAG_EMBEDDING_PROVIDER="fake",
     LIVIA_RAG_EMBEDDING_MODEL="fake-embed-v1",
-    LIVIA_RAG_EMBEDDING_DIMENSION=8,
     LIVIA_RAG_EMBEDDING_BATCH_SIZE=2,
     LIVIA_RAG_EMBEDDING_TIMEOUT_SECONDS=5,
     LIVIA_RAG_EMBEDDING_MAX_RETRIES=1,
@@ -77,7 +78,7 @@ def _make_config(
     LIVIA_RAG_ADMIN_SEARCH_MAX_RESULTS=5,
     LIVIA_RAG_INDEX_RUNNING_TIMEOUT_SECONDS=1800,
 )
-class RagIndexingPhase4Tests(TestCase):
+class RagIndexingPhase4Tests(RagTestDimensionMixin, TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Granimarmores Pitondo", slug="granimarmores-pitondo")
         self.other_tenant = Tenant.objects.create(name="Outro", slug="outro-tenant")
@@ -170,8 +171,9 @@ class RagIndexingPhase4Tests(TestCase):
         call_command("index_tenant_rag", "--tenant", self.tenant.slug)
         emb = TenantRagChunkEmbedding.objects.get(chunk=chunk, is_active=True)
         self.assertEqual(emb.provider, "fake")
-        self.assertEqual(emb.dimension, 8)
-        self.assertEqual(len(emb.vector), 8)
+        expected_dim = rag_test_embedding_dimension()
+        self.assertEqual(emb.dimension, expected_dim)
+        self.assertEqual(len(emb.vector), expected_dim)
 
     def test_unchanged_chunk_skips_provider_call(self):
         self._create_chunk(tenant=self.tenant, configuration=self.config)
@@ -412,9 +414,9 @@ class RagIndexingPhase4Tests(TestCase):
                 chunk_config_signature=chunk.chunk_config_signature,
                 provider="fake",
                 model="fake",
-                dimension=8,
+                dimension=rag_test_embedding_dimension(),
                 embedding_config_signature="sig",
-                vector=[0.1] * 8,
+                vector=[0.1] * rag_test_embedding_dimension(),
             ).save()
 
     def test_admin_search_requires_tenant(self):

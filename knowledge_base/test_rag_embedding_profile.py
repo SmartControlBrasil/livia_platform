@@ -22,6 +22,7 @@ from knowledge_base.rag.embedding_profile import (
 )
 from knowledge_base.rag.embeddings import EmbeddingConfigurationError
 from knowledge_base.rag.eval.runner import EvalCase, run_eval_for_tenant
+from knowledge_base.testing.rag_dimensions import RagTestDimensionMixin
 from tenants.models import Tenant
 
 
@@ -67,12 +68,11 @@ class EmbeddingProfileTests(TestCase):
     LIVIA_RAG_DRY_RUN=False,
     LIVIA_RAG_EMBEDDING_PROVIDER="fake",
     LIVIA_RAG_EMBEDDING_MODEL="fake-embed-v1",
-    LIVIA_RAG_EMBEDDING_DIMENSION=8,
     LIVIA_RAG_MIN_SIMILARITY_SCORE=0.01,
     LIVIA_RAG_MAX_RETRIEVED_CHUNKS=3,
     LIVIA_RAG_VECTOR_CANDIDATE_LIMIT=10,
 )
-class RagEvalRunnerTests(TestCase):
+class RagEvalRunnerTests(RagTestDimensionMixin, TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Grani", slug="granimarmores-pitondo")
         self.config = TenantRagConfiguration.objects.create(

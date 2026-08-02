@@ -26,6 +26,7 @@ from knowledge_base.rag.conversation_retrieval import (
 )
 from knowledge_base.rag.embeddings import EmbeddingConfig, FakeEmbeddingProvider, load_embedding_config
 from leads.models import LeadDraft
+from knowledge_base.testing.rag_dimensions import RagTestDimensionMixin
 from tenants.models import Tenant
 
 
@@ -35,7 +36,6 @@ from tenants.models import Tenant
     LIVIA_RAG_INDEXING_ENABLED=True,
     LIVIA_RAG_EMBEDDING_PROVIDER="fake",
     LIVIA_RAG_EMBEDDING_MODEL="fake-embed-v1",
-    LIVIA_RAG_EMBEDDING_DIMENSION=8,
     LIVIA_RAG_EMBEDDING_BATCH_SIZE=4,
     LIVIA_RAG_EMBEDDING_TIMEOUT_SECONDS=5,
     LIVIA_RAG_EMBEDDING_MAX_RETRIES=0,
@@ -46,7 +46,7 @@ from tenants.models import Tenant
     LIVIA_RAG_MAX_CHUNKS_PER_MANIFEST=2,
     LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=True,
 )
-class ConversationSemanticRagTests(TestCase):
+class ConversationSemanticRagTests(RagTestDimensionMixin, TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Grani", slug="granimarmores-pitondo")
         self.other = Tenant.objects.create(name="Outro", slug="outro-tenant")
@@ -171,7 +171,7 @@ class ConversationSemanticRagTests(TestCase):
 
     @override_settings(LIVIA_RAG_MAX_CONTEXT_CHARS=80)
     def test_retrieve_respects_context_char_limit(self):
-        text = "mármore " + ("detalhe técnico " * 40)
+        text = ("mármore " + ("detalhe técnico " * 40)).strip()
         self._index_text(
             tenant=self.tenant,
             configuration=self.config,
