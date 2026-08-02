@@ -1,0 +1,41 @@
+# Lívia Platform — worker de notificações operacionais (template de staging)
+# NÃO instalar/habilitar automaticamente. Ver docs/phase15_operational_notifications.md
+#
+# Instalação manual (operador, no staging):
+#   sudo cp deploy/staging/livia-operational-notifications.service /etc/systemd/system/
+#   sudo cp deploy/staging/livia-operational-notifications.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   # Somente após validação manual:
+#   # sudo systemctl enable --now livia-operational-notifications.timer
+#
+# Execução sob demanda:
+#   sudo systemctl start livia-operational-notifications.service
+
+[Unit]
+Description=Livia operational notifications worker (oneshot)
+Documentation=file:///opt/livia-platform/docs/phase15_operational_notifications.md
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=livia-staging
+Group=livia-staging
+WorkingDirectory=/opt/livia-platform
+EnvironmentFile=/opt/livia-platform/.env
+
+ExecStart=/opt/livia-platform/.venv/bin/python manage.py process_operational_notifications --limit 100
+
+Restart=no
+TimeoutStartSec=1800
+
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+# Lívia Platform — timer do worker de notificações operacionais (template de staging)
+# NÃO habilitar automaticamente.
+
+[Unit]
+Description=Run Livia operational notifications worker periodically
+Documentation=file:///opt/livia-platform/docs/phase15_operational_notifications.md
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
