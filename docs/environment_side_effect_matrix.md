@@ -23,6 +23,8 @@ GP-ONLY  = restrito por allowlist de tenant
 | **Smart360 CRM** | `leads/services/crm_dispatch.py` → outbox | `SMART360_LEAD_DISPATCH_*`, token/URL | **DRY-RUN** | `DRY_RUN=True` → mock external_id, sem HTTP real |
 | **Webhooks tenant** | `integrations/webhooks/service.py` | `LIVIA_WEBHOOKS_*`, config tenant | OFF / DRY-RUN | Dry-run retorna 202 sem POST |
 | **Handoff notification** | `leads/services/handoff_notification.py` | `LIVIA_HANDOFF_NOTIFICATIONS_*` | OFF / DRY-RUN | Transporte real não implementado |
+| **Notificações operacionais** | `knowledge_base/rag/operational_notification_delivery.py` | `LIVIA_OPERATIONAL_EMAIL_NOTIFICATIONS_*` | OFF / DRY-RUN | IN_APP ativo; e-mail/webhook sem dispatch real |
+| **Worker notificações** | `process_operational_notifications` | — | One-shot | Sem timer habilitado nesta fase |
 | **Handoff WhatsApp (visitante)** | `leads/services/handoff.py` | `AssistantProfile.human_handoff_*` | OFF (staging) | Retorna URL wa.me na resposta API — não envia mensagem |
 | **Outbox processor** | `integrations/management/commands/process_outbox.py` | `--execute` | OFF por padrão | Sem `--execute` = dry-run JSON |
 | **Google Drive RAG sync** | `knowledge_base/rag/sync.py` | credencial readonly | REAL (read-only) | Export texto; não altera Drive |

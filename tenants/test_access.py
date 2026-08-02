@@ -78,6 +78,9 @@ class TenantCapabilityMatrixTests(TestCase):
                 "handoffs.view",
                 CAPABILITY_HANDOFFS_CHANGE_STATUS,
                 "assistant_profile.view",
+                "knowledge_base.view",
+                "knowledge_base.configure",
+                "knowledge_base.operate",
             },
         )
 
@@ -90,6 +93,8 @@ class TenantCapabilityMatrixTests(TestCase):
                 CAPABILITY_LEADS_VIEW,
                 "handoffs.view",
                 CAPABILITY_HANDOFFS_CHANGE_STATUS,
+                "knowledge_base.view",
+                "knowledge_base.operate",
             },
         )
 
@@ -101,6 +106,7 @@ class TenantCapabilityMatrixTests(TestCase):
                 "conversations.view",
                 CAPABILITY_LEADS_VIEW,
                 "handoffs.view",
+                "knowledge_base.view",
             },
         )
 

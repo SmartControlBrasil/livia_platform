@@ -102,14 +102,26 @@ def require_portal_capability(context, capability):
 
 
 def portal_template_context(context):
-    return {
+    payload = {
         "portal_access": context,
         "active_tenant": context.tenant,
         "accessible_tenants": context.accessible_tenants,
         "portal_is_global": context.is_global,
         "portal_caps": context.template_capabilities,
         "tenant_scope_note": context.tenant_scope_note,
+        "unread_notification_count": 0,
     }
+    if context.tenant is not None and not context.is_global:
+        from knowledge_base.rag.operational_notification_services import count_unread_notifications
+        from tenants.access import get_active_membership
+
+        membership = get_active_membership(context.user, context.tenant)
+        if membership is not None:
+            payload["unread_notification_count"] = count_unread_notifications(
+                tenant=context.tenant,
+                membership=membership,
+            )
+    return payload
 
 
 def can_access_tenant(user, tenant):

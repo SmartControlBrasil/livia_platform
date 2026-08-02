@@ -94,6 +94,17 @@ class DeploymentSettingsHelperTests(SimpleTestCase):
 
         self.assertEqual(databases["default"]["TEST"]["NAME"], "test_livia_platform")
 
+    def test_database_allows_external_database_url_when_explicitly_enabled(self):
+        databases = build_database_config(
+            debug=False,
+            base_dir=project_settings.BASE_DIR,
+            database_url="postgresql://livia@db.prod.example/livia_platform",
+            running_tests=True,
+            allow_external_test_database_url=True,
+        )
+
+        self.assertEqual(databases["default"]["TEST"]["NAME"], "test_livia_platform")
+
     def test_database_conn_max_age_invalid_fails_safely(self):
         with self.assertRaises(ImproperlyConfigured) as captured:
             parse_database_conn_max_age("not-a-number")

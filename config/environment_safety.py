@@ -97,6 +97,17 @@ def inspect_environment_safety(*, tenant_slug: str | None = None) -> list[Enviro
                     level="critical",
                 )
             )
+        if bool(getattr(settings, "LIVIA_OPERATIONAL_EMAIL_NOTIFICATIONS_ENABLED", False)) and not bool(
+            getattr(settings, "LIVIA_OPERATIONAL_EMAIL_NOTIFICATIONS_DRY_RUN", True)
+        ):
+            checks.append(
+                EnvironmentCheck(
+                    ok=False,
+                    code="operational_email_dry_run",
+                    detail="LIVIA_OPERATIONAL_EMAIL_NOTIFICATIONS_DRY_RUN must be True in staging",
+                    level="critical",
+                )
+            )
         if bool(getattr(settings, "DEBUG", False)):
             checks.append(
                 EnvironmentCheck(

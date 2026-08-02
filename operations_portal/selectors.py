@@ -102,7 +102,7 @@ class IntegrationStatus:
     tone: str
 
 
-def get_dashboard_context(period_value=None, *, tenant=None):
+def get_dashboard_context(period_value=None, *, tenant=None, user=None):
     from .analytics import get_dashboard_analytics
 
     analytics = get_dashboard_analytics(period_value, tenant=tenant)
@@ -131,7 +131,29 @@ def get_dashboard_context(period_value=None, *, tenant=None):
         "recent_leads": recent_leads,
         "integration_statuses": get_integration_statuses(tenant=tenant),
         "active_tenants": _active_tenant_queryset(tenant)[:8],
+        "operational_work": _operational_work_dashboard(tenant=tenant, user=user),
     }
+
+
+def _operational_work_dashboard(*, tenant, user=None):
+    if tenant is None:
+        return None
+    from knowledge_base.rag.operational_work_queue import build_personal_work_count, build_work_queue_summary
+    from tenants.access import CAPABILITY_KNOWLEDGE_BASE_VIEW, get_active_membership, user_has_tenant_capability
+
+    if user is not None and not user_has_tenant_capability(user, tenant, CAPABILITY_KNOWLEDGE_BASE_VIEW):
+        return None
+    summary = build_work_queue_summary(tenant=tenant)
+    membership = get_active_membership(user, tenant) if user is not None else None
+    summary = dict(summary)
+    summary["my_count"] = build_personal_work_count(tenant=tenant, membership=membership) if membership else 0
+    from knowledge_base.rag.operational_analytics import build_operational_health_summary
+
+    try:
+        summary["health"] = build_operational_health_summary(tenant=tenant)
+    except Exception:
+        summary["health"] = None
+    return summary
 
 
 def get_integration_statuses(*, tenant=None):
