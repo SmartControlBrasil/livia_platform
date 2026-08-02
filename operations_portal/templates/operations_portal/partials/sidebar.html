@@ -34,6 +34,12 @@
             <i data-feather="phone-call"></i><span> Handoffs </span>
           </a>
         </li>
+        <li class="{% if active_section == 'notificacoes' %}menuitem-active{% endif %}">
+          <a href="{% url 'operations_portal:operational_notifications' %}" class="tp-link {% if active_section == 'notificacoes' %}active{% endif %}">
+            <i data-feather="bell"></i><span> Notificações </span>
+            {% if unread_notification_count %}<span class="badge bg-danger ms-1">{{ unread_notification_count }}</span>{% endif %}
+          </a>
+        </li>
 
         <li class="menu-title mt-2">Gestão</li>
         <li class="{% if active_section == 'tenants' %}menuitem-active{% endif %}">

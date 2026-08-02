@@ -1,0 +1,44 @@
+{% extends "operations_portal/base.html" %}
+{% block title %}Preferências de notificação{% endblock %}
+{% block page_content %}
+<div class="container-fluid py-4">
+  <div class="mb-3">
+    <h4 class="mb-1">Preferências de notificação</h4>
+    <p class="text-muted mb-0">Controle canais e tipos de eventos operacionais.</p>
+  </div>
+
+  <form method="post" class="card card-body">
+    {% csrf_token %}
+    <div class="row g-3">
+      <div class="col-md-6">
+        <h6>Canais</h6>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="in_app_enabled" id="in_app_enabled" {% if preference.in_app_enabled %}checked{% endif %}><label class="form-check-label" for="in_app_enabled">Notificações in-app</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="email_enabled" id="email_enabled" {% if preference.email_enabled %}checked{% endif %}><label class="form-check-label" for="email_enabled">E-mail (dry-run nesta fase)</label></div>
+      </div>
+      <div class="col-md-6">
+        <h6>Eventos</h6>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="notify_on_assignment" id="notify_on_assignment" {% if preference.notify_on_assignment %}checked{% endif %}><label class="form-check-label" for="notify_on_assignment">Atribuição/transferência</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="notify_on_escalation" id="notify_on_escalation" {% if preference.notify_on_escalation %}checked{% endif %}><label class="form-check-label" for="notify_on_escalation">Escalonamento</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="notify_on_sla_breach" id="notify_on_sla_breach" {% if preference.notify_on_sla_breach %}checked{% endif %}><label class="form-check-label" for="notify_on_sla_breach">SLA vencido</label></div>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="notify_on_resolution" id="notify_on_resolution" {% if preference.notify_on_resolution %}checked{% endif %}><label class="form-check-label" for="notify_on_resolution">Resolução</label></div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="digest_frequency">Digest</label>
+        <select class="form-select" name="digest_frequency" id="digest_frequency">
+          <option value="immediate" {% if preference.digest_frequency == 'immediate' %}selected{% endif %}>Imediato</option>
+          <option value="daily" {% if preference.digest_frequency == 'daily' %}selected{% endif %}>Diário</option>
+          <option value="weekly" {% if preference.digest_frequency == 'weekly' %}selected{% endif %}>Semanal</option>
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="timezone">Fuso horário</label>
+        <input class="form-control" type="text" name="timezone" id="timezone" value="{{ preference.timezone }}">
+      </div>
+    </div>
+    <div class="mt-3 d-flex gap-2">
+      <button type="submit" class="btn btn-primary">Salvar</button>
+      <a href="{% url 'operations_portal:operational_notifications' %}" class="btn btn-light">Voltar</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import knowledge_base_views, views
+from . import analytics_views, knowledge_base_views, notification_views, views, work_queue_views
 
 app_name = "operations_portal"
 
@@ -24,5 +24,30 @@ urlpatterns = [
     path("base-de-conhecimento/atualizacao/", knowledge_base_views.knowledge_base_operations, name="knowledge_base_operations"),
     path("base-de-conhecimento/atualizacao/solicitar/", knowledge_base_views.knowledge_base_operation_submit, name="knowledge_base_operation_submit"),
     path("base-de-conhecimento/atualizacao/<int:pk>/", knowledge_base_views.knowledge_base_operation_detail, name="knowledge_base_operation_detail"),
+    path("base-de-conhecimento/saude/", knowledge_base_views.knowledge_base_health, name="knowledge_base_health"),
+    path("base-de-conhecimento/saude/sincronizar/", knowledge_base_views.knowledge_base_health_sync, name="knowledge_base_health_sync"),
+    path("base-de-conhecimento/alertas/", knowledge_base_views.knowledge_base_alerts, name="knowledge_base_alerts"),
+    path("base-de-conhecimento/alertas/<int:pk>/", knowledge_base_views.knowledge_base_alert_detail, name="knowledge_base_alert_detail"),
+    path("operacoes/minhas-pendencias/", work_queue_views.operational_my_work, name="operational_my_work"),
+    path("operacoes/fila/", work_queue_views.operational_work_queue, name="operational_work_queue"),
+    path("operacoes/analytics/", analytics_views.operational_analytics, name="operational_analytics"),
+    path("operacoes/analytics/exportar/", analytics_views.operational_analytics_export, name="operational_analytics_export"),
+    path("notificacoes/", notification_views.operational_notifications, name="operational_notifications"),
+    path("notificacoes/preferencias/", notification_views.operational_notification_preferences, name="operational_notification_preferences"),
+    path("notificacoes/<int:pk>/marcar-lida/", notification_views.operational_notification_mark_read, name="operational_notification_mark_read"),
+    path("notificacoes/marcar-todas-lidas/", notification_views.operational_notification_mark_all_read, name="operational_notification_mark_all_read"),
+    path("base-de-conhecimento/alertas/<int:pk>/assumir/", work_queue_views.operational_alert_claim, name="operational_alert_claim"),
+    path("base-de-conhecimento/alertas/<int:pk>/reconhecer/", knowledge_base_views.knowledge_base_alert_acknowledge, name="knowledge_base_alert_acknowledge"),
+    path("base-de-conhecimento/alertas/<int:pk>/transferir/", work_queue_views.operational_alert_transfer, name="operational_alert_transfer"),
+    path("base-de-conhecimento/alertas/<int:pk>/escalar/", work_queue_views.operational_alert_escalate, name="operational_alert_escalate"),
+    path("base-de-conhecimento/alertas/<int:pk>/encerrar-escalonamento/", work_queue_views.operational_alert_deescalate, name="operational_alert_deescalate"),
+    path("base-de-conhecimento/alertas/<int:pk>/resolver/", knowledge_base_views.knowledge_base_alert_resolve, name="knowledge_base_alert_resolve"),
+    path("base-de-conhecimento/alertas/<int:pk>/atribuir/", knowledge_base_views.knowledge_base_alert_assign, name="knowledge_base_alert_assign"),
+    path("base-de-conhecimento/alertas/<int:pk>/desatribuir/", work_queue_views.operational_alert_unassign, name="knowledge_base_alert_unassign"),
+    path("base-de-conhecimento/alertas/<int:pk>/silenciar/", knowledge_base_views.knowledge_base_alert_silence, name="knowledge_base_alert_silence"),
+    path("base-de-conhecimento/alertas/<int:pk>/dessilenciar/", knowledge_base_views.knowledge_base_alert_unsilence, name="knowledge_base_alert_unsilence"),
+    path("base-de-conhecimento/manutencoes/", knowledge_base_views.knowledge_base_maintenance, name="knowledge_base_maintenance"),
+    path("base-de-conhecimento/manutencoes/nova/", knowledge_base_views.knowledge_base_maintenance_create, name="knowledge_base_maintenance_create"),
+    path("base-de-conhecimento/manutencoes/<int:pk>/cancelar/", knowledge_base_views.knowledge_base_maintenance_cancel, name="knowledge_base_maintenance_cancel"),
     path("<slug:section>/", views.placeholder, name="placeholder"),
 ]

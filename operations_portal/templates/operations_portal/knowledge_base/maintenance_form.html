@@ -1,0 +1,63 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Nova manutenção{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3">
+    <h4 class="fs-18 fw-semibold m-0">Nova janela de manutenção</h4>
+    <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="card">
+    <div class="card-body fs-13">
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+        <div class="mb-3">
+          <label class="form-label" for="title">Título</label>
+          <input id="title" name="title" class="form-control form-control-sm" maxlength="200" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="description">Motivo / descrição</label>
+          <textarea id="description" name="description" class="form-control form-control-sm" rows="3" maxlength="500" required minlength="10"></textarea>
+        </div>
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label" for="starts_at">Início (ISO)</label>
+            <input id="starts_at" name="starts_at" type="datetime-local" class="form-control form-control-sm" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="ends_at">Fim (ISO)</label>
+            <input id="ends_at" name="ends_at" type="datetime-local" class="form-control form-control-sm" required>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="scope">Escopo</label>
+          <select id="scope" name="scope" class="form-select form-select-sm">
+            {% for value, label in scope_choices %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="scope_categories">Categorias (vírgula, se escopo=categories)</label>
+          <input id="scope_categories" name="scope_categories" class="form-control form-control-sm" placeholder="vector_health,rag_operations">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="scope_rule_ids">Rule IDs (vírgula, se escopo=rules)</label>
+          <input id="scope_rule_ids" name="scope_rule_ids" class="form-control form-control-sm" placeholder="rag_operation_stale">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="scope_resource_reference">Referência de recurso (se escopo=resource)</label>
+          <input id="scope_resource_reference" name="scope_resource_reference" class="form-control form-control-sm" maxlength="120">
+        </div>
+        <button type="submit" class="btn btn-sm btn-primary">Criar janela</button>
+        <a class="btn btn-sm btn-light border" href="{% url 'operations_portal:knowledge_base_maintenance' %}?tenant={{ selected_tenant.pk }}">Voltar</a>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

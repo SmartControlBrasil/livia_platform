@@ -51,7 +51,7 @@ PLACEHOLDERS = {
 @login_required(login_url="/admin/login/")
 def dashboard(request):
     access = resolve_portal_access(request, capability=CAPABILITY_PORTAL_VIEW_DASHBOARD, allow_global=True)
-    context = get_dashboard_context(request.GET.get("period"), tenant=access.tenant)
+    context = get_dashboard_context(request.GET.get("period"), tenant=access.tenant, user=request.user)
     context.update({"active_section": "overview"})
     context.update(portal_template_context(access))
     return render(request, "operations_portal/dashboard.html", context)

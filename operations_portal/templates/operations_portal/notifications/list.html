@@ -1,0 +1,65 @@
+{% extends "operations_portal/base.html" %}
+{% block title %}Notificações{% endblock %}
+{% block page_content %}
+<div class="container-fluid py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h4 class="mb-1">Central de Notificações</h4>
+      <p class="text-muted mb-0">{{ tenant_scope_note }}</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{% url 'operations_portal:operational_notification_preferences' %}" class="btn btn-outline-secondary btn-sm">Preferências</a>
+      <form method="post" action="{% url 'operations_portal:operational_notification_mark_all_read' %}">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary btn-sm">Marcar todas como lidas</button>
+      </form>
+    </div>
+  </div>
+
+  <ul class="nav nav-pills mb-3">
+    <li class="nav-item"><a class="nav-link {% if filter_key == 'all' %}active{% endif %}" href="?filter=all">Todas</a></li>
+    <li class="nav-item"><a class="nav-link {% if filter_key == 'unread' %}active{% endif %}" href="?filter=unread">Não lidas</a></li>
+    <li class="nav-item"><a class="nav-link {% if filter_key == 'critical' %}active{% endif %}" href="?filter=critical">Críticas</a></li>
+    <li class="nav-item"><a class="nav-link {% if filter_key == 'assigned' %}active{% endif %}" href="?filter=assigned">Atribuídas</a></li>
+    <li class="nav-item"><a class="nav-link {% if filter_key == 'sla' %}active{% endif %}" href="?filter=sla">SLA</a></li>
+    <li class="nav-item"><a class="nav-link {% if filter_key == 'escalation' %}active{% endif %}" href="?filter=escalation">Escalonamentos</a></li>
+    <li class="nav-item"><a class="nav-link {% if filter_key == 'resolution' %}active{% endif %}" href="?filter=resolution">Resoluções</a></li>
+  </ul>
+
+  <div class="card">
+    <div class="list-group list-group-flush">
+      {% for notification in page_obj %}
+      <div class="list-group-item {% if not notification.read_at %}bg-light{% endif %}">
+        <div class="d-flex justify-content-between align-items-start gap-3">
+          <div>
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <span class="badge {% if notification.severity == 'critical' %}bg-danger{% elif notification.severity == 'warning' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ notification.get_severity_display }}</span>
+              {% if not notification.read_at %}<span class="badge bg-primary">Nova</span>{% endif %}
+            </div>
+            <h6 class="mb-1">{{ notification.title }}</h6>
+            <p class="mb-1 text-muted">{{ notification.summary }}</p>
+            <small class="text-muted">{{ notification.created_at|date:"d/m/Y H:i" }}</small>
+          </div>
+          <div class="d-flex flex-column gap-2">
+            {% if notification.destination_url %}
+            <a href="{{ notification.destination_url }}" class="btn btn-outline-primary btn-sm">Ver origem</a>
+            {% endif %}
+            {% if not notification.read_at %}
+            <form method="post" action="{% url 'operations_portal:operational_notification_mark_read' notification.pk %}">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <button type="submit" class="btn btn-sm btn-light">Marcar lida</button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% empty %}
+      <div class="list-group-item text-muted">Nenhuma notificação encontrada.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% include "operations_portal/partials/pagination.html" with page_obj=page_obj querystring=querystring %}
+</div>
+{% endblock %}

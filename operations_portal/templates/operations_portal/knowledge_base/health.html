@@ -1,0 +1,381 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Saúde RAG/IA{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column gap-2">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Central de Saúde RAG e IA</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    <form method="get" class="d-flex gap-2 align-items-center">
+      <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+      <label class="form-label mb-0 text-muted fs-13" for="period-select">Período</label>
+      <select id="period-select" name="period" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="24h" {% if period == '24h' %}selected{% endif %}>24 horas</option>
+        <option value="7d" {% if period == '7d' %}selected{% endif %}>7 dias</option>
+        <option value="30d" {% if period == '30d' %}selected{% endif %}>30 dias</option>
+      </select>
+    </form>
+    {% if can_operate_kb %}
+    <form method="post" action="{% url 'operations_portal:knowledge_base_health_sync' %}">
+      {% csrf_token %}
+      <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+      <input type="hidden" name="period" value="{{ period }}">
+      <button type="submit" class="btn btn-sm btn-outline-primary">Atualizar diagnóstico e alertas</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <p class="text-muted mb-1">Alertas operacionais abertos</p>
+          <h4 class="mb-1">{{ open_alerts.total }}</h4>
+          <p class="text-muted fs-13 mb-2">Critical: {{ open_alerts.critical }} · Warning: {{ open_alerts.warning }} · Reconhecidos: {{ open_alerts.acknowledged }}</p>
+          <a class="fs-13" href="{% url 'operations_portal:knowledge_base_alerts' %}?tenant={{ selected_tenant.pk }}">Ver alertas</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body fs-13">
+          <p class="text-muted mb-1">Governança operacional</p>
+          <p class="mb-1">Silenciados: <strong>{{ governance.silenced }}</strong> · Manutenção: <strong>{{ governance.under_maintenance }}</strong></p>
+          <p class="mb-1">Sem responsável: <strong>{{ governance.unassigned }}</strong> · Janelas ativas: <strong>{{ governance.active_maintenance_windows }}</strong></p>
+          <p class="mb-2">SLA ACK vencido: <strong>{{ governance.ack_sla_breached }}</strong> · SLA resolução vencido: <strong>{{ governance.resolution_sla_breached }}</strong></p>
+          <a class="fs-13" href="{% url 'operations_portal:knowledge_base_maintenance' %}?tenant={{ selected_tenant.pk }}">Manutenções</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <p class="text-muted mb-1">Monitoramento automático</p>
+          <div class="row fs-13">
+            <div class="col-md-6">
+              <p class="mb-1"><strong>Gate global:</strong> {% if monitoring.gate_enabled %}Habilitado{% else %}Desabilitado{% endif %}</p>
+              <p class="mb-1"><strong>Dry-run:</strong> {% if monitoring.gate_dry_run %}sim{% else %}não{% endif %}</p>
+              <p class="mb-1"><strong>Tenant elegível:</strong> {% if monitoring.tenant_eligible %}sim{% else %}não{% endif %}</p>
+            </div>
+            <div class="col-md-6">
+              <p class="mb-1"><strong>Última execução:</strong> {% if monitoring.last_run_at %}{{ monitoring.last_run_at|date:"d/m/Y H:i" }} ({{ monitoring.last_run_status }}){% else %}Nunca{% endif %}</p>
+              <p class="mb-1"><strong>Último sucesso:</strong> {% if monitoring.last_success_at %}{{ monitoring.last_success_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</p>
+              <p class="mb-1"><strong>Última falha:</strong> {% if monitoring.last_failure_at %}{{ monitoring.last_failure_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</p>
+            </div>
+          </div>
+          {% if monitoring.active_batch_id %}
+          <p class="text-info fs-13 mb-0 mt-2">Execução ativa #{{ monitoring.active_batch_id }} desde {{ monitoring.active_batch_started_at|date:"d/m/Y H:i" }}.</p>
+          {% endif %}
+          {% if monitoring.monitoring_stale_warning %}
+          <p class="text-warning fs-13 mb-0 mt-2">Nenhuma execução bem-sucedida recente com monitoramento automático ativo.</p>
+          {% endif %}
+          <p class="text-muted fs-12 mb-0 mt-2">Timer documentado: {{ monitoring.timer_documented_interval }} (não ativo por padrão).</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body d-flex flex-wrap align-items-center gap-3">
+      <span class="badge bg-{{ dashboard.overall.tone }}-subtle text-{{ dashboard.overall.tone }} fs-14 px-3 py-2">
+        {{ dashboard.overall.label }}
+      </span>
+      <div>
+        <strong>Readiness:</strong> {{ dashboard.overall.readiness_code }}
+        <span class="text-muted">— {{ dashboard.overall.detail }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    {% for card in dashboard.scorecards %}
+    <div class="col-md-6 col-xl-4">
+      <div class="card h-100">
+        <div class="card-body">
+          <p class="text-muted mb-1">{{ card.title }}</p>
+          <h4 class="mb-1">{{ card.value }}</h4>
+          <span class="badge bg-{{ card.status }}-subtle text-{{ card.status }}">{{ card.period }}</span>
+          <p class="text-muted fs-13 mb-0 mt-2">{{ card.detail }}</p>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Configuração efetiva</h5></div>
+        <div class="card-body fs-13">
+          <p class="mb-1"><strong>RAG efetivo:</strong> {% if dashboard.configuration.rag_semantic_active %}Ativo{% else %}Inativo{% endif %}</p>
+          <p class="mb-1"><strong>Grounded synthesis:</strong> {% if dashboard.configuration.grounded_synthesis_allowed %}Permitida{% else %}Bloqueada{% endif %}</p>
+          <p class="mb-1"><strong>Retrieval no banco:</strong> {% if dashboard.configuration.retrieval_enabled_db %}Habilitado{% else %}Desabilitado{% endif %}</p>
+          <p class="mb-1"><strong>Operações RAG:</strong> {% if dashboard.configuration.operations_enabled %}Habilitadas{% else %}Desabilitadas{% endif %} · dry-run {% if dashboard.configuration.operations_dry_run %}sim{% else %}não{% endif %}</p>
+          <p class="mb-1"><strong>Indexação real:</strong> {% if dashboard.configuration.indexing_real_enabled %}Permitida{% else %}Bloqueada{% endif %}</p>
+          <p class="mb-1"><strong>Provider/model:</strong> {{ dashboard.configuration.embedding_provider }} / {{ dashboard.configuration.embedding_model }}</p>
+          <p class="mb-1"><strong>Dimensão:</strong> {{ dashboard.configuration.embedding_dimension|default:"-" }}</p>
+          <p class="mb-1"><strong>Threshold efetivo:</strong> {{ dashboard.configuration.limits.effective_min_similarity_score }}</p>
+          <p class="mb-0"><strong>Backend vetorial:</strong> {{ dashboard.configuration.vector_backend }}</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Readiness consolidado</h5></div>
+        <div class="card-body fs-13">
+          <p class="mb-1"><strong>Environment:</strong> {{ dashboard.readiness.environment.status }}</p>
+          <p class="mb-1"><strong>Database:</strong> {{ dashboard.readiness.database.status }} (migrations pendentes: {{ dashboard.readiness.database.pending_migrations }})</p>
+          <p class="mb-1"><strong>RAG operations:</strong> {{ dashboard.readiness.rag_operations.status }}</p>
+          <p class="mb-1"><strong>Vector:</strong> {{ dashboard.readiness.vector.status }}</p>
+          <p class="mb-0"><strong>Overall:</strong> {{ dashboard.readiness.overall.status }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Notificações operacionais</h5></div>
+    <div class="card-body fs-13">
+      <div class="row">
+        <div class="col-md-3"><strong>Pendentes:</strong> {{ dashboard.notification_metrics.pending }}</div>
+        <div class="col-md-3"><strong>Não lidas:</strong> {{ dashboard.notification_metrics.in_app_unread }}</div>
+        <div class="col-md-3"><strong>Falhas:</strong> {{ dashboard.notification_metrics.failed }}</div>
+        <div class="col-md-3"><strong>E-mail:</strong> enabled={{ dashboard.notification_email.enabled|yesno:"sim,não" }} · dry-run={{ dashboard.notification_email.dry_run|yesno:"sim,não" }}</div>
+      </div>
+      {% if dashboard.notification_metrics.last_worker_run %}
+      <p class="mb-0 mt-2 text-muted">Último worker: {{ dashboard.notification_metrics.last_worker_run.started_at|date:"d/m/Y H:i" }} · {{ dashboard.notification_metrics.last_worker_run.status }}</p>
+      {% else %}
+      <p class="mb-0 mt-2 text-muted">Worker ainda não executado.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if dashboard.recommendations %}
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Recomendações operacionais</h5></div>
+    <div class="card-body">
+      {% for item in dashboard.recommendations %}
+      <div class="alert alert-{% if item.severity == 'critical' %}danger{% elif item.severity == 'warning' %}warning{% else %}info{% endif %} mb-2">
+        <strong>{{ item.message }}</strong><br>
+        <span class="fs-13">{{ item.action }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h5 class="card-title mb-0">Retrieval ({{ dashboard.period_label }})</h5>
+          <a class="fs-13" href="{% url 'operations_portal:knowledge_base_events' %}?tenant={{ selected_tenant.pk }}">Eventos</a>
+        </div>
+        <div class="card-body fs-13">
+          {% if dashboard.retrieval_metrics.has_data %}
+          <p class="mb-1">Executados: {{ dashboard.retrieval_metrics.executed }}</p>
+          <p class="mb-1">Hits: {{ dashboard.retrieval_metrics.hits }}{% if dashboard.retrieval_metrics.hit_rate != None %} ({{ dashboard.retrieval_metrics.hit_rate|floatformat:2 }}){% endif %}</p>
+          <p class="mb-1">Empty: {{ dashboard.retrieval_metrics.empty }} · Failed: {{ dashboard.retrieval_metrics.failed }}</p>
+          <p class="mb-1">Grounded success: {{ dashboard.retrieval_metrics.grounded_success }}</p>
+          <p class="mb-0">Latência média: {{ dashboard.retrieval_metrics.avg_latency_ms }} ms</p>
+          {% else %}
+          <p class="text-muted mb-0">Nenhum evento de retrieval no período. Execute uma busca diagnóstica ou valide o chat.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-header"><h5 class="card-title mb-0">Uso de IA ({{ dashboard.period_label }})</h5></div>
+        <div class="card-body fs-13">
+          {% if dashboard.ai_usage.has_data %}
+          <p class="mb-1">Requests: {{ dashboard.ai_usage.requests }} (ok {{ dashboard.ai_usage.success }} / falha {{ dashboard.ai_usage.failure }})</p>
+          <p class="mb-1">Tokens: {{ dashboard.ai_usage.total_tokens }}</p>
+          <p class="mb-1">Latência mediana: {{ dashboard.ai_usage.median_latency_ms }} ms · p95 {{ dashboard.ai_usage.p95_latency_ms }} ms</p>
+          <p class="mb-0">Custo estimado: indisponível</p>
+          {% else %}
+          <p class="text-muted mb-0">Sem AiUsageEvent no período.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h5 class="card-title mb-0">Operações RAG</h5>
+          <a class="fs-13" href="{% url 'operations_portal:knowledge_base_operations' %}?tenant={{ selected_tenant.pk }}">Atualização</a>
+        </div>
+        <div class="card-body fs-13">
+          <p class="mb-1">Pending: {{ dashboard.operations_summary.pending }} · Running: {{ dashboard.operations_summary.running }}</p>
+          <p class="mb-1">Succeeded: {{ dashboard.operations_summary.succeeded }} · Failed: {{ dashboard.operations_summary.failed }}</p>
+          <p class="mb-0">Stale running: {{ dashboard.operations_summary.stale_running }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if dashboard.ai_usage.errors %}
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Erros de IA recentes</h5></div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Categoria</th><th>Operação</th><th>Modelo</th><th>Qtd</th><th>Última ocorrência</th></tr></thead>
+        <tbody>
+          {% for err in dashboard.ai_usage.errors %}
+          <tr>
+            <td>{{ err.category }}</td>
+            <td>{{ err.operation }}</td>
+            <td>{{ err.model }}</td>
+            <td>{{ err.count }}</td>
+            <td>{{ err.last_seen|date:"d/m/Y H:i" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Operações recentes</h5></div>
+    <div class="card-body">
+      {% if operations_page.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 fs-13">
+          <thead><tr><th>Data</th><th>Operação</th><th>Status</th><th>Tentativas</th><th>Heartbeat</th><th>Erro</th></tr></thead>
+          <tbody>
+            {% for item in operations_page.object_list %}
+            <tr>
+              <td>{{ item.created_at|date:"d/m/Y H:i" }}</td>
+              <td>{{ item.operation_label }}</td>
+              <td>{{ item.status_label }}</td>
+              <td>{{ item.attempt_count }}</td>
+              <td>{% if item.last_heartbeat_at %}{{ item.last_heartbeat_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</td>
+              <td>{{ item.error_message|default:"-"|truncatechars:60 }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if operations_page.has_other_pages %}
+      <nav aria-label="Paginação operações" class="mt-3">
+        <ul class="pagination justify-content-end mb-0">
+          {% if operations_page.has_previous %}
+          <li class="page-item"><a class="page-link" href="?{% if querystring %}{{ querystring }}&{% endif %}ops_page={{ operations_page.previous_page_number }}">Anterior</a></li>
+          {% else %}
+          <li class="page-item disabled"><span class="page-link">Anterior</span></li>
+          {% endif %}
+          <li class="page-item active"><span class="page-link">{{ operations_page.number }} de {{ operations_page.paginator.num_pages }}</span></li>
+          {% if operations_page.has_next %}
+          <li class="page-item"><a class="page-link" href="?{% if querystring %}{{ querystring }}&{% endif %}ops_page={{ operations_page.next_page_number }}">Próxima</a></li>
+          {% else %}
+          <li class="page-item disabled"><span class="page-link">Próxima</span></li>
+          {% endif %}
+        </ul>
+      </nav>
+      {% endif %}
+      {% else %}
+      <p class="text-muted mb-0">Nenhuma operação registrada.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="card-title mb-0">Eventos de retrieval ({{ dashboard.period_label }})</h5>
+      <a class="fs-13" href="{% url 'operations_portal:knowledge_base_events' %}?tenant={{ selected_tenant.pk }}">Histórico completo</a>
+    </div>
+    <div class="card-body">
+      {% if retrieval_page.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 fs-13">
+          <thead><tr><th>Data</th><th>Status</th><th>Evidência</th><th>Resultados</th><th>Duração</th><th>Score máx.</th><th>Dry-run</th></tr></thead>
+          <tbody>
+            {% for event in retrieval_page.object_list %}
+            <tr>
+              <td>{{ event.created_at|date:"d/m/Y H:i" }}</td>
+              <td>{{ event.status_label }}</td>
+              <td>{{ event.sufficiency_label }}</td>
+              <td>{{ event.result_count }}</td>
+              <td>{{ event.duration_ms }} ms</td>
+              <td>{{ event.max_score|floatformat:4 }}</td>
+              <td>{% if event.dry_run %}Sim{% else %}Não{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if retrieval_page.has_other_pages %}
+      <nav aria-label="Paginação retrieval" class="mt-3">
+        <ul class="pagination justify-content-end mb-0">
+          {% if retrieval_page.has_previous %}
+          <li class="page-item"><a class="page-link" href="?{% if querystring %}{{ querystring }}&{% endif %}retrieval_page={{ retrieval_page.previous_page_number }}">Anterior</a></li>
+          {% else %}
+          <li class="page-item disabled"><span class="page-link">Anterior</span></li>
+          {% endif %}
+          <li class="page-item active"><span class="page-link">{{ retrieval_page.number }} de {{ retrieval_page.paginator.num_pages }}</span></li>
+          {% if retrieval_page.has_next %}
+          <li class="page-item"><a class="page-link" href="?{% if querystring %}{{ querystring }}&{% endif %}retrieval_page={{ retrieval_page.next_page_number }}">Próxima</a></li>
+          {% else %}
+          <li class="page-item disabled"><span class="page-link">Próxima</span></li>
+          {% endif %}
+        </ul>
+      </nav>
+      {% endif %}
+      {% else %}
+      <p class="text-muted mb-0">Nenhum evento de retrieval no período selecionado.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header"><h5 class="card-title mb-0">Eventos de uso da IA ({{ dashboard.period_label }})</h5></div>
+    <div class="card-body">
+      {% if ai_page.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 fs-13">
+          <thead><tr><th>Data</th><th>Operação</th><th>Modelo</th><th>Status</th><th>Categoria</th><th>Tokens</th><th>Latência</th></tr></thead>
+          <tbody>
+            {% for item in ai_page.object_list %}
+            <tr>
+              <td>{{ item.created_at|date:"d/m/Y H:i" }}</td>
+              <td>{{ item.operation }}</td>
+              <td>{{ item.model }}</td>
+              <td>{% if item.success %}Sucesso{% else %}Falha{% endif %}</td>
+              <td>{{ item.error_category }}</td>
+              <td>{{ item.total_tokens }}</td>
+              <td>{{ item.latency_ms }} ms</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if ai_page.has_other_pages %}
+      <nav aria-label="Paginação IA" class="mt-3">
+        <ul class="pagination justify-content-end mb-0">
+          {% if ai_page.has_previous %}
+          <li class="page-item"><a class="page-link" href="?{% if querystring %}{{ querystring }}&{% endif %}ai_page={{ ai_page.previous_page_number }}">Anterior</a></li>
+          {% else %}
+          <li class="page-item disabled"><span class="page-link">Anterior</span></li>
+          {% endif %}
+          <li class="page-item active"><span class="page-link">{{ ai_page.number }} de {{ ai_page.paginator.num_pages }}</span></li>
+          {% if ai_page.has_next %}
+          <li class="page-item"><a class="page-link" href="?{% if querystring %}{{ querystring }}&{% endif %}ai_page={{ ai_page.next_page_number }}">Próxima</a></li>
+          {% else %}
+          <li class="page-item disabled"><span class="page-link">Próxima</span></li>
+          {% endif %}
+        </ul>
+      </nav>
+      {% endif %}
+      {% else %}
+      <p class="text-muted mb-0">Sem AiUsageEvent no período selecionado.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

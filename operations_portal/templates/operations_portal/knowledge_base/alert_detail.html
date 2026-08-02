@@ -1,0 +1,219 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Detalhe do alerta{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3">
+    <h4 class="fs-18 fw-semibold m-0">{{ alert.title }}</h4>
+    <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card mb-3">
+        <div class="card-header"><h5 class="card-title mb-0">Resumo</h5></div>
+        <div class="card-body fs-13">
+          <p class="mb-1"><strong>Status:</strong> {{ alert.status_label }}</p>
+          <p class="mb-1"><strong>SLA:</strong> {{ alert.sla_state_label }}</p>
+          <p class="mb-1"><strong>ACK até:</strong> {% if alert.ack_due_at %}{{ alert.ack_due_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</p>
+          <p class="mb-1"><strong>Resolução até:</strong> {% if alert.resolution_due_at %}{{ alert.resolution_due_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</p>
+          <p class="mb-1"><strong>Responsável:</strong> {{ alert.assignee_username|default:"-" }}</p>
+          {% if alert.is_silenced %}
+          <p class="mb-1"><strong>Silenciado até:</strong> {{ alert.silence_ends_at|date:"d/m/Y H:i" }}</p>
+          <p class="mb-1"><strong>Motivo:</strong> {{ alert.silence_reason }}</p>
+          {% endif %}
+          {% if alert.is_under_maintenance %}
+          <p class="mb-1"><strong>Manutenção:</strong> {{ alert.maintenance_title }}</p>
+          {% endif %}
+          <p class="mb-1"><strong>Severidade:</strong> {{ alert.severity_label }}</p>
+          <p class="mb-1"><strong>Categoria:</strong> {{ alert.category_label }}</p>
+          <p class="mb-1"><strong>Regra:</strong> {{ alert.rule_id }}</p>
+          <p class="mb-1"><strong>Detectado:</strong> {{ alert.detected_at|date:"d/m/Y H:i" }}</p>
+          <p class="mb-1"><strong>Última ocorrência:</strong> {{ alert.last_seen_at|date:"d/m/Y H:i" }}</p>
+          <p class="mb-1"><strong>Reaberturas:</strong> {{ alert.reopen_count }}{% if alert.last_reopened_at %} (última {{ alert.last_reopened_at|date:"d/m/Y H:i" }}){% endif %}</p>
+          <p class="mb-1"><strong>Prioridade:</strong> {{ alert.priority_label }}</p>
+          <p class="mb-1"><strong>Escalonamento:</strong> {{ alert.escalation_level_label }}{% if alert.escalation_reason %} — {{ alert.escalation_reason }}{% endif %}</p>
+          <p class="mb-0"><strong>Resumo:</strong> {{ alert.summary }}</p>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header"><h5 class="card-title mb-0">Runbook recomendado</h5></div>
+        <div class="card-body fs-13">
+          <pre class="mb-2 text-wrap" style="white-space: pre-wrap;">{{ alert.runbook_action }}</pre>
+          {% if alert.runbook_doc %}<p class="mb-0 text-muted">Referência: {{ alert.runbook_doc }}</p>{% endif %}
+        </div>
+      </div>
+
+      {% if alert.metadata %}
+      <div class="card mb-3">
+        <div class="card-header"><h5 class="card-title mb-0">Metadados seguros</h5></div>
+        <div class="card-body fs-13">
+          {% for key, value in alert.metadata.items %}
+          <p class="mb-1"><strong>{{ key }}:</strong> {{ value }}</p>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card mb-3">
+        <div class="card-header"><h5 class="card-title mb-0">Governança</h5></div>
+        <div class="card-body fs-13">
+          {% if alert.status != 'resolved' and can_operate_kb %}
+          {% if not alert.assigned_to_id %}
+          <form method="post" action="{% url 'operations_portal:operational_alert_claim' alert.id %}" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <button type="submit" class="btn btn-sm btn-primary">Assumir alerta</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{% url 'operations_portal:knowledge_base_alert_assign' alert.id %}" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <label class="form-label" for="membership_id">Atribuir responsável</label>
+            <select id="membership_id" name="membership_id" class="form-select form-select-sm mb-2">
+              <option value="">Assumir eu mesmo</option>
+              {% for membership in alert.tenant_memberships %}
+              <option value="{{ membership.id }}">{{ membership.username }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-sm btn-outline-primary">Atribuir</button>
+          </form>
+          {% if alert.assigned_to_id and can_configure_kb %}
+          <form method="post" action="{% url 'operations_portal:knowledge_base_alert_unassign' alert.id %}" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <input type="text" name="reason" class="form-control form-control-sm mb-2" placeholder="Motivo da desatribuição" minlength="10" maxlength="500" required>
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Remover responsável</button>
+          </form>
+          <form method="post" action="{% url 'operations_portal:operational_alert_transfer' alert.id %}" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <label class="form-label" for="transfer-membership">Transferir para</label>
+            <select id="transfer-membership" name="membership_id" class="form-select form-select-sm mb-2" required>
+              {% for membership in alert.tenant_memberships %}
+              <option value="{{ membership.id }}">{{ membership.username }}</option>
+              {% endfor %}
+            </select>
+            <textarea name="reason" class="form-control form-control-sm mb-2" rows="2" minlength="10" maxlength="500" required placeholder="Motivo da transferência"></textarea>
+            <button type="submit" class="btn btn-sm btn-outline-primary">Transferir</button>
+          </form>
+          {% endif %}
+          {% if can_configure_kb and alert.status != 'resolved' %}
+          <form method="post" action="{% url 'operations_portal:operational_alert_escalate' alert.id %}" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <label class="form-label" for="target-level">Escalar para nível</label>
+            <select id="target-level" name="target_level" class="form-select form-select-sm mb-2">
+              <option value="1">1 — Operação</option>
+              <option value="2">2 — Gestão</option>
+              <option value="3">3 — Administrativo</option>
+            </select>
+            <textarea name="reason" class="form-control form-control-sm mb-2" rows="2" minlength="10" maxlength="500" required placeholder="Motivo do escalonamento"></textarea>
+            <button type="submit" class="btn btn-sm btn-outline-danger">Escalar</button>
+          </form>
+          {% if alert.escalation_level > 0 %}
+          <form method="post" action="{% url 'operations_portal:operational_alert_deescalate' alert.id %}" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <textarea name="reason" class="form-control form-control-sm mb-2" rows="2" minlength="10" maxlength="500" required placeholder="Motivo do encerramento"></textarea>
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Encerrar escalonamento</button>
+          </form>
+          {% endif %}
+          {% endif %}
+          {% if alert.is_silenced %}
+          <form method="post" action="{% url 'operations_portal:knowledge_base_alert_unsilence' alert.id %}" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <button type="submit" class="btn btn-sm btn-outline-warning">Cancelar silenciamento</button>
+          </form>
+          {% else %}
+          <form method="post" action="{% url 'operations_portal:knowledge_base_alert_silence' alert.id %}" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <label class="form-label" for="silence-reason">Motivo do silenciamento</label>
+            <textarea id="silence-reason" name="reason" class="form-control form-control-sm mb-2" rows="2" minlength="10" maxlength="500" required></textarea>
+            <label class="form-label" for="duration_key">Duração</label>
+            <select id="duration_key" name="duration_key" class="form-select form-select-sm mb-2">
+              <option value="1h">1 hora</option>
+              <option value="4h">4 horas</option>
+              <option value="24h" selected>24 horas</option>
+              <option value="7d">7 dias</option>
+            </select>
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Silenciar</button>
+          </form>
+          {% endif %}
+          {% elif not can_operate_kb %}
+          <p class="text-muted mb-0">Somente operadores autorizados podem gerenciar atribuição e silenciamento.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-header"><h5 class="card-title mb-0">Reconhecimento e resolução</h5></div>
+        <div class="card-body fs-13">
+          {% if alert.acknowledged_at %}
+          <p class="mb-2">Reconhecido por <strong>{{ alert.acknowledged_by }}</strong> em {{ alert.acknowledged_at|date:"d/m/Y H:i" }}.</p>
+          {% endif %}
+          {% if alert.resolved_at %}
+          <p class="mb-2">Resolvido por <strong>{{ alert.resolved_by|default:"sistema" }}</strong> em {{ alert.resolved_at|date:"d/m/Y H:i" }} ({{ alert.resolution_source }}).</p>
+          <p class="mb-2"><strong>Nota:</strong> {{ alert.resolution_note }}</p>
+          {% endif %}
+          {% if alert.status != 'resolved' and can_operate_kb %}
+          {% if alert.status == 'open' %}
+          <form method="post" action="{% url 'operations_portal:knowledge_base_alert_acknowledge' alert.id %}" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <button type="submit" class="btn btn-sm btn-warning">Reconhecer (ACK)</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{% url 'operations_portal:knowledge_base_alert_resolve' alert.id %}">
+            {% csrf_token %}
+            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+            <label class="form-label" for="resolution-note">Nota de resolução</label>
+            <textarea id="resolution-note" name="resolution_note" class="form-control form-control-sm mb-2" rows="3" maxlength="500" required></textarea>
+            <button type="submit" class="btn btn-sm btn-success">Resolver manualmente</button>
+          </form>
+          <p class="text-muted mt-2 mb-0">Se a condição persistir, o próximo sync pode reabrir o alerta.</p>
+          {% elif not can_operate_kb %}
+          <p class="text-muted mb-0">Somente operadores autorizados podem reconhecer ou resolver alertas.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Histórico operacional</h5></div>
+        <div class="card-body fs-13">
+          {% for event in alert.audit_timeline %}
+          <p class="mb-1"><strong>{{ event.created_at|date:"d/m/Y H:i" }}</strong> — {{ event.action }} ({{ event.actor }})</p>
+          {% empty %}
+          <p class="text-muted mb-0">Sem eventos registrados.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card mt-3">
+        <div class="card-header"><h5 class="card-title mb-0">Links relacionados</h5></div>
+        <div class="card-body fs-13 d-flex flex-column gap-2">
+          <a href="{% url 'operations_portal:knowledge_base_health' %}?tenant={{ selected_tenant.pk }}">Central de Saúde</a>
+          {% if alert.links.operations and alert.operation_id %}
+          <a href="{% url 'operations_portal:knowledge_base_operation_detail' alert.operation_id %}?tenant={{ selected_tenant.pk }}">Operação RAG #{{ alert.operation_id }}</a>
+          {% endif %}
+          {% if alert.links.config %}
+          <a href="{% url 'operations_portal:knowledge_base_config' %}?tenant={{ selected_tenant.pk }}">Configuração RAG</a>
+          {% endif %}
+          {% if alert.links.diagnostic %}
+          <a href="{% url 'operations_portal:knowledge_base_diagnostic' %}?tenant={{ selected_tenant.pk }}">Busca diagnóstica</a>
+          {% endif %}
+          <a href="{% url 'operations_portal:knowledge_base_alerts' %}?tenant={{ selected_tenant.pk }}">Voltar à lista</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

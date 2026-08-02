@@ -1,0 +1,99 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Manutenções programadas{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column gap-2">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Manutenções programadas</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    {% if can_configure_kb %}
+    <a class="btn btn-sm btn-primary" href="{% url 'operations_portal:knowledge_base_maintenance_create' %}?tenant={{ selected_tenant.pk }}">Nova janela</a>
+    {% endif %}
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+        <div class="col-md-3">
+          <label class="form-label fs-13">Status</label>
+          <select name="status" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="scheduled" {% if filters.status == 'scheduled' %}selected{% endif %}>Agendada</option>
+            <option value="active" {% if filters.status == 'active' %}selected{% endif %}>Ativa</option>
+            <option value="ended" {% if filters.status == 'ended' %}selected{% endif %}>Encerrada</option>
+            <option value="cancelled" {% if filters.status == 'cancelled' %}selected{% endif %}>Cancelada</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fs-13">Categoria (escopo)</label>
+          <input type="text" name="category" class="form-control form-control-sm" value="{{ filters.category }}" placeholder="vector_health">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fs-13">Período</label>
+          <select name="period" class="form-select form-select-sm">
+            <option value="7d" {% if filters.period == '7d' %}selected{% endif %}>7 dias</option>
+            <option value="30d" {% if filters.period == '30d' %}selected{% endif %}>30 dias</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button type="submit" class="btn btn-sm btn-light border w-100">Filtrar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Janelas</h5></div>
+    <div class="card-body">
+      {% if page_obj.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 fs-13">
+          <thead>
+            <tr>
+              <th>Título</th>
+              <th>Status</th>
+              <th>Escopo</th>
+              <th>Início</th>
+              <th>Fim</th>
+              <th>Criado por</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in page_obj.object_list %}
+            <tr>
+              <td>{{ item.title }}</td>
+              <td>{{ item.status_label }}</td>
+              <td>{{ item.scope_label }}</td>
+              <td>{{ item.starts_at|date:"d/m/Y H:i" }}</td>
+              <td>{{ item.ends_at|date:"d/m/Y H:i" }}</td>
+              <td>{{ item.created_by|default:"-" }}</td>
+              <td>
+                {% if can_configure_kb and item.status != 'cancelled' and item.status != 'ended' %}
+                <form method="post" action="{% url 'operations_portal:knowledge_base_maintenance_cancel' item.id %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+                  <input type="text" name="cancellation_note" class="form-control form-control-sm mb-1" placeholder="Motivo do cancelamento" required minlength="10" maxlength="500">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Cancelar</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% include 'operations_portal/partials/pagination.html' %}
+      {% else %}
+      <p class="text-muted mb-0">Nenhuma janela de manutenção registrada.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

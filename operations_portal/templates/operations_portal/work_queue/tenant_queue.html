@@ -1,0 +1,114 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Fila operacional{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column gap-2">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Fila operacional do tenant</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    <a class="btn btn-sm btn-light border" href="{% url 'operations_portal:operational_my_work' %}?tenant={{ selected_tenant.pk }}">Minhas pendências</a>
+  </div>
+
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-2"><div class="card"><div class="card-body fs-13"><p class="text-muted mb-1">P1</p><h5>{{ summary.p1_open }}</h5></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body fs-13"><p class="text-muted mb-1">P2</p><h5>{{ summary.p2_open }}</h5></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body fs-13"><p class="text-muted mb-1">Sem responsável</p><h5>{{ summary.unassigned }}</h5></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body fs-13"><p class="text-muted mb-1">ACK SLA vencido</p><h5>{{ summary.ack_sla_breached }}</h5></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body fs-13"><p class="text-muted mb-1">Resolução SLA vencido</p><h5>{{ summary.resolution_sla_breached }}</h5></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body fs-13"><p class="text-muted mb-1">Escalonados</p><h5>{{ summary.escalated }}</h5></div></div></div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+        <div class="col-md-2">
+          <label class="form-label fs-13">Prioridade</label>
+          <select name="priority" class="form-select form-select-sm">
+            <option value="">Todas</option>
+            <option value="P1" {% if filters.priority == 'P1' %}selected{% endif %}>P1</option>
+            <option value="P2" {% if filters.priority == 'P2' %}selected{% endif %}>P2</option>
+            <option value="P3" {% if filters.priority == 'P3' %}selected{% endif %}>P3</option>
+            <option value="P4" {% if filters.priority == 'P4' %}selected{% endif %}>P4</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fs-13">Sem responsável</label>
+          <select name="unassigned" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="yes" {% if filters.unassigned == 'yes' %}selected{% endif %}>Sim</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fs-13">SLA vencido</label>
+          <select name="sla_breached" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="yes" {% if filters.sla_breached == 'yes' %}selected{% endif %}>Sim</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fs-13">Escalonados</label>
+          <select name="escalated" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="yes" {% if filters.escalated == 'yes' %}selected{% endif %}>Sim</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fs-13">Reabertos</label>
+          <select name="reopened" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            <option value="yes" {% if filters.reopened == 'yes' %}selected{% endif %}>Sim</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button type="submit" class="btn btn-sm btn-light border w-100">Filtrar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Fila</h5></div>
+    <div class="card-body">
+      {% if page_obj.object_list %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0 fs-13">
+          <thead>
+            <tr>
+              <th>Prioridade</th>
+              <th>Severidade</th>
+              <th>Título</th>
+              <th>Responsável</th>
+              <th>SLA</th>
+              <th>Escalonamento</th>
+              <th>Reaberturas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in page_obj.object_list %}
+            <tr>
+              <td>{{ item.priority_label }}</td>
+              <td>{{ item.severity_label }}</td>
+              <td><a href="{% url 'operations_portal:knowledge_base_alert_detail' item.id %}?tenant={{ selected_tenant.pk }}">{{ item.title }}</a></td>
+              <td>{{ item.assignee_username|default:"-" }}</td>
+              <td>{{ item.sla_state_label }}</td>
+              <td>{{ item.escalation_level_label }}</td>
+              <td>{{ item.reopen_count }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% include 'operations_portal/partials/pagination.html' %}
+      {% else %}
+      <p class="text-muted mb-0">Nenhum item na fila para os filtros selecionados.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

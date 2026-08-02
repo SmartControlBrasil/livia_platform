@@ -70,6 +70,21 @@
         <h3 class="mb-0 fs-22 text-dark">{{ kpis.high_priority_handoffs }}</h3><small class="text-muted">Pendentes agora</small><br><a class="fs-13" href="{% url 'operations_portal:handoff_list' %}?status=pending&amp;priority_group=high">Abrir alta prioridade</a>
       </div></div></div>
     </div>
+    <div class="col-md-6 col-lg-4 col-xl-3">
+      <div class="card"><div class="card-body"><div class="widget-first">
+        <div class="d-flex align-items-center mb-2"><div class="p-2 border border-danger border-opacity-10 bg-danger-subtle rounded-2 me-2"><div class="bg-danger rounded-circle widget-size text-center"><i data-feather="alert-triangle" class="text-white" style="height: 18px; width: 18px;"></i></div></div><p class="mb-0 text-dark fs-15">Pendências operacionais</p></div>
+        {% if operational_work %}
+        <h3 class="mb-1 fs-22 text-dark">P1 {{ operational_work.p1_open }} · P2 {{ operational_work.p2_open }}</h3>
+        <small class="text-muted">Minhas: {{ operational_work.my_count }} · Sem responsável: {{ operational_work.unassigned }}</small><br>
+        <a class="fs-13" href="{% url 'operations_portal:operational_work_queue' %}?tenant={{ active_tenant.pk }}">Abrir fila</a>
+        {% if operational_work.health %}
+        <p class="mb-0 mt-2 fs-13 text-muted">Saúde operacional: {{ operational_work.health.backlog_trend_label }} · <a href="{{ operational_work.health.analytics_url }}?tenant={{ active_tenant.pk }}">Analytics</a></p>
+        {% endif %}
+        {% else %}
+        <p class="text-muted mb-0 fs-13">Disponível com tenant ativo e acesso à base de conhecimento.</p>
+        {% endif %}
+      </div></div></div>
+    </div>
   </div>
 
   <div class="row">

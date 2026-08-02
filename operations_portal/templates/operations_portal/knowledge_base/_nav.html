@@ -6,6 +6,17 @@
       <a class="btn btn-sm {% if kb_sub_section == 'chunks' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_chunks' %}?tenant={{ selected_tenant.pk }}">Chunks</a>
       <a class="btn btn-sm {% if kb_sub_section == 'config' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_config' %}?tenant={{ selected_tenant.pk }}">Configuração</a>
       <a class="btn btn-sm {% if kb_sub_section == 'diagnostic' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_diagnostic' %}?tenant={{ selected_tenant.pk }}">Busca diagnóstica</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'health' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_health' %}?tenant={{ selected_tenant.pk }}">Saúde RAG/IA</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'alerts' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_alerts' %}?tenant={{ selected_tenant.pk }}">
+        Alertas
+        {% if open_alert_counts.total %}<span class="badge bg-danger ms-1">{{ open_alert_counts.total }}</span>{% endif %}
+      </a>
+      <a class="btn btn-sm {% if kb_sub_section == 'maintenance' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_maintenance' %}?tenant={{ selected_tenant.pk }}">Manutenções</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'work-queue' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:operational_work_queue' %}?tenant={{ selected_tenant.pk }}">Fila operacional</a>
+      <a class="btn btn-sm {% if kb_sub_section == 'my-work' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:operational_my_work' %}?tenant={{ selected_tenant.pk }}">
+        Minhas pendências{% if personal_work_count %} <span class="badge bg-warning ms-1">{{ personal_work_count }}</span>{% endif %}
+      </a>
+      <a class="btn btn-sm {% if kb_sub_section == 'analytics' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:operational_analytics' %}?tenant={{ selected_tenant.pk }}">Analytics</a>
       <a class="btn btn-sm {% if kb_sub_section == 'operations' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_operations' %}?tenant={{ selected_tenant.pk }}">Atualização da base</a>
       <a class="btn btn-sm {% if kb_sub_section == 'events' %}btn-primary{% else %}btn-light border{% endif %}" href="{% url 'operations_portal:knowledge_base_events' %}?tenant={{ selected_tenant.pk }}">Eventos recentes</a>
     </div>
