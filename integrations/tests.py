@@ -408,7 +408,14 @@ class WebhookDispatchServiceTests(TestCase):
         self.assertEqual(log.event_type, TenantWebhookConfig.EventType.LEAD_QUALIFIED)
         self.assertEqual(log.status, WebhookDeliveryLog.Status.DRY_RUN)
 
-    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=False)
+    @override_settings(
+        LIVIA_WEBHOOKS_ENABLED=True,
+        LIVIA_WEBHOOKS_DRY_RUN=False,
+        LIVIA_WEBHOOKS_REAL_ENABLED=True,
+        LIVIA_WEBHOOKS_REAL_ALLOWED_ENVS="development",
+        LIVIA_ENVIRONMENT="development",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
     def test_http_error_does_not_break_flow(self):
         self._create_config(dry_run=False)
         response = Mock(status_code=500, text="server error")
@@ -419,7 +426,14 @@ class WebhookDispatchServiceTests(TestCase):
         self.assertEqual(logs[0].status, WebhookDeliveryLog.Status.FAILED)
         self.assertEqual(logs[0].status_code, 500)
 
-    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=False)
+    @override_settings(
+        LIVIA_WEBHOOKS_ENABLED=True,
+        LIVIA_WEBHOOKS_DRY_RUN=False,
+        LIVIA_WEBHOOKS_REAL_ENABLED=True,
+        LIVIA_WEBHOOKS_REAL_ALLOWED_ENVS="development",
+        LIVIA_ENVIRONMENT="development",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
     def test_timeout_does_not_break_flow(self):
         self._create_config(dry_run=False)
 
@@ -686,7 +700,14 @@ class OutboxExternalIdempotencyHeadersTests(TestCase):
         self.assertEqual(headers["X-Livia-Event-ID"], "event-123")
         self.assertEqual(headers["Idempotency-Key"], "event-123")
 
-    @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=False)
+    @override_settings(
+        LIVIA_WEBHOOKS_ENABLED=True,
+        LIVIA_WEBHOOKS_DRY_RUN=False,
+        LIVIA_WEBHOOKS_REAL_ENABLED=True,
+        LIVIA_WEBHOOKS_REAL_ALLOWED_ENVS="development",
+        LIVIA_ENVIRONMENT="development",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
     def test_webhook_receives_event_id_header_and_payload(self):
         tenant = Tenant.objects.create(name="Tenant", slug="tenant")
         TenantWebhookConfig.objects.create(tenant=tenant, name="Hook", target_url="https://hook.example/livia", dry_run=False)

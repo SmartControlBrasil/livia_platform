@@ -30,3 +30,18 @@ Documentos como `phase16_rag_validation_report.md`, `phase17_staging_run_report.
 
 Branch: `chore/postgresql-readiness`
 HEAD publicado até Fase 10–16 parcial: `9fd5d38`
+
+## Trilha integração de sites (Fase 24)
+
+- `docs/site_integration.md` — onboarding, readiness, snippet e política de origins
+- `docs/tenants/granimarmores_pitondo_installation.md` — runbook operacional do primeiro tenant comercial
+- `docs/external_side_effect_safety.md` — gates de side effects externos e smoke seguro
+- `docs/widget_installation.md` — pacote `/install/<slug>/`
+- `docs/widget_origin_security.md` — validação de origin/CORS
+
+## Checkpoint comercial (Fases 24–27)
+
+- **Fase 24 — Site Integration Readiness**: contrato de instalação, readiness por tenant, `/install/<slug>/`, snippet oficial e testes focados.
+- **Fase 25 — Granimármores Tenant Preparation**: preparação idempotente do tenant `granimarmores-pitondo`, origins oficiais e runbook comercial.
+- **Fase 26 — Safe Commercial Smoke**: política central fail-closed de side effects, comando de readiness de side effects e smoke comercial com rollback.
+- **Fase 27 — Commercial Checkpoint**: auditoria final, validação proporcional e commit único de checkpoint comercial local.

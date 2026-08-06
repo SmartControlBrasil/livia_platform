@@ -219,6 +219,7 @@ class OnboardTenantCommandTests(TestCase):
             "Command Tenant",
             "--domain",
             "command.example.com",
+            "--apply",
             stdout=output,
         )
 
@@ -249,6 +250,7 @@ class OnboardTenantCommandTests(TestCase):
             "--placeholder-text",
             "Digite aqui",
             "--disable-widget",
+            "--apply",
             stdout=output,
         )
 
@@ -273,6 +275,7 @@ class OnboardTenantCommandTests(TestCase):
                 "bad-command-color.example",
                 "--primary-color",
                 "not-a-color",
+                "--apply",
             )
 
     def test_onboard_tenant_command_rejects_invalid_position(self):
@@ -287,7 +290,92 @@ class OnboardTenantCommandTests(TestCase):
                 "bad-command-position.example",
                 "--position",
                 "center",
+                "--apply",
             )
+
+    def test_onboard_tenant_command_requires_explicit_mode(self):
+        with self.assertRaises(CommandError):
+            call_command(
+                "onboard_tenant",
+                "--slug",
+                "command-mode",
+                "--name",
+                "Command Mode",
+                "--domain",
+                "command-mode.example",
+            )
+
+    def test_onboard_tenant_command_dry_run_keeps_database_unchanged(self):
+        output = StringIO()
+        call_command(
+            "onboard_tenant",
+            "--slug",
+            "command-dry-run",
+            "--name",
+            "Command Dry Run",
+            "--domain",
+            "command-dry-run.example",
+            "--dry-run",
+            stdout=output,
+        )
+        self.assertFalse(Tenant.objects.filter(slug="command-dry-run").exists())
+        self.assertIn("DRY RUN", output.getvalue())
+
+    def test_onboard_tenant_requires_flag_to_update_existing_tenant(self):
+        Tenant.objects.create(slug="command-existing", name="Existing", domain="https://existing.example")
+        with self.assertRaises(CommandError):
+            call_command(
+                "onboard_tenant",
+                "--slug",
+                "command-existing",
+                "--name",
+                "Existing Updated",
+                "--domain",
+                "https://existing.example",
+                "--apply",
+            )
+
+        call_command(
+            "onboard_tenant",
+            "--slug",
+            "command-existing",
+            "--name",
+            "Existing Updated",
+            "--domain",
+            "https://existing.example",
+            "--apply",
+            "--allow-update-existing",
+        )
+        self.assertEqual(Tenant.objects.get(slug="command-existing").name, "Existing Updated")
+
+    def test_onboard_tenant_preserves_profile_fields_when_not_explicitly_provided(self):
+        tenant = Tenant.objects.create(slug="command-preserve", name="Preserve", domain="https://preserve.example")
+        AssistantProfile.objects.create(
+            tenant=tenant,
+            name="Lívia Preserve",
+            primary_color="#123abc",
+            launcher_label="Atendimento Preserve",
+            placeholder_text="Pergunte aqui",
+            is_widget_enabled=False,
+        )
+
+        call_command(
+            "onboard_tenant",
+            "--slug",
+            "command-preserve",
+            "--name",
+            "Preserve Updated",
+            "--domain",
+            "https://preserve.example",
+            "--apply",
+            "--allow-update-existing",
+        )
+
+        profile = Tenant.objects.get(slug="command-preserve").assistant_profile
+        self.assertEqual(profile.primary_color, "#123abc")
+        self.assertEqual(profile.launcher_label, "Atendimento Preserve")
+        self.assertEqual(profile.placeholder_text, "Pergunte aqui")
+        self.assertFalse(profile.is_widget_enabled)
 
 
 
@@ -313,8 +401,9 @@ class TenantInstallPackageTests(TestCase):
         response = self.client.get("/install/granimarmores-pitondo/")
 
         self.assertContains(response, "https://livia.smartcontrolbrasil.com.br/widget.js")
-        self.assertContains(response, 'data-tenant="granimarmores-pitondo"')
-        self.assertContains(response, 'data-api-url="https://livia.smartcontrolbrasil.com.br/api/chat/"')
+        self.assertContains(response, "data-tenant=&quot;granimarmores-pitondo&quot;")
+        self.assertContains(response, "data-api-url=&quot;https://livia.smartcontrolbrasil.com.br/api/chat/&quot;")
+        self.assertContains(response, " defer&gt;")
 
     def test_install_html_does_not_contain_secrets(self):
         from integrations.models import TenantWebhookConfig
@@ -381,12 +470,13 @@ class TenantInstallPackageTests(TestCase):
         response = self.client.get("/install/granimarmores-pitondo/")
 
         self.assertContains(response, "inativo")
-        self.assertContains(response, "widget não processará atendimentos")
+        self.assertContains(response, "NOT_READY")
+        self.assertContains(response, "Tenant inativo")
 
     def test_install_package_warns_when_no_active_origin_exists(self):
         TenantAllowedOrigin.objects.filter(tenant=self.tenant).update(is_active=False)
         response = self.client.get("/install/granimarmores-pitondo.json")
-        self.assertIn("origins autorizadas", " ".join(response.json()["warnings"]))
+        self.assertIn("Nenhuma origin ativa cadastrada", " ".join(response.json()["warnings"]))
 
     def test_tenant_admin_exposes_install_url_and_widget_snippet_readonly(self):
         tenant_admin = admin.site._registry[Tenant]

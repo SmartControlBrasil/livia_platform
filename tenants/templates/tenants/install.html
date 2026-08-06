@@ -11,23 +11,62 @@
     code { padding: 2px 4px; }
     .status { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 13px; background: #e8f5e9; color: #1b5e20; }
     .status.inactive { background: #fff3e0; color: #9a4b00; }
+    .status.not-ready { background: #ffebee; color: #b71c1c; }
+    .status.warning { background: #fff8e1; color: #9a4b00; }
     .warning { background: #fff8e1; border: 1px solid #f0d27a; border-radius: 6px; padding: 10px 12px; margin: 8px 0; }
+    .checklist { list-style: none; padding: 0; margin: 0; }
+    .checklist li { padding: 8px 0; border-bottom: 1px solid #e2e8f0; }
+    .check-pass { color: #1b5e20; }
+    .check-fail { color: #b71c1c; }
+    .check-warn { color: #9a4b00; }
     .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid #cbd5e1; vertical-align: -2px; margin-right: 6px; }
     section { margin-top: 28px; }
+    .copy-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    button.copy { border: 1px solid #cbd5e1; background: #fff; border-radius: 6px; padding: 8px 12px; cursor: pointer; font: inherit; }
   </style>
 </head>
 <body>
   <main>
     <h1>Instalação da Lívia</h1>
     <p>Pacote de instalação para <strong>{{ package.tenant.name }}</strong>.</p>
+    <p>Assistente: <strong>{{ package.assistant_name }}</strong></p>
     <p>
-      Status:
+      Status do tenant:
       <span class="status{% if not package.tenant.is_active %} inactive{% endif %}">
         {% if package.tenant.is_active %}ativo{% else %}inativo{% endif %}
       </span>
     </p>
+    <p>
+      Prontidão para instalação:
+      <span class="status{% if package.readiness_status == 'NOT_READY' %} not-ready{% elif package.readiness_status == 'WARNING' %} warning{% endif %}">
+        {{ package.readiness_status }}
+      </span>
+    </p>
     <p>Tenant: <code>{{ package.tenant.slug }}</code></p>
-    <p>Origins autorizadas:</p><ul>{% for origin in package.allowed_origins %}<li><code>{{ origin }}</code></li>{% empty %}<li><code>não configurado</code></li>{% endfor %}</ul>
+
+    <section>
+      <h2>Checklist de prontidão</h2>
+      <ul class="checklist">
+        {% for check in package.readiness.checks %}
+          <li class="check-{{ check.status|lower }}">
+            <strong>{{ check.code }}</strong> — {{ check.message }}
+            {% if check.action %}<br><em>Ação recomendada:</em> {{ check.action }}{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section>
+      <h2>Origins autorizadas</h2>
+      <p>O site publicado precisa usar exatamente uma origin cadastrada abaixo.</p>
+      <ul>
+        {% for origin in package.allowed_origins %}
+          <li><code>{{ origin }}</code></li>
+        {% empty %}
+          <li><code>não configurado</code></li>
+        {% endfor %}
+      </ul>
+    </section>
 
     <section>
       <h2>Configuração visual</h2>
@@ -50,7 +89,11 @@
 
     <section>
       <h2>Snippet do widget</h2>
-      <pre><code>{{ package.snippet|safe }}</code></pre>
+      <p>Insira este snippet antes de <code>&lt;/body&gt;</code> no HTML do site.</p>
+      <div class="copy-row">
+        <button type="button" class="copy" data-copy-target="install-snippet">Copiar snippet</button>
+      </div>
+      <pre id="install-snippet"><code>{{ package.snippet }}</code></pre>
     </section>
 
     <section>
@@ -68,8 +111,10 @@
     </section>
 
     <section>
-      <h2>Teste via curl</h2>
-      <pre><code>curl -i {{ package.api_url }} -H &quot;Content-Type: application/json&quot; -d '{&quot;tenant&quot;:&quot;{{ package.tenant.slug }}&quot;,&quot;session_id&quot;:&quot;install-test&quot;,&quot;message&quot;:&quot;Olá&quot;}'</code></pre>
+      <h2>Teste no navegador</h2>
+      <p>Publique o site com o snippet, abra a página em uma origin autorizada e envie uma mensagem curta.</p>
+      <p>Exemplo via curl (requer origin cadastrada no navegador real):</p>
+      <pre><code>curl -i {{ package.api_url }} -H &quot;Content-Type: application/json&quot; -H &quot;Origin: {{ package.allowed_origin|default:'https://seu-site.example' }}&quot; -H &quot;X-Livia-Tenant: {{ package.tenant.slug }}&quot; -d '{&quot;tenant&quot;:&quot;{{ package.tenant.slug }}&quot;,&quot;session_id&quot;:&quot;install-test&quot;,&quot;message&quot;:&quot;Olá&quot;}'</code></pre>
     </section>
 
     <section>
@@ -77,5 +122,27 @@
       <p><a href="/install/{{ package.tenant.slug }}.json">Abrir pacote JSON</a></p>
     </section>
   </main>
+  <script>
+    (function () {
+      var button = document.querySelector("[data-copy-target='install-snippet']");
+      if (!button || !navigator.clipboard) {
+        return;
+      }
+      button.addEventListener("click", function () {
+        var target = document.getElementById("install-snippet");
+        if (!target) {
+          return;
+        }
+        navigator.clipboard.writeText(target.textContent || "").then(function () {
+          button.textContent = "Copiado";
+          window.setTimeout(function () {
+            button.textContent = "Copiar snippet";
+          }, 1500);
+        }).catch(function () {
+          button.textContent = "Falha ao copiar";
+        });
+      });
+    })();
+  </script>
 </body>
 </html>

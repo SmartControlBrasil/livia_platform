@@ -14,6 +14,12 @@ A Fase 19 cria um fluxo operacional para instalar a Lívia em múltiplos sites s
 
 Use onboard_tenant para criar ou atualizar tenant, profile, knowledge inicial opcional e snippet do widget.
 
+Modo de execução explícito:
+
+- `--dry-run`: simula sem gravar.
+- `--apply`: grava alterações no banco.
+- `--allow-update-existing`: obrigatório junto com `--apply` quando o slug já existe.
+
 ~~~bash
 .venv/bin/python manage.py onboard_tenant \
   --slug granimarmores-pitondo \
@@ -23,10 +29,25 @@ Use onboard_tenant para criar ou atualizar tenant, profile, knowledge inicial op
   --initial-message "Olá, eu sou a Lívia da Granimármores Pitondo. Posso te ajudar com orçamentos, materiais, medidas e atendimento comercial." \
   --primary-goal "Qualificar oportunidades comerciais para marmoraria" \
   --tone "consultivo, direto e profissional" \
-  --seed-knowledge
+  --seed-knowledge \
+  --dry-run
 ~~~
 
-Use --dry-run para conferir o resultado sem gravar nada no banco.
+Aplicação explícita:
+
+~~~bash
+.venv/bin/python manage.py onboard_tenant \
+  --slug granimarmores-pitondo \
+  --name "Granimármores Pitondo" \
+  --domain "https://www.granimarmorespitondo.com.br" \
+  --assistant-name "Lívia" \
+  --initial-message "Olá, eu sou a Lívia da Granimarmores Pitondo. Posso te ajudar com orçamentos, materiais, medidas e atendimento comercial." \
+  --primary-goal "Qualificar oportunidades comerciais para marmoraria" \
+  --tone "consultivo, direto e profissional" \
+  --seed-knowledge \
+  --apply \
+  --allow-update-existing
+~~~
 
 ## Exemplos
 
@@ -89,7 +110,8 @@ O comando imprime um snippet neste formato:
 <script
   src="https://livia.smartcontrolbrasil.com.br/widget.js"
   data-tenant="granimarmores-pitondo"
-  data-api-url="https://livia.smartcontrolbrasil.com.br/api/chat/">
+  data-api-url="https://livia.smartcontrolbrasil.com.br/api/chat/"
+  defer>
 </script>
 ~~~
 

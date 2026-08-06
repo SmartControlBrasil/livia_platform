@@ -8,6 +8,7 @@ from django.conf import settings
 
 from assistant_core.discovery import analyze_message
 from integrations.models import TenantWebhookConfig, WebhookDeliveryLog
+from integrations.side_effect_policy import SideEffectType, evaluate_side_effect_policy, log_side_effect_decision
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +136,41 @@ class WebhookDispatchService:
                 WebhookDeliveryLog.Status.DRY_RUN,
                 delivery_payload,
                 status_code=202,
+                related_handoff=related_handoff,
+                related_lead=related_lead,
+            )
+
+        decision = evaluate_side_effect_policy(
+            side_effect=SideEffectType.WEBHOOK_DELIVERY,
+            tenant=config.tenant,
+            integration_configured=True,
+        )
+        log_side_effect_decision(
+            decision,
+            tenant=config.tenant,
+            correlation_id=str(event_id or ""),
+            conversation_id=getattr(getattr(related_handoff, "conversation", None), "id", None)
+            or getattr(getattr(related_lead, "conversation", None), "id", None),
+            lead_id=getattr(related_lead, "id", None),
+        )
+        if decision.status == "BLOCKED":
+            return self._create_log(
+                config,
+                event_type,
+                WebhookDeliveryLog.Status.SKIPPED,
+                delivery_payload,
+                error_message=decision.reason,
+                related_handoff=related_handoff,
+                related_lead=related_lead,
+            )
+        if decision.status == "DRY_RUN":
+            return self._create_log(
+                config,
+                event_type,
+                WebhookDeliveryLog.Status.DRY_RUN,
+                delivery_payload,
+                status_code=202,
+                error_message=decision.reason,
                 related_handoff=related_handoff,
                 related_lead=related_lead,
             )

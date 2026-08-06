@@ -5,6 +5,11 @@ from dataclasses import dataclass, field
 from django.conf import settings
 
 from integrations.models import OutboxEvent, TenantWebhookConfig, WebhookDeliveryLog
+from integrations.side_effect_policy import (
+    SideEffectType,
+    evaluate_side_effect_policy,
+    log_side_effect_decision,
+)
 from integrations.smart360.client import Smart360GrowthClient, requests as smart360_requests
 from integrations.webhooks.service import WebhookDispatchService, requests as webhook_requests
 from leads.models import LeadDraft
@@ -76,13 +81,24 @@ class LeadQualifiedHandler(BaseOutboxHandler):
         return succeeded("lead_delivered", metadata={"smart360": crm_result.metadata, "webhooks": webhook_result.metadata})
 
     def _dispatch_smart360(self, event, lead):
-        if not getattr(settings, "SMART360_LEAD_DISPATCH_ENABLED", False) and not getattr(settings, "SMART360_LEAD_DISPATCH_DRY_RUN", True):
-            return skipped("smart360_disabled", "Smart360 disabled.", {"enabled": False})
-        if getattr(settings, "SMART360_LEAD_DISPATCH_DRY_RUN", True):
+        decision = evaluate_side_effect_policy(
+            side_effect=SideEffectType.SMART360_LEAD_DISPATCH,
+            tenant=lead.tenant,
+            integration_configured=bool(getattr(settings, "SMART360_BASE_URL", "") and getattr(settings, "SMART360_M2M_TOKEN", "")),
+        )
+        log_side_effect_decision(
+            decision,
+            tenant=lead.tenant,
+            correlation_id=str(event.event_id),
+            conversation_id=getattr(lead.conversation, "id", None),
+            lead_id=lead.id,
+        )
+        if decision.status == "BLOCKED":
+            return skipped(decision.code, decision.reason, {"decision": decision.to_dict()})
+
+        if decision.status == "DRY_RUN":
             client = Smart360GrowthClient(base_url=str(getattr(settings, "SMART360_BASE_URL", "") or ""), token="", dry_run=True)
         else:
-            if not getattr(settings, "SMART360_BASE_URL", "") or not getattr(settings, "SMART360_M2M_TOKEN", ""):
-                return permanent_failure("smart360_missing_config", "Smart360 config missing.")
             client = Smart360GrowthClient(settings.SMART360_BASE_URL, settings.SMART360_M2M_TOKEN, dry_run=False)
         payload = CRMDispatchService(client=client).build_payload(lead)
         payload_dict = payload.__dict__ if hasattr(payload, "__dict__") else dict(payload)

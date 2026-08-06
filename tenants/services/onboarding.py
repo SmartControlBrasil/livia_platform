@@ -28,16 +28,18 @@ class TenantOnboardingResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def build_widget_snippet(tenant_slug, api_url=None, widget_src=None):
+def build_widget_snippet(tenant_slug, api_url=None, widget_src=None, *, include_api_url=True):
     widget_src = widget_src or DEFAULT_WIDGET_SRC
     api_url = api_url or DEFAULT_API_URL
-    return "\n".join([
+    lines = [
         "<script",
         f'  src="{widget_src}"',
         f'  data-tenant="{tenant_slug}"',
-        f'  data-api-url="{api_url}">',
-        "</script>",
-    ])
+    ]
+    if include_api_url:
+        lines.append(f'  data-api-url="{api_url}"')
+    lines.extend(["  defer>", "</script>"])
+    return "\n".join(lines)
 
 
 def normalize_allowed_origin(domain, *, required=True):

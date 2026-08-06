@@ -8,7 +8,24 @@ from tenants.services.widget_config import build_disabled_widget_config, build_w
 def widget_js(request):
     content = """(function () {
   const currentScript = document.currentScript;
-  const tenant = currentScript ? (currentScript.getAttribute("data-tenant") || "default") : "default";
+  if (!currentScript) {
+    console.error("[Lívia] Não foi possível localizar o script do widget.");
+    return;
+  }
+
+  const tenant = (currentScript.getAttribute("data-tenant") || "").trim();
+  if (!tenant || tenant === "default") {
+    console.error("[Lívia] Atributo data-tenant é obrigatório.");
+    return;
+  }
+
+  const initRegistry = window.__liviaWidgetInit || (window.__liviaWidgetInit = {});
+  if (initRegistry[tenant]) {
+    console.error("[Lívia] Widget já inicializado para o tenant:", tenant);
+    return;
+  }
+  initRegistry[tenant] = true;
+
   const sessionStorageKey = "livia_session_id_" + tenant;
   const apiUrl = resolveApiUrl(currentScript);
   const configUrl = resolveConfigUrl(currentScript);
@@ -94,6 +111,29 @@ def widget_js(request):
     const timestamp = Date.now().toString(16);
     const randomPart = Math.random().toString(16).slice(2, 14);
     return "livia-" + timestamp + "-" + randomPart;
+  }
+
+  function delay(ms) {
+    return new Promise(function (resolve) {
+      window.setTimeout(resolve, ms);
+    });
+  }
+
+  function fetchWithTimeout(url, options, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      const timer = window.setTimeout(function () {
+        reject(new Error("request_timeout"));
+      }, timeoutMs);
+      fetch(url, options)
+        .then(function (response) {
+          window.clearTimeout(timer);
+          resolve(response);
+        })
+        .catch(function (error) {
+          window.clearTimeout(timer);
+          reject(error);
+        });
+    });
   }
 
   function injectStyles() {
@@ -296,7 +336,7 @@ def widget_js(request):
     }
 
     function isSafeWhatsAppUrl(url) {
-      return /^https:\/\/wa\.me\/\d{8,15}(?:\?|$)/.test(String(url || ""));
+      return /^https:\\/\\/wa\\.me\\/\\d{8,15}(?:\\?|$)/.test(String(url || ""));
     }
 
     function setWhatsAppLabel(label) {
@@ -397,6 +437,7 @@ def widget_js(request):
       try {
         const response = await fetch(configUrl, { method: "GET", headers: { "X-Livia-Tenant": tenant } });
         if (!response.ok) {
+          console.error("[Lívia] Configuração do widget recusada:", response.status);
           return;
         }
         const data = await response.json().catch(function () {
@@ -404,6 +445,7 @@ def widget_js(request):
         });
         applyConfig(data);
       } catch (error) {
+        console.error("[Lívia] Falha ao carregar configuração do widget.");
         applyConfig(defaultConfig);
       }
     }

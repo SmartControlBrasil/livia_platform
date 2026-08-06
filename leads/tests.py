@@ -330,6 +330,10 @@ class ConversationSummaryTests(TestCase):
         self.assertEqual(summary.conversation_notes, tuple())
 
 
+@override_settings(
+    SMART360_LEAD_DISPATCH_ENABLED=False,
+    SMART360_LEAD_DISPATCH_DRY_RUN=True,
+)
 class CRMDispatchServiceTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(
@@ -508,21 +512,25 @@ class CRMDispatchServiceTests(TestCase):
         with override_settings(
             SMART360_LEAD_DISPATCH_ENABLED=True,
             SMART360_LEAD_DISPATCH_DRY_RUN=False,
+            SMART360_LEAD_DISPATCH_REAL_ENABLED=True,
+            SMART360_LEAD_DISPATCH_REAL_ALLOWED_ENVS="development",
+            LIVIA_ENVIRONMENT="development",
+            LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
             SMART360_BASE_URL="",
             SMART360_M2M_TOKEN="",
         ):
             with patch("leads.services.crm_dispatch.Smart360GrowthClient") as client_cls:
                 service = CRMDispatchService()
-                with self.assertLogs("leads.services.crm_dispatch", level="ERROR") as logs:
+                with self.assertLogs("integrations.side_effect_policy", level="INFO"):
                     result = service.dispatch_if_qualified(self.lead_draft)
 
         self.assertFalse(result.attempted)
         self.assertFalse(result.success)
         self.lead_draft.refresh_from_db()
-        self.assertEqual(self.lead_draft.status, LeadDraft.Status.FAILED)
-        self.assertIn("configuração smart360 incompleta", self.lead_draft.crm_error.lower())
+        self.assertEqual(self.lead_draft.status, LeadDraft.Status.QUALIFIED)
+        self.assertEqual(self.lead_draft.crm_error, "")
         client_cls.assert_not_called()
-        self.assertIn("event=crm_dispatch_failure_missing_config", "\n".join(logs.output))
+        self.assertIn("Configuração Smart360 incompleta", result.message)
 
     def test_real_mode_with_complete_config_instantiates_client(self):
         client_instance = Mock()
@@ -539,6 +547,10 @@ class CRMDispatchServiceTests(TestCase):
         with override_settings(
             SMART360_LEAD_DISPATCH_ENABLED=True,
             SMART360_LEAD_DISPATCH_DRY_RUN=False,
+            SMART360_LEAD_DISPATCH_REAL_ENABLED=True,
+            SMART360_LEAD_DISPATCH_REAL_ALLOWED_ENVS="development",
+            LIVIA_ENVIRONMENT="development",
+            LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
             SMART360_BASE_URL="https://smart360.example",
             SMART360_M2M_TOKEN="token-123",
         ):
@@ -555,6 +567,23 @@ class CRMDispatchServiceTests(TestCase):
         self.assertTrue(result.success)
         self.lead_draft.refresh_from_db()
         self.assertEqual(self.lead_draft.status, LeadDraft.Status.SENT_TO_CRM)
+
+    def test_real_mode_requires_explicit_real_enabled_flag(self):
+        with override_settings(
+            SMART360_LEAD_DISPATCH_ENABLED=True,
+            SMART360_LEAD_DISPATCH_DRY_RUN=False,
+            SMART360_LEAD_DISPATCH_REAL_ENABLED=False,
+            SMART360_BASE_URL="https://smart360.example",
+            SMART360_M2M_TOKEN="token-123",
+        ):
+            with patch("leads.services.crm_dispatch.Smart360GrowthClient") as client_cls:
+                service = CRMDispatchService()
+                result = service.dispatch_if_qualified(self.lead_draft)
+
+        self.assertFalse(result.attempted)
+        self.assertFalse(result.success)
+        client_cls.assert_not_called()
+        self.assertIn("autorização explícita", result.message.lower())
 
 from django.test import override_settings
 

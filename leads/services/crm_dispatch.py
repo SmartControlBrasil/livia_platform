@@ -7,6 +7,11 @@ from django.conf import settings
 from django.utils import timezone
 
 from assistant_core.summary import build_conversation_summary, format_conversation_summary_notes
+from integrations.side_effect_policy import (
+    SideEffectType,
+    evaluate_side_effect_policy,
+    log_side_effect_decision,
+)
 from integrations.smart360.client import Smart360GrowthClient
 from integrations.smart360.contracts import LeadIngestPayload
 
@@ -66,8 +71,20 @@ class CRMDispatchService:
                 message="Lead ainda não qualificado.",
             )
 
+        decision = evaluate_side_effect_policy(
+            side_effect=SideEffectType.SMART360_LEAD_DISPATCH,
+            tenant=lead_draft.tenant,
+            integration_configured=self._has_real_dispatch_config(),
+        )
+        log_side_effect_decision(
+            decision,
+            tenant=lead_draft.tenant,
+            conversation_id=getattr(lead_draft.conversation, "id", None),
+            lead_id=lead_draft.id,
+        )
+
         payload = self.build_payload(lead_draft)
-        if settings.SMART360_LEAD_DISPATCH_DRY_RUN:
+        if decision.status == "DRY_RUN":
             client = self._get_client(dry_run=True)
             self._log_event(
                 "crm_dispatch_attempt",
@@ -77,7 +94,7 @@ class CRMDispatchService:
             response = client.ingest_lead(payload)
             return self._finalize_response(lead_draft, response)
 
-        if not settings.SMART360_LEAD_DISPATCH_ENABLED:
+        if decision.status == "BLOCKED":
             self._log_event(
                 "crm_dispatch_ignored_disabled",
                 lead_draft=lead_draft,
@@ -85,32 +102,9 @@ class CRMDispatchService:
             return CRMDispatchResult(
                 attempted=False,
                 success=False,
-                dry_run=False,
+                dry_run=decision.dry_run,
                 lead_draft=lead_draft,
-                message="Despacho Smart360 desabilitado por configuração.",
-            )
-
-        if not self._has_real_dispatch_config():
-            error_message = "Configuração Smart360 incompleta para despacho real."
-            lead_draft.status = LeadDraft.Status.FAILED
-            lead_draft.crm_error = error_message
-            lead_draft.save(update_fields=["status", "crm_error", "updated_at"])
-            self._log_event(
-                "crm_dispatch_failure_missing_config",
-                lead_draft=lead_draft,
-            )
-            logger.error(
-                "event=crm_dispatch_failure_missing_config lead_draft_id=%s tenant_slug=%s status=%s",
-                lead_draft.id,
-                lead_draft.tenant.slug,
-                lead_draft.status,
-            )
-            return CRMDispatchResult(
-                attempted=False,
-                success=False,
-                dry_run=False,
-                lead_draft=lead_draft,
-                message=error_message,
+                message=decision.reason,
             )
 
         client = self._get_client(dry_run=False)
