@@ -46,38 +46,28 @@ def is_informational_knowledge_query(discovery) -> bool:
 
 
 def is_ambiguous_product_query(discovery) -> bool:
-    """Consulta vaga sobre produto/material sem aplicação ou medidas concretas."""
+    """Consulta comercial vaga sem objeto ou aplicação clara."""
     if bool(getattr(discovery, "has_quote_request", False)):
         return False
     normalized = str(getattr(discovery, "normalized_text", "") or "")
-    concrete_markers = (
-        "cozinha",
-        "banheiro",
-        "bancada",
-        "escada",
-        "fachada",
-        "gourmet",
-        "metro",
-        "metragem",
-        "medida",
-        "orcamento",
-        "orçamento",
-        "granito",
-        "marmore",
-        "mármore",
-        "quartzito",
-        "travertino",
-    )
-    if any(marker in normalized for marker in concrete_markers):
+    if not normalized:
         return False
     vague_markers = (
-        "pedra bonita",
-        "uma pedra",
-        "quero pedra",
-        "pedra legal",
-        "pedra bonita",
+        "algo",
+        "alguma coisa",
+        "uma coisa",
+        "opcao",
+        "opção",
+        "solucao",
+        "solução",
+        "produto",
+        "servico",
+        "serviço",
     )
-    return any(marker in normalized for marker in vague_markers)
+    if any(marker in normalized for marker in vague_markers):
+        return True
+    meaningful = [word for word in normalized.split() if len(word) > 3]
+    return bool(getattr(discovery, "should_ask_discovery_question", False)) and len(meaningful) <= 3
 
 
 def has_concrete_quote_specs(discovery) -> bool:
@@ -117,15 +107,12 @@ def should_combine_kb_with_discovery(discovery, conversation, knowledge_context:
 
 
 def is_commercial_discovery_with_knowledge(discovery) -> bool:
-    """Intenção comercial inicial com contexto de produto, mas ainda precisa de discovery."""
+    """Intenção comercial inicial ainda precisa de discovery antes de redigir com KB."""
     if not bool(getattr(discovery, "should_ask_discovery_question", False)):
         return False
     normalized = str(getattr(discovery, "normalized_text", "") or "")
-    product_markers = ("bancada", "banheiro", "cozinha", "escada", "granito", "marmore", "mármore", "pedra")
-    action_markers = ("quero fazer", "preciso de", "quero uma", "quero um")
-    return any(marker in normalized for marker in product_markers) and any(
-        marker in normalized for marker in action_markers
-    )
+    action_markers = ("quero ", "preciso ", "gostaria", "contratar", "comprar", "fazer", "criar")
+    return any(marker in normalized for marker in action_markers)
 
 
 def resolve_decision_outcome(*, decision, discovery, conversation, knowledge_context: str = "") -> DecisionOutcome:

@@ -7,16 +7,19 @@
   <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
     <div class="flex-grow-1">
       <h4 class="fs-18 fw-semibold m-0">Configurações</h4>
-      <p class="text-muted mb-0 mt-1">Atendimento humano por tenant. {{ tenant_scope_note }}</p>
+      <p class="text-muted mb-0 mt-1">Operação da assistente por tenant. {{ tenant_scope_note }}</p>
+    </div>
+    <div class="mt-3 mt-sm-0 d-flex gap-2 flex-wrap">
+      <a class="btn btn-light border" href="{% url 'operations_portal:tenant_detail' selected_tenant.pk %}">Detalhe do Tenant</a>
+      <a class="btn btn-light border" href="{% url 'operations_portal:knowledge_base_documents' %}?tenant={{ selected_tenant.pk }}">Base de conhecimento</a>
+      <a class="btn btn-light border" href="/install/{{ selected_tenant.slug }}/" target="_blank" rel="noopener">Instalação</a>
     </div>
   </div>
 
   <div class="row g-3">
-    <div class="col-xl-4">
+    <div class="col-xl-3">
       <div class="card">
-        <div class="card-header">
-          <h5 class="card-title mb-0">Tenant</h5>
-        </div>
+        <div class="card-header"><h5 class="card-title mb-0">Tenant</h5></div>
         <div class="card-body">
           <form method="get" action="{% url 'operations_portal:settings' %}">
             <label class="form-label" for="tenant-select">Selecionar tenant</label>
@@ -28,65 +31,91 @@
               {% endfor %}
             </select>
           </form>
+          <div class="mt-3 d-flex gap-2 flex-wrap">
+            {% if selected_tenant.is_active %}<span class="badge bg-success-subtle text-success">Tenant ativo</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Tenant inativo</span>{% endif %}
+            {% if profile.is_active %}<span class="badge bg-success-subtle text-success">Perfil ativo</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Perfil inativo</span>{% endif %}
+            {% if profile.is_widget_enabled %}<span class="badge bg-info-subtle text-info">Widget habilitado</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Widget desligado</span>{% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h5 class="card-title mb-0">Estado operacional</h5></div>
+        <div class="card-body">
+          <div class="mb-3"><p class="text-muted mb-1">Domínio</p><p class="mb-0">{{ selected_tenant.domain|default:'-' }}</p></div>
+          <div class="mb-3"><p class="text-muted mb-1">Allowed origins</p>{% for origin in allowed_origins %}<div>{{ origin.origin }}</div>{% empty %}<div>-</div>{% endfor %}</div>
+          <div class="mb-3">
+            <p class="text-muted mb-1">RAG</p>
+            {% if rag_config %}
+            <div>Sync: {{ rag_config.sync_enabled|yesno:'ativo,inativo' }}</div>
+            <div>Retrieval: {{ rag_config.retrieval_enabled|yesno:'ativo,inativo' }}</div>
+            <div>Inventário: {{ rag_config.last_inventory_status }}</div>
+            <div>Indexação: {{ rag_config.last_index_status }}</div>
+            {% else %}<div>Sem configuração RAG cadastrada</div>{% endif %}
+          </div>
+          <div class="row g-2">
+            <div class="col-6"><div class="border rounded p-2"><p class="text-muted mb-1">Docs</p><h5 class="mb-0">{{ knowledge_counts.documents }}</h5><small>{{ knowledge_counts.active_documents }} ativos</small></div></div>
+            <div class="col-6"><div class="border rounded p-2"><p class="text-muted mb-1">Chunks</p><h5 class="mb-0">{{ knowledge_counts.chunks }}</h5><small>{{ knowledge_counts.active_chunks }} ativos</small></div></div>
+            <div class="col-6"><div class="border rounded p-2"><p class="text-muted mb-1">Embeddings</p><h5 class="mb-0">{{ knowledge_counts.embeddings }}</h5></div></div>
+            <div class="col-6"><div class="border rounded p-2"><p class="text-muted mb-1">Staging</p><h5 class="mb-0">{{ knowledge_counts.staging }}</h5></div></div>
+          </div>
+          <div class="mt-3"><p class="text-muted mb-1">Readiness</p><span class="badge bg-{% if install_package.readiness_status == 'READY' %}success{% elif install_package.readiness_status == 'WARNING' %}warning{% else %}danger{% endif %}-subtle text-{% if install_package.readiness_status == 'READY' %}success{% elif install_package.readiness_status == 'WARNING' %}warning{% else %}danger{% endif %}">{{ install_package.readiness_status }}</span></div>
+          {% if latest_index_run %}<div class="mt-3"><p class="text-muted mb-1">Última indexação</p><div>{{ latest_index_run.status }} · {{ latest_index_run.started_at }}</div></div>{% endif %}
         </div>
       </div>
     </div>
 
-    <div class="col-xl-8">
-      <div class="card">
-        <div class="card-header">
-          <h5 class="card-title mb-0">Atendimento humano</h5>
-        </div>
-        <div class="card-body">
-          {% if form %}
-          <form method="post" novalidate>
-            {% csrf_token %}
-            <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}" />
-            {% if form.non_field_errors %}
-            <div class="alert alert-danger">{{ form.non_field_errors }}</div>
-            {% endif %}
+    <div class="col-xl-9">
+      <form method="post" novalidate>
+        {% csrf_token %}
+        <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}" />
+        <input type="hidden" name="action" value="save_profile" />
+        {% if profile_form.non_field_errors %}<div class="alert alert-danger">{{ profile_form.non_field_errors }}</div>{% endif %}
+        <div class="card"><div class="card-header"><h5 class="card-title mb-0">Identidade</h5></div><div class="card-body"><div class="row g-3">
+          <div class="col-md-6"><label class="form-label" for="{{ profile_form.name.id_for_label }}">{{ profile_form.name.label }}</label>{{ profile_form.name }}{{ profile_form.name.errors }}</div>
+          <div class="col-md-6"><label class="form-label" for="{{ profile_form.business_name.id_for_label }}">{{ profile_form.business_name.label }}</label>{{ profile_form.business_name }}{{ profile_form.business_name.errors }}</div>
+          <div class="col-md-6"><label class="form-label" for="{{ profile_form.business_domain.id_for_label }}">{{ profile_form.business_domain.label }}</label>{{ profile_form.business_domain }}{{ profile_form.business_domain.errors }}</div>
+          <div class="col-md-6"><label class="form-label" for="{{ profile_form.tone.id_for_label }}">{{ profile_form.tone.label }}</label>{{ profile_form.tone }}{{ profile_form.tone.errors }}</div>
+          <div class="col-12"><label class="form-label" for="{{ profile_form.short_description.id_for_label }}">{{ profile_form.short_description.label }}</label>{{ profile_form.short_description }}{{ profile_form.short_description.errors }}</div>
+        </div></div></div>
 
-            <div class="form-check form-switch mb-3">
-              {{ form.human_handoff_enabled }}
-              <label class="form-check-label" for="{{ form.human_handoff_enabled.id_for_label }}">{{ form.human_handoff_enabled.label }}</label>
-              {{ form.human_handoff_enabled.errors }}
-            </div>
+        <div class="card"><div class="card-header"><h5 class="card-title mb-0">Objetivo conversacional</h5></div><div class="card-body"><div class="row g-3">
+          <div class="col-md-8"><label class="form-label" for="{{ profile_form.primary_goal.id_for_label }}">{{ profile_form.primary_goal.label }}</label>{{ profile_form.primary_goal }}{{ profile_form.primary_goal.errors }}</div>
+          <div class="col-md-4"><div class="form-check form-switch mt-4">{{ profile_form.use_ai }}<label class="form-check-label" for="{{ profile_form.use_ai.id_for_label }}">{{ profile_form.use_ai.label }}</label></div><div class="form-text">{{ profile_form.use_ai.help_text }}</div>{{ profile_form.use_ai.errors }}</div>
+          <div class="col-md-4"><div class="form-check form-switch">{{ profile_form.is_active }}<label class="form-check-label" for="{{ profile_form.is_active.id_for_label }}">{{ profile_form.is_active.label }}</label></div>{{ profile_form.is_active.errors }}</div>
+          <div class="col-12"><label class="form-label" for="{{ profile_form.initial_message.id_for_label }}">{{ profile_form.initial_message.label }}</label>{{ profile_form.initial_message }}{{ profile_form.initial_message.errors }}<div class="alert alert-light border mt-2 mb-0">{{ profile_form.initial_message.value|default:profile.initial_message }}</div></div>
+        </div></div></div>
 
-            <div class="row g-3">
-              <div class="col-md-6">
-                <label class="form-label" for="{{ form.human_handoff_channel.id_for_label }}">{{ form.human_handoff_channel.label }}</label>
-                {{ form.human_handoff_channel }}
-                {{ form.human_handoff_channel.errors }}
-              </div>
-              <div class="col-md-6">
-                <label class="form-label" for="{{ form.handoff_whatsapp_number.id_for_label }}">{{ form.handoff_whatsapp_number.label }}</label>
-                {{ form.handoff_whatsapp_number }}
-                <div class="form-text">{{ form.handoff_whatsapp_number.help_text }}</div>
-                {{ form.handoff_whatsapp_number.errors }}
-              </div>
-              <div class="col-12">
-                <label class="form-label" for="{{ form.handoff_whatsapp_label.id_for_label }}">{{ form.handoff_whatsapp_label.label }}</label>
-                {{ form.handoff_whatsapp_label }}
-                {{ form.handoff_whatsapp_label.errors }}
-              </div>
-              <div class="col-12">
-                <label class="form-label" for="{{ form.handoff_whatsapp_message.id_for_label }}">{{ form.handoff_whatsapp_message.label }}</label>
-                {{ form.handoff_whatsapp_message }}
-                {{ form.handoff_whatsapp_message.errors }}
-              </div>
-            </div>
+        <div class="card"><div class="card-header"><h5 class="card-title mb-0">Widget</h5></div><div class="card-body"><div class="row g-3">
+          <div class="col-md-4"><label class="form-label" for="{{ profile_form.widget_title.id_for_label }}">{{ profile_form.widget_title.label }}</label>{{ profile_form.widget_title }}{{ profile_form.widget_title.errors }}</div>
+          <div class="col-md-4"><label class="form-label" for="{{ profile_form.launcher_label.id_for_label }}">{{ profile_form.launcher_label.label }}</label>{{ profile_form.launcher_label }}{{ profile_form.launcher_label.errors }}</div>
+          <div class="col-md-4"><label class="form-label" for="{{ profile_form.placeholder_text.id_for_label }}">{{ profile_form.placeholder_text.label }}</label>{{ profile_form.placeholder_text }}{{ profile_form.placeholder_text.errors }}</div>
+          <div class="col-md-4"><label class="form-label" for="{{ profile_form.primary_color.id_for_label }}">{{ profile_form.primary_color.label }}</label><div class="input-group"><span class="input-group-text"><span style="display:inline-block;width:18px;height:18px;border-radius:4px;background:{{ profile_form.primary_color.value|default:profile.primary_color }}"></span></span>{{ profile_form.primary_color }}</div>{{ profile_form.primary_color.errors }}</div>
+          <div class="col-md-4"><label class="form-label" for="{{ profile_form.position.id_for_label }}">{{ profile_form.position.label }}</label>{{ profile_form.position }}<div class="form-text">bottom_left / bottom_right</div>{{ profile_form.position.errors }}</div>
+          <div class="col-md-4"><div class="form-check form-switch mt-4">{{ profile_form.is_widget_enabled }}<label class="form-check-label" for="{{ profile_form.is_widget_enabled.id_for_label }}">{{ profile_form.is_widget_enabled.label }}</label></div>{{ profile_form.is_widget_enabled.errors }}<div class="form-check form-switch mt-2">{{ profile_form.show_branding }}<label class="form-check-label" for="{{ profile_form.show_branding.id_for_label }}">{{ profile_form.show_branding.label }}</label></div>{{ profile_form.show_branding.errors }}</div>
+        </div></div></div>
+        {% if can_change_settings %}<div class="d-flex justify-content-end mb-3"><button type="submit" class="btn btn-primary">Salvar configurações</button></div>{% endif %}
+      </form>
 
-            {% if can_change_settings %}
-            <div class="d-flex justify-content-end mt-4">
-              <button type="submit" class="btn btn-primary">Salvar</button>
-            </div>
-            {% endif %}
-          </form>
-          {% else %}
-          <p class="text-muted mb-0">Cadastre um tenant antes de configurar atendimento humano.</p>
-          {% endif %}
-        </div>
-      </div>
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Atendimento humano</h5></div><div class="card-body">
+        <form method="post" novalidate>
+          {% csrf_token %}<input type="hidden" name="tenant" value="{{ selected_tenant.pk }}" /><input type="hidden" name="action" value="save_handoff" />
+          {% if handoff_form.non_field_errors %}<div class="alert alert-danger">{{ handoff_form.non_field_errors }}</div>{% endif %}
+          <div class="row g-3">
+            <div class="col-md-4"><div class="form-check form-switch mt-4">{{ handoff_form.human_handoff_enabled }}<label class="form-check-label" for="{{ handoff_form.human_handoff_enabled.id_for_label }}">{{ handoff_form.human_handoff_enabled.label }}</label></div>{{ handoff_form.human_handoff_enabled.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ handoff_form.human_handoff_channel.id_for_label }}">{{ handoff_form.human_handoff_channel.label }}</label>{{ handoff_form.human_handoff_channel }}{{ handoff_form.human_handoff_channel.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ handoff_form.handoff_whatsapp_number.id_for_label }}">{{ handoff_form.handoff_whatsapp_number.label }}</label>{{ handoff_form.handoff_whatsapp_number }}<div class="form-text">{{ handoff_form.handoff_whatsapp_number.help_text }}</div>{{ handoff_form.handoff_whatsapp_number.errors }}</div>
+            <div class="col-md-6"><label class="form-label" for="{{ handoff_form.handoff_whatsapp_label.id_for_label }}">{{ handoff_form.handoff_whatsapp_label.label }}</label>{{ handoff_form.handoff_whatsapp_label }}{{ handoff_form.handoff_whatsapp_label.errors }}</div>
+            <div class="col-md-6"><label class="form-label" for="{{ handoff_form.handoff_whatsapp_message.id_for_label }}">{{ handoff_form.handoff_whatsapp_message.label }}</label>{{ handoff_form.handoff_whatsapp_message }}{{ handoff_form.handoff_whatsapp_message.errors }}</div>
+          </div>
+          {% if can_change_settings %}<div class="d-flex justify-content-end mt-4"><button type="submit" class="btn btn-primary">Salvar handoff</button></div>{% endif %}
+        </form>
+      </div></div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Instalação</h5></div><div class="card-body">
+        <label class="form-label">Endpoint de config</label><input class="form-control mb-3" value="{{ config_endpoint }}" readonly>
+        <label class="form-label">Snippet do tenant</label><textarea class="form-control font-monospace" rows="4" readonly>{{ install_package.snippet }}</textarea>
+      </div></div>
     </div>
   </div>
 </div>

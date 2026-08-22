@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import analytics_views, knowledge_base_views, notification_views, views, work_queue_views
+from . import analytics_views, integration_views, knowledge_base_views, notification_views, views, work_queue_views
 
 app_name = "operations_portal"
 
@@ -12,11 +12,21 @@ urlpatterns = [
     path("handoffs/", views.handoff_list, name="handoff_list"),
     path("handoffs/<int:pk>/", views.handoff_detail, name="handoff_detail"),
     path("handoffs/<int:pk>/status/", views.update_handoff_status, name="handoff_update_status"),
+    path("tenants/", views.tenant_list, name="tenant_list"),
+    path("tenants/novo/", views.tenant_create, name="tenant_create"),
+    path("tenants/<int:pk>/", views.tenant_detail, name="tenant_detail"),
     path("configuracoes/", views.settings_view, name="settings"),
+    path("integracoes/", integration_views.integrations_dashboard, name="integrations"),
+    path("integracoes/outbox/<int:pk>/", integration_views.outbox_event_detail, name="outbox_event_detail"),
+    path("integracoes/outbox/<int:pk>/reenfileirar/", integration_views.outbox_event_requeue, name="outbox_event_requeue"),
     path("leads/<int:pk>/", views.lead_detail, name="lead_detail"),
     path("leads/<int:pk>/reprocessar-crm/", views.retry_lead_crm_dispatch, name="lead_retry_crm"),
     path("base-de-conhecimento/", knowledge_base_views.knowledge_base_dashboard, name="knowledge_base_dashboard"),
     path("base-de-conhecimento/documentos/", knowledge_base_views.knowledge_base_documents, name="knowledge_base_documents"),
+    path("base-de-conhecimento/documentos/novo/", knowledge_base_views.knowledge_base_document_create, name="knowledge_base_document_create"),
+    path("base-de-conhecimento/documentos/importar/", knowledge_base_views.knowledge_base_document_import, name="knowledge_base_document_import"),
+    path("base-de-conhecimento/documentos/<int:pk>/", knowledge_base_views.knowledge_base_document_detail, name="knowledge_base_document_detail"),
+    path("base-de-conhecimento/documentos/<int:pk>/editar/", knowledge_base_views.knowledge_base_document_edit, name="knowledge_base_document_edit"),
     path("base-de-conhecimento/chunks/", knowledge_base_views.knowledge_base_chunks, name="knowledge_base_chunks"),
     path("base-de-conhecimento/configuracao/", knowledge_base_views.knowledge_base_config, name="knowledge_base_config"),
     path("base-de-conhecimento/busca/", knowledge_base_views.knowledge_base_diagnostic, name="knowledge_base_diagnostic"),

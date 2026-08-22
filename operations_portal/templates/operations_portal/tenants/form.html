@@ -1,0 +1,67 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Novo Tenant{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Novo tenant</h4>
+      <ol class="breadcrumb m-0 mt-1 py-0"><li class="breadcrumb-item"><a href="{% url 'operations_portal:tenant_list' %}">Tenants</a></li><li class="breadcrumb-item active">Novo</li></ol>
+    </div>
+  </div>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    <div class="row g-3">
+      <div class="col-xl-6">
+        <div class="card"><div class="card-header"><h5 class="card-title mb-0">Geral</h5></div><div class="card-body">
+          {% if tenant_form.non_field_errors %}<div class="alert alert-danger">{{ tenant_form.non_field_errors }}</div>{% endif %}
+          <div class="mb-3"><label class="form-label" for="{{ tenant_form.name.id_for_label }}">{{ tenant_form.name.label }}</label>{{ tenant_form.name }}{{ tenant_form.name.errors }}</div>
+          <div class="mb-3"><label class="form-label" for="{{ tenant_form.slug.id_for_label }}">{{ tenant_form.slug.label }}</label>{{ tenant_form.slug }}{{ tenant_form.slug.errors }}</div>
+          <div class="mb-3"><label class="form-label" for="{{ tenant_form.domain.id_for_label }}">{{ tenant_form.domain.label }}</label>{{ tenant_form.domain }}{{ tenant_form.domain.errors }}</div>
+          <div class="form-check form-switch">{{ tenant_form.is_active }}<label class="form-check-label" for="{{ tenant_form.is_active.id_for_label }}">{{ tenant_form.is_active.label }}</label>{{ tenant_form.is_active.errors }}</div>
+        </div></div>
+      </div>
+      <div class="col-xl-6">
+        <div class="card"><div class="card-header"><h5 class="card-title mb-0">Assistente</h5></div><div class="card-body">
+          {% if profile_form.non_field_errors %}<div class="alert alert-danger">{{ profile_form.non_field_errors }}</div>{% endif %}
+          <div class="row g-3">
+            <div class="col-md-6"><label class="form-label" for="{{ profile_form.name.id_for_label }}">{{ profile_form.name.label }}</label>{{ profile_form.name }}{{ profile_form.name.errors }}</div>
+            <div class="col-md-6"><label class="form-label" for="{{ profile_form.business_name.id_for_label }}">{{ profile_form.business_name.label }}</label>{{ profile_form.business_name }}{{ profile_form.business_name.errors }}</div>
+            <div class="col-12"><label class="form-label" for="{{ profile_form.business_domain.id_for_label }}">{{ profile_form.business_domain.label }}</label>{{ profile_form.business_domain }}{{ profile_form.business_domain.errors }}</div>
+            <div class="col-12"><label class="form-label" for="{{ profile_form.short_description.id_for_label }}">{{ profile_form.short_description.label }}</label>{{ profile_form.short_description }}{{ profile_form.short_description.errors }}</div>
+            <div class="col-md-6"><label class="form-label" for="{{ profile_form.primary_goal.id_for_label }}">{{ profile_form.primary_goal.label }}</label>{{ profile_form.primary_goal }}{{ profile_form.primary_goal.errors }}</div>
+            <div class="col-md-6"><label class="form-label" for="{{ profile_form.tone.id_for_label }}">{{ profile_form.tone.label }}</label>{{ profile_form.tone }}{{ profile_form.tone.errors }}</div>
+          </div>
+        </div></div>
+      </div>
+      <div class="col-xl-6">
+        <div class="card"><div class="card-header"><h5 class="card-title mb-0">Widget</h5></div><div class="card-body">
+          <div class="row g-3">
+            <div class="col-12"><label class="form-label" for="{{ profile_form.initial_message.id_for_label }}">{{ profile_form.initial_message.label }}</label>{{ profile_form.initial_message }}{{ profile_form.initial_message.errors }}</div>
+            <div class="col-md-6"><label class="form-label" for="{{ profile_form.widget_title.id_for_label }}">{{ profile_form.widget_title.label }}</label>{{ profile_form.widget_title }}{{ profile_form.widget_title.errors }}</div>
+            <div class="col-md-6"><label class="form-label" for="{{ profile_form.launcher_label.id_for_label }}">{{ profile_form.launcher_label.label }}</label>{{ profile_form.launcher_label }}{{ profile_form.launcher_label.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.primary_color.id_for_label }}">{{ profile_form.primary_color.label }}</label>{{ profile_form.primary_color }}{{ profile_form.primary_color.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.position.id_for_label }}">{{ profile_form.position.label }}</label>{{ profile_form.position }}{{ profile_form.position.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.placeholder_text.id_for_label }}">{{ profile_form.placeholder_text.label }}</label>{{ profile_form.placeholder_text }}{{ profile_form.placeholder_text.errors }}</div>
+            <div class="col-md-4"><div class="form-check form-switch mt-2">{{ profile_form.show_branding }}<label class="form-check-label" for="{{ profile_form.show_branding.id_for_label }}">{{ profile_form.show_branding.label }}</label></div></div>
+            <div class="col-md-4"><div class="form-check form-switch mt-2">{{ profile_form.is_widget_enabled }}<label class="form-check-label" for="{{ profile_form.is_widget_enabled.id_for_label }}">{{ profile_form.is_widget_enabled.label }}</label></div></div>
+            <div class="col-md-4"><div class="form-check form-switch mt-2">{{ profile_form.use_ai }}<label class="form-check-label" for="{{ profile_form.use_ai.id_for_label }}">{{ profile_form.use_ai.label }}</label></div><div class="form-text">{{ profile_form.use_ai.help_text }}</div></div>
+          </div>
+        </div></div>
+      </div>
+      <div class="col-xl-6">
+        <div class="card"><div class="card-header"><h5 class="card-title mb-0">Origens</h5></div><div class="card-body">
+          <label class="form-label" for="{{ origins_form.origins.id_for_label }}">{{ origins_form.origins.label }}</label>{{ origins_form.origins }}
+          <div class="form-text">{{ origins_form.origins.help_text }}</div>{{ origins_form.origins.errors }}
+        </div></div>
+      </div>
+    </div>
+    <div class="d-flex justify-content-end gap-2 mb-4">
+      <a class="btn btn-light border" href="{% url 'operations_portal:tenant_list' %}">Cancelar</a>
+      <button class="btn btn-primary" type="submit">Criar tenant</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

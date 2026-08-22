@@ -2,12 +2,18 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from audit.models import ACTION_TENANT_RAG_CONFIGURED, ACTION_TENANT_RAG_DIAGNOSTIC_SEARCH
+from audit.models import (
+    ACTION_KNOWLEDGE_DOCUMENT_CREATED,
+    ACTION_KNOWLEDGE_DOCUMENT_UPDATED,
+    ACTION_TENANT_RAG_CONFIGURED,
+    ACTION_TENANT_RAG_DIAGNOSTIC_SEARCH,
+)
 from audit.services import audit_model_snapshot, changed_fields, record_audit_event
-from knowledge_base.models import TenantRagConfiguration
+from knowledge_base.models import KnowledgeDocument, TenantRagConfiguration, TenantRagDriveFileManifest
 from tenants.access import (
     CAPABILITY_KNOWLEDGE_BASE_CONFIGURE,
     CAPABILITY_KNOWLEDGE_BASE_OPERATE,
@@ -21,10 +27,15 @@ from .forms import (
     KnowledgeChunkFilterForm,
     KnowledgeDiagnosticSearchForm,
     KnowledgeDocumentFilterForm,
+    KnowledgeDocumentPortalForm,
+    KnowledgeImportPortalForm,
+    KnowledgeTextRetrievalForm,
     TenantRagConfigurationPortalForm,
 )
 from .knowledge_base_selectors import (
     get_knowledge_chunk_list,
+    get_knowledge_document_counters,
+    get_knowledge_document_detail,
     get_knowledge_document_list,
     get_knowledge_retrieval_events,
     get_operation_request_detail,
@@ -68,6 +79,16 @@ from .rag_health_services import (
     get_health_retrieval_page,
 )
 from .selectors import clean_querystring
+from knowledge_base.rag.retriever import retrieve_relevant_knowledge
+from knowledge_base.services.importing import (
+    TenantKnowledgeImportError,
+    build_document_item_from_upload,
+    import_tenant_knowledge_items,
+)
+from knowledge_base.services.manual_rag import sync_manual_knowledge_document_to_rag, sync_manual_knowledge_documents_for_tenant
+
+KNOWLEDGE_DOCUMENT_AUDIT_FIELDS = ["tenant", "title", "slug", "source_type", "source_url", "tags", "status"]
+
 
 KNOWLEDGE_BASE_AUDIT_FIELDS = [
     "retrieval_enabled",
@@ -138,8 +159,156 @@ def knowledge_base_documents(request):
             sub_section="documents",
             form=form,
             page_obj=page,
+            counters=get_knowledge_document_counters(tenant=access.tenant),
+            rag_manifests=TenantRagDriveFileManifest.objects.filter(tenant=access.tenant).order_by("-updated_at", "name")[:12],
             querystring=clean_querystring(request.GET),
+            can_change_documents=CAPABILITY_KNOWLEDGE_BASE_CONFIGURE in access.capabilities,
         ),
+    )
+
+
+@login_required(login_url="/admin/login/")
+def knowledge_base_document_create(request):
+    access = _resolve_knowledge_base_access(request, configure=True)
+    require_portal_capability(access, CAPABILITY_KNOWLEDGE_BASE_CONFIGURE)
+    if request.method == "POST":
+        form = KnowledgeDocumentPortalForm(request.POST, fixed_tenant=access.tenant)
+        if form.is_valid():
+            document = form.save()
+            record_audit_event(
+                action=ACTION_KNOWLEDGE_DOCUMENT_CREATED,
+                actor=request.user,
+                tenant=access.tenant,
+                obj=document,
+                before_data={},
+                after_data=audit_model_snapshot(document, fields=KNOWLEDGE_DOCUMENT_AUDIT_FIELDS),
+                metadata={"source": "operations_portal.knowledge_base_document_create"},
+                request=request,
+            )
+            sync_manual_knowledge_document_to_rag(document=document)
+            messages.success(request, "Documento criado com sucesso. Solicite processamento para atualizar chunks e embeddings.")
+            return redirect(f"{reverse('operations_portal:knowledge_base_document_detail', kwargs={'pk': document.pk})}?tenant={access.tenant.pk}")
+        messages.error(request, "Revise os campos destacados antes de criar o documento.")
+    else:
+        form = KnowledgeDocumentPortalForm(fixed_tenant=access.tenant, initial={"status": KnowledgeDocument.Status.ACTIVE, "source_type": "manual"})
+    return render(
+        request,
+        "operations_portal/knowledge_base/document_form.html",
+        _knowledge_base_context(access, sub_section="documents", form=form, mode="create"),
+    )
+
+
+@login_required(login_url="/admin/login/")
+def knowledge_base_document_detail(request, pk: int):
+    access = _resolve_knowledge_base_access(request)
+    document = get_knowledge_document_detail(tenant=access.tenant, pk=pk)
+    if document is None:
+        raise PermissionDenied
+    retrieval_result = None
+    if request.method == "POST":
+        require_portal_capability(access, CAPABILITY_KNOWLEDGE_BASE_VIEW)
+        posted_tenant = request.POST.get("tenant")
+        if posted_tenant and str(posted_tenant) != str(access.tenant.pk):
+            raise PermissionDenied
+        form = KnowledgeTextRetrievalForm(request.POST)
+        if form.is_valid():
+            retrieval_result = retrieve_relevant_knowledge(access.tenant, form.cleaned_data["query"], limit=5)
+    else:
+        form = KnowledgeTextRetrievalForm()
+    return render(
+        request,
+        "operations_portal/knowledge_base/document_detail.html",
+        _knowledge_base_context(
+            access,
+            sub_section="documents",
+            document=document,
+            retrieval_form=form,
+            retrieval_result=retrieval_result,
+            counters=get_knowledge_document_counters(tenant=access.tenant),
+            can_change_documents=CAPABILITY_KNOWLEDGE_BASE_CONFIGURE in access.capabilities,
+        ),
+    )
+
+
+@login_required(login_url="/admin/login/")
+def knowledge_base_document_edit(request, pk: int):
+    access = _resolve_knowledge_base_access(request, configure=True)
+    require_portal_capability(access, CAPABILITY_KNOWLEDGE_BASE_CONFIGURE)
+    document = get_knowledge_document_detail(tenant=access.tenant, pk=pk)
+    if document is None:
+        raise PermissionDenied
+    if request.method == "POST":
+        posted_tenant = request.POST.get("tenant")
+        if posted_tenant and str(posted_tenant) != str(access.tenant.pk):
+            raise PermissionDenied
+        form = KnowledgeDocumentPortalForm(request.POST, instance=document, fixed_tenant=access.tenant)
+        if form.is_valid():
+            before_data = audit_model_snapshot(KnowledgeDocument.objects.get(pk=document.pk), fields=KNOWLEDGE_DOCUMENT_AUDIT_FIELDS)
+            saved = form.save()
+            changes = changed_fields(before_data, audit_model_snapshot(saved, fields=KNOWLEDGE_DOCUMENT_AUDIT_FIELDS))
+            if changes["before"] or changes["after"]:
+                record_audit_event(
+                    action=ACTION_KNOWLEDGE_DOCUMENT_UPDATED,
+                    actor=request.user,
+                    tenant=access.tenant,
+                    obj=saved,
+                    before_data=changes["before"],
+                    after_data=changes["after"],
+                    metadata={"source": "operations_portal.knowledge_base_document_edit"},
+                    request=request,
+                )
+            sync_manual_knowledge_document_to_rag(document=saved)
+            messages.success(request, "Documento atualizado. Solicite processamento para refletir a versão atual no índice RAG.")
+            return redirect(f"{reverse('operations_portal:knowledge_base_document_detail', kwargs={'pk': saved.pk})}?tenant={access.tenant.pk}")
+        messages.error(request, "Revise os campos destacados antes de salvar.")
+    else:
+        form = KnowledgeDocumentPortalForm(instance=document, fixed_tenant=access.tenant)
+    return render(
+        request,
+        "operations_portal/knowledge_base/document_form.html",
+        _knowledge_base_context(access, sub_section="documents", form=form, document=document, mode="edit"),
+    )
+
+
+@login_required(login_url="/admin/login/")
+def knowledge_base_document_import(request):
+    access = _resolve_knowledge_base_access(request, configure=True)
+    require_portal_capability(access, CAPABILITY_KNOWLEDGE_BASE_CONFIGURE)
+    result = None
+    if request.method == "POST":
+        posted_tenant = request.POST.get("tenant")
+        if posted_tenant and str(posted_tenant) != str(access.tenant.pk):
+            raise PermissionDenied
+        form = KnowledgeImportPortalForm(request.POST, request.FILES)
+        if form.is_valid():
+            try:
+                item = build_document_item_from_upload(
+                    form.cleaned_data["file"],
+                    source_type=form.cleaned_data["source_type"],
+                    tags=form.cleaned_data["tags_text"],
+                    status=form.cleaned_data["status"],
+                )
+                result = import_tenant_knowledge_items(
+                    tenant=access.tenant,
+                    items=[item],
+                    replace=form.cleaned_data.get("replace"),
+                )
+            except TenantKnowledgeImportError as exc:
+                form.add_error("file", str(exc))
+            else:
+                sync_manual_knowledge_documents_for_tenant(tenant=access.tenant)
+                messages.success(
+                    request,
+                    f"Importação concluída. Criados: {result.created}. Atualizados: {result.updated}. Ignorados: {result.skipped}. Solicite processamento para atualizar o índice RAG.",
+                )
+                return redirect(f"{request.path}?tenant={access.tenant.pk}")
+        messages.error(request, "Revise a importação antes de continuar.")
+    else:
+        form = KnowledgeImportPortalForm()
+    return render(
+        request,
+        "operations_portal/knowledge_base/import.html",
+        _knowledge_base_context(access, sub_section="documents", form=form, result=result),
     )
 
 
@@ -339,8 +508,7 @@ def knowledge_base_operation_submit(request):
 
     messages.success(
         request,
-        "Solicitação registrada. Execute o worker controlado para processar: "
-        "python manage.py process_tenant_rag_operations",
+        "Solicitação registrada. Acompanhe o status nesta tela; o processamento será executado pelo worker operacional configurado.",
     )
     return redirect(f"{reverse('operations_portal:knowledge_base_operation_detail', kwargs={'pk': created.pk})}?tenant={access.tenant.pk}")
 

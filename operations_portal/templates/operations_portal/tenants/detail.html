@@ -1,0 +1,147 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Tenant {{ tenant_obj.slug }}{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">{{ tenant_obj.name }}</h4>
+      <ol class="breadcrumb m-0 mt-1 py-0"><li class="breadcrumb-item"><a href="{% url 'operations_portal:tenant_list' %}">Tenants</a></li><li class="breadcrumb-item active">{{ tenant_obj.slug }}</li></ol>
+    </div>
+    <div class="mt-3 mt-sm-0 d-flex gap-2">
+      {% if tenant_obj.is_active %}<span class="badge bg-success-subtle text-success align-self-center">Ativo</span>{% else %}<span class="badge bg-secondary-subtle text-secondary align-self-center">Inativo</span>{% endif %}
+      <a class="btn btn-light border" href="{% url 'operations_portal:integrations' %}?tenant={{ tenant_obj.pk }}">Integrações</a>
+      <a class="btn btn-light border" href="{% url 'operations_portal:tenant_list' %}">Voltar</a>
+    </div>
+  </div>
+
+  <ul class="nav nav-tabs nav-bordered mb-3" role="tablist">
+    <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-general" role="tab">Geral</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-assistant" role="tab">Assistente</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-widget" role="tab">Widget</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-origins" role="tab">Origens</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-knowledge" role="tab">Conhecimento</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-install" role="tab">Instalação</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-readiness" role="tab">Readiness</a></li>
+  </ul>
+
+  <div class="tab-content">
+    <div class="tab-pane show active" id="tab-general" role="tabpanel">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Geral</h5></div><div class="card-body">
+        <form method="post" novalidate>
+          {% csrf_token %}<input type="hidden" name="tenant" value="{{ tenant_obj.pk }}"><input type="hidden" name="action" value="save_general">
+          {% if tenant_form.non_field_errors %}<div class="alert alert-danger">{{ tenant_form.non_field_errors }}</div>{% endif %}
+          <div class="row g-3">
+            <div class="col-md-5"><label class="form-label" for="{{ tenant_form.name.id_for_label }}">{{ tenant_form.name.label }}</label>{{ tenant_form.name }}{{ tenant_form.name.errors }}</div>
+            <div class="col-md-3"><label class="form-label" for="{{ tenant_form.slug.id_for_label }}">{{ tenant_form.slug.label }}</label>{{ tenant_form.slug }}<div class="form-text">{{ tenant_form.slug.help_text }}</div>{{ tenant_form.slug.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ tenant_form.domain.id_for_label }}">{{ tenant_form.domain.label }}</label>{{ tenant_form.domain }}{{ tenant_form.domain.errors }}</div>
+            <div class="col-12"><div class="form-check form-switch">{{ tenant_form.is_active }}<label class="form-check-label" for="{{ tenant_form.is_active.id_for_label }}">{{ tenant_form.is_active.label }}</label>{{ tenant_form.is_active.errors }}</div></div>
+          </div>
+          {% if can_manage_tenants %}<div class="d-flex justify-content-end mt-4"><button class="btn btn-primary" type="submit">Salvar geral</button></div>{% endif %}
+        </form>
+      </div></div>
+    </div>
+
+    <div class="tab-pane" id="tab-assistant" role="tabpanel">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Assistente</h5></div><div class="card-body">
+        <form method="post" novalidate>
+          {% csrf_token %}<input type="hidden" name="tenant" value="{{ tenant_obj.pk }}"><input type="hidden" name="action" value="save_assistant"><input type="hidden" name="profile_scope" value="assistant">
+          {% if profile_form.non_field_errors %}<div class="alert alert-danger">{{ profile_form.non_field_errors }}</div>{% endif %}
+          <div class="row g-3">
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.name.id_for_label }}">{{ profile_form.name.label }}</label>{{ profile_form.name }}{{ profile_form.name.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.business_name.id_for_label }}">{{ profile_form.business_name.label }}</label>{{ profile_form.business_name }}{{ profile_form.business_name.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.primary_goal.id_for_label }}">{{ profile_form.primary_goal.label }}</label>{{ profile_form.primary_goal }}{{ profile_form.primary_goal.errors }}</div>
+            <div class="col-md-6"><label class="form-label" for="{{ profile_form.business_domain.id_for_label }}">{{ profile_form.business_domain.label }}</label>{{ profile_form.business_domain }}{{ profile_form.business_domain.errors }}</div>
+            <div class="col-md-6"><label class="form-label" for="{{ profile_form.tone.id_for_label }}">{{ profile_form.tone.label }}</label>{{ profile_form.tone }}{{ profile_form.tone.errors }}</div>
+            <div class="col-12"><label class="form-label" for="{{ profile_form.short_description.id_for_label }}">{{ profile_form.short_description.label }}</label>{{ profile_form.short_description }}{{ profile_form.short_description.errors }}</div>
+            <div class="col-12"><label class="form-label" for="{{ profile_form.initial_message.id_for_label }}">{{ profile_form.initial_message.label }}</label>{{ profile_form.initial_message }}{{ profile_form.initial_message.errors }}</div>
+          </div>
+          {% if can_manage_tenants %}<div class="d-flex justify-content-end mt-4"><button class="btn btn-primary" type="submit">Salvar assistente</button></div>{% endif %}
+        </form>
+      </div></div>
+    </div>
+
+    <div class="tab-pane" id="tab-widget" role="tabpanel">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Widget</h5></div><div class="card-body">
+        <form method="post" novalidate>
+          {% csrf_token %}<input type="hidden" name="tenant" value="{{ tenant_obj.pk }}"><input type="hidden" name="action" value="save_assistant"><input type="hidden" name="profile_scope" value="widget">
+          <div class="row g-3">
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.widget_title.id_for_label }}">{{ profile_form.widget_title.label }}</label>{{ profile_form.widget_title }}{{ profile_form.widget_title.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.launcher_label.id_for_label }}">{{ profile_form.launcher_label.label }}</label>{{ profile_form.launcher_label }}{{ profile_form.launcher_label.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.placeholder_text.id_for_label }}">{{ profile_form.placeholder_text.label }}</label>{{ profile_form.placeholder_text }}{{ profile_form.placeholder_text.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.primary_color.id_for_label }}">{{ profile_form.primary_color.label }}</label>{{ profile_form.primary_color }}{{ profile_form.primary_color.errors }}</div>
+            <div class="col-md-4"><label class="form-label" for="{{ profile_form.position.id_for_label }}">{{ profile_form.position.label }}</label>{{ profile_form.position }}{{ profile_form.position.errors }}</div>
+            <div class="col-md-4"><div class="form-check form-switch mt-4">{{ profile_form.show_branding }}<label class="form-check-label" for="{{ profile_form.show_branding.id_for_label }}">{{ profile_form.show_branding.label }}</label></div></div>
+            <div class="col-md-4"><div class="form-check form-switch mt-2">{{ profile_form.is_widget_enabled }}<label class="form-check-label" for="{{ profile_form.is_widget_enabled.id_for_label }}">{{ profile_form.is_widget_enabled.label }}</label></div></div>
+            <div class="col-md-4"><div class="form-check form-switch mt-2">{{ profile_form.use_ai }}<label class="form-check-label" for="{{ profile_form.use_ai.id_for_label }}">{{ profile_form.use_ai.label }}</label></div><div class="form-text">{{ profile_form.use_ai.help_text }}</div></div>
+          </div>
+          {% if can_manage_tenants %}<div class="d-flex justify-content-end mt-4"><button class="btn btn-primary" type="submit">Salvar widget</button></div>{% endif %}
+        </form>
+      </div></div>
+    </div>
+
+    <div class="tab-pane" id="tab-origins" role="tabpanel">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Allowed origins</h5></div><div class="card-body">
+        <form method="post" novalidate>
+          {% csrf_token %}<input type="hidden" name="tenant" value="{{ tenant_obj.pk }}"><input type="hidden" name="action" value="save_origins">
+          <label class="form-label" for="{{ origins_form.origins.id_for_label }}">{{ origins_form.origins.label }}</label>{{ origins_form.origins }}
+          <div class="form-text">{{ origins_form.origins.help_text }}</div>{{ origins_form.origins.errors }}
+          {% if can_manage_tenants %}<div class="d-flex justify-content-end mt-4"><button class="btn btn-primary" type="submit">Salvar origins</button></div>{% endif %}
+        </form>
+      </div></div>
+    </div>
+
+    <div class="tab-pane" id="tab-knowledge" role="tabpanel">
+      <div class="row g-3">
+        <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">KnowledgeDocument</p><h3 class="mb-0">{{ knowledge_counts.documents }}</h3><small>{{ knowledge_counts.active_documents }} ativos</small></div></div></div>
+        <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Staging</p><h3 class="mb-0">{{ knowledge_counts.staging }}</h3></div></div></div>
+        <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Chunks</p><h3 class="mb-0">{{ knowledge_counts.chunks }}</h3></div></div></div>
+        <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Embeddings</p><h3 class="mb-0">{{ knowledge_counts.embeddings }}</h3></div></div></div>
+      </div>
+      <div class="card"><div class="card-body d-flex justify-content-between align-items-center">
+        <div><h5 class="mb-1">Base de conhecimento filtrada</h5><p class="text-muted mb-0">Abre a área operacional de documentos já no contexto deste tenant.</p></div>
+        <a class="btn btn-primary" href="{% url 'operations_portal:knowledge_base_documents' %}?tenant={{ tenant_obj.pk }}">Abrir documentos</a>
+      </div></div>
+    </div>
+
+    <div class="tab-pane" id="tab-install" role="tabpanel">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Instalação</h5></div><div class="card-body">
+        <div class="mb-3"><label class="form-label">Endpoint de config</label><input class="form-control" value="{{ config_endpoint }}" readonly></div>
+        <label class="form-label">Snippet oficial</label>
+        <textarea id="tenant-snippet" class="form-control font-monospace" rows="6" readonly>{{ install_package.snippet }}</textarea>
+        <div class="d-flex gap-2 mt-3"><button class="btn btn-primary" type="button" data-copy-target="tenant-snippet">Copiar snippet</button><a class="btn btn-light border" href="/install/{{ tenant_obj.slug }}/" target="_blank" rel="noopener">Página de instalação</a></div>
+      </div></div>
+    </div>
+
+    <div class="tab-pane" id="tab-readiness" role="tabpanel">
+      <div class="card"><div class="card-header d-flex justify-content-between align-items-center"><h5 class="card-title mb-0">Readiness</h5><span class="badge bg-{% if install_package.readiness_status == 'READY' %}success{% elif install_package.readiness_status == 'WARNING' %}warning{% else %}danger{% endif %}-subtle text-{% if install_package.readiness_status == 'READY' %}success{% elif install_package.readiness_status == 'WARNING' %}warning{% else %}danger{% endif %}">{{ install_package.readiness_status }}</span></div><div class="card-body">
+        <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Check</th><th>Status</th><th>Mensagem</th><th>Ação</th></tr></thead><tbody>
+          {% for check in install_package.readiness.checks %}
+          <tr><td>{{ check.code }}</td><td><span class="badge bg-{% if check.status == 'PASS' %}success{% elif check.status == 'WARN' %}warning{% else %}danger{% endif %}-subtle text-{% if check.status == 'PASS' %}success{% elif check.status == 'WARN' %}warning{% else %}danger{% endif %}">{{ check.status }}</span></td><td>{{ check.message }}</td><td>{{ check.action|default:"-" }}</td></tr>
+          {% endfor %}
+        </tbody></table></div>
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_javascript %}
+<script>
+  document.querySelectorAll('[data-copy-target]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const target = document.getElementById(button.dataset.copyTarget);
+      if (!target) return;
+      target.select();
+      try {
+        await navigator.clipboard.writeText(target.value);
+        button.textContent = 'Copiado';
+        setTimeout(() => { button.textContent = 'Copiar snippet'; }, 1600);
+      } catch (err) {
+        document.execCommand('copy');
+      }
+    });
+  });
+</script>
+{% endblock %}

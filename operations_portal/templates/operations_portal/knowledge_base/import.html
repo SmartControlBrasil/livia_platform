@@ -1,0 +1,31 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Importar conhecimento{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Importar conhecimento</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    <a class="btn btn-light border mt-3 mt-sm-0" href="{% url 'operations_portal:knowledge_base_documents' %}?tenant={{ selected_tenant.pk }}">Voltar</a>
+  </div>
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="card"><div class="card-body">
+    <form method="post" enctype="multipart/form-data" novalidate>
+      {% csrf_token %}<input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="row g-3">
+        <div class="col-md-6"><label class="form-label" for="{{ form.file.id_for_label }}">{{ form.file.label }}</label>{{ form.file }}{{ form.file.errors }}<div class="form-text">Formatos aceitos: .txt, .md, .markdown em UTF-8.</div></div>
+        <div class="col-md-3"><label class="form-label" for="{{ form.source_type.id_for_label }}">{{ form.source_type.label }}</label>{{ form.source_type }}{{ form.source_type.errors }}</div>
+        <div class="col-md-3"><label class="form-label" for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>{{ form.status }}{{ form.status.errors }}</div>
+        <div class="col-12"><label class="form-label" for="{{ form.tags_text.id_for_label }}">{{ form.tags_text.label }}</label>{{ form.tags_text }}<div class="form-text">{{ form.tags_text.help_text }}</div>{{ form.tags_text.errors }}</div>
+        <div class="col-12"><div class="form-check">{{ form.replace }}<label class="form-check-label" for="{{ form.replace.id_for_label }}">{{ form.replace.label }}</label>{{ form.replace.errors }}</div></div>
+      </div>
+      <div class="d-flex justify-content-end mt-4"><button class="btn btn-primary" type="submit">Importar conhecimento</button></div>
+    </form>
+  </div></div>
+</div>
+{% endblock %}

@@ -1,0 +1,59 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}{{ document.title }}{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">{{ document.title }}</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    <div class="mt-3 mt-sm-0 d-flex gap-2">
+      <a class="btn btn-light border" href="{% url 'operations_portal:tenant_detail' selected_tenant.pk %}">Abrir tenant</a>
+      <a class="btn btn-light border" href="{% url 'operations_portal:knowledge_base_documents' %}?tenant={{ selected_tenant.pk }}">Voltar</a>
+      {% if can_change_documents %}<a class="btn btn-primary" href="{% url 'operations_portal:knowledge_base_document_edit' document.pk %}?tenant={{ selected_tenant.pk }}">Editar</a>{% endif %}
+    </div>
+  </div>
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-4"><div class="card h-100"><div class="card-header"><h5 class="card-title mb-0">Geral</h5></div><div class="card-body">
+      <p class="mb-1"><strong>Tenant:</strong> {{ document.tenant.name }}</p>
+      <p class="mb-1"><strong>Status:</strong> {{ document.get_status_display }}</p>
+      <p class="mb-1"><strong>Source type:</strong> {{ document.source_type }}</p>
+      <p class="mb-1"><strong>Tags:</strong> {% for tag in document.tags %}<span class="badge bg-light text-dark border me-1">{{ tag }}</span>{% empty %}-{% endfor %}</p>
+      <p class="mb-0"><strong>Atualizado:</strong> {{ document.updated_at|date:"d/m/Y H:i" }}</p>
+    </div></div></div>
+    <div class="col-lg-4"><div class="card h-100"><div class="card-header"><h5 class="card-title mb-0">Fonte</h5></div><div class="card-body">
+      <p class="mb-1"><strong>Slug:</strong> {{ document.slug }}</p>
+      <p class="mb-0"><strong>Source URL:</strong> {% if document.source_url %}<a href="{{ document.source_url }}" target="_blank" rel="noopener">{{ document.source_url }}</a>{% else %}-{% endif %}</p>
+    </div></div></div>
+    <div class="col-lg-4"><div class="card h-100"><div class="card-header"><h5 class="card-title mb-0">Status RAG/indexação</h5></div><div class="card-body">
+      <p class="mb-1"><strong>Estado:</strong> <span class="badge bg-{% if document.rag_state.state == 'READY' %}success{% elif document.rag_state.state == 'FAILED' %}danger{% elif document.rag_state.state == 'BLOCKED' %}secondary{% else %}warning{% endif %}-subtle text-{% if document.rag_state.state == 'READY' %}success{% elif document.rag_state.state == 'FAILED' %}danger{% elif document.rag_state.state == 'BLOCKED' %}secondary{% else %}warning{% endif %}">{{ document.rag_state.state }}</span></p>
+      <p class="mb-1"><strong>Manifest:</strong> {% if document.rag_state.manifest %}{{ document.rag_state.manifest.get_status_display }}{% else %}Aguardando{% endif %}</p>
+      <p class="mb-1"><strong>Chunks deste documento:</strong> {{ document.rag_state.chunks }}</p>
+      <p class="mb-0"><strong>Embeddings deste documento:</strong> {{ document.rag_state.embeddings }}</p>
+      <a class="btn btn-sm btn-light border mt-3" href="{% url 'operations_portal:knowledge_base_operations' %}?tenant={{ selected_tenant.pk }}">Processar base</a>
+    </div></div></div>
+  </div>
+
+  <div class="card mb-3"><div class="card-header"><h5 class="card-title mb-0">Conteúdo</h5></div><div class="card-body"><pre class="mb-0" style="white-space: pre-wrap; font-family: inherit;">{{ document.content }}</pre></div></div>
+
+  <div class="card"><div class="card-header"><h5 class="card-title mb-0">Teste de retrieval textual</h5></div><div class="card-body">
+    <form method="post" class="mb-3">
+      {% csrf_token %}<input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+      <label class="form-label" for="{{ retrieval_form.query.id_for_label }}">{{ retrieval_form.query.label }}</label>
+      <div class="input-group">{{ retrieval_form.query }}<button class="btn btn-primary" type="submit">Buscar</button></div>
+      {{ retrieval_form.query.errors }}
+    </form>
+    {% if retrieval_result is not None %}
+      {% if retrieval_result %}
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Documento</th><th>Score</th><th>Tags</th><th>Trecho</th></tr></thead><tbody>
+        {% for item in retrieval_result %}<tr><td>{{ item.title }}</td><td>{{ item.score }}</td><td>{{ item.tags|join:", " }}</td><td><small class="text-muted">{{ item.excerpt }}</small></td></tr>{% endfor %}
+      </tbody></table></div>
+      {% else %}<div class="text-muted text-center py-3">Nenhum documento ativo recuperado para esta consulta.</div>{% endif %}
+    {% endif %}
+  </div></div>
+</div>
+{% endblock %}

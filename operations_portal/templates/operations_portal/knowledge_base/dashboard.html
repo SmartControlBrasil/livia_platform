@@ -40,10 +40,10 @@
   </div>
 
   <div class="row g-3 mb-3">
-    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Documentos</p><h4 class="mb-0">{{ metrics.documents_total }}</h4><small class="text-muted">{{ metrics.documents_active }} ativos</small></div></div></div>
-    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Chunks ativos</p><h4 class="mb-0">{{ metrics.chunks_active }}</h4></div></div></div>
-    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Com embedding</p><h4 class="mb-0">{{ metrics.chunks_with_embedding }}</h4></div></div></div>
-    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Sem embedding</p><h4 class="mb-0">{{ metrics.chunks_without_embedding }}</h4></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Fonte Google Drive</p><h4 class="mb-0">{{ metrics.drive_manifests_total }}</h4><small class="text-muted">{{ metrics.drive_manifests_active }} ativos · {{ metrics.drive_new_files }} novos · {{ metrics.drive_changed_files }} alterados · {{ metrics.drive_removed_files }} removidos</small></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Upload manual</p><h4 class="mb-0">{{ metrics.manual_documents_total }}</h4><small class="text-muted">{{ metrics.manual_documents_active }} ativos · {{ metrics.manual_manifests_active }} no pipeline RAG</small></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Chunks ativos</p><h4 class="mb-0">{{ metrics.chunks_active }}</h4><small class="text-muted">{{ metrics.chunks_without_embedding }} sem embedding</small></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Com embedding</p><h4 class="mb-0">{{ metrics.chunks_with_embedding }}</h4><small class="text-muted">{{ metrics.coverage.compatible }} compatíveis</small></div></div></div>
   </div>
 
   <div class="card">

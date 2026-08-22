@@ -79,11 +79,12 @@ class PortalTenantAccessTests(TestCase):
             reverse("operations_portal:settings"),
             {
                 "tenant": self.tenant_b.pk,
-                "human_handoff_enabled": "on",
-                "human_handoff_channel": "disabled",
-                "handoff_whatsapp_number": "",
-                "handoff_whatsapp_label": "Falar",
-                "handoff_whatsapp_message": "Olá",
+                "action": "save_handoff",
+                "handoff-human_handoff_enabled": "on",
+                "handoff-human_handoff_channel": "disabled",
+                "handoff-handoff_whatsapp_number": "",
+                "handoff-handoff_whatsapp_label": "Falar",
+                "handoff-handoff_whatsapp_message": "Olá",
             },
         )
         self.assertEqual(response.status_code, 403)
@@ -178,11 +179,12 @@ class PortalTenantAccessTests(TestCase):
             reverse("operations_portal:settings"),
             {
                 "tenant": self.tenant_a.pk,
-                "human_handoff_enabled": "on",
-                "human_handoff_channel": "disabled",
-                "handoff_whatsapp_number": "",
-                "handoff_whatsapp_label": "Falar",
-                "handoff_whatsapp_message": "Olá",
+                "action": "save_handoff",
+                "handoff-human_handoff_enabled": "on",
+                "handoff-human_handoff_channel": "disabled",
+                "handoff-handoff_whatsapp_number": "",
+                "handoff-handoff_whatsapp_label": "Falar",
+                "handoff-handoff_whatsapp_message": "Olá",
             },
         )
         self.assertEqual(response.status_code, 302)

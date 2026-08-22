@@ -1,9 +1,11 @@
 from django import forms
+from django.core.exceptions import ValidationError
 
 from conversations.models import Conversation, HandoffRequest
-from knowledge_base.models import TenantRagDriveFileManifest
+from knowledge_base.models import KnowledgeDocument, TenantRagDriveFileManifest
 from leads.models import LeadDraft
 from tenants.models import AssistantProfile, Tenant
+from tenants.origins import normalize_origin
 
 CONVERSATION_LEAD_STATE_CHOICES = [
     (Conversation.LeadState.DISCOVERY, "Descoberta"),
@@ -59,6 +61,150 @@ class PortalFilterForm(forms.Form):
                 field.widget.input_type = "date"
             if name == "q":
                 field.widget.attrs.setdefault("placeholder", "Buscar")
+
+
+
+TENANT_STATUS_CHOICES = [
+    ("", "Todos"),
+    ("active", "Ativos"),
+    ("inactive", "Inativos"),
+]
+
+
+class TenantPortalFilterForm(PortalFilterForm):
+    status = forms.ChoiceField(required=False, choices=TENANT_STATUS_CHOICES)
+    q = forms.CharField(required=False, max_length=160)
+
+
+class TenantPortalForm(forms.ModelForm):
+    class Meta:
+        model = Tenant
+        fields = ["name", "slug", "domain", "is_active"]
+
+    def __init__(self, *args, editing=False, **kwargs):
+        self.editing = editing
+        super().__init__(*args, **kwargs)
+        self.fields["name"].label = "Nome"
+        self.fields["slug"].label = "Slug"
+        self.fields["domain"].label = "Domínio"
+        self.fields["is_active"].label = "Tenant ativo"
+        self.fields["domain"].required = False
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            else:
+                field.widget.attrs["class"] = "form-control"
+        if editing:
+            self.fields["slug"].disabled = True
+            self.fields["slug"].help_text = "Slug não é editado pelo portal para preservar integrações e snippets existentes."
+
+    def clean_domain(self):
+        value = str(self.cleaned_data.get("domain") or "").strip()
+        if not value:
+            return ""
+        from tenants.services.onboarding import normalize_allowed_origin
+
+        normalized, _warnings = normalize_allowed_origin(value, required=False)
+        return normalized
+
+
+class AssistantProfilePortalForm(forms.ModelForm):
+    class Meta:
+        model = AssistantProfile
+        fields = [
+            "name",
+            "business_name",
+            "business_domain",
+            "short_description",
+            "primary_goal",
+            "tone",
+            "initial_message",
+            "widget_title",
+            "launcher_label",
+            "primary_color",
+            "position",
+            "placeholder_text",
+            "show_branding",
+            "is_widget_enabled",
+            "use_ai",
+        ]
+        widgets = {
+            "initial_message": forms.Textarea(attrs={"rows": 3}),
+            "short_description": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        labels = {
+            "name": "Nome da assistente",
+            "business_name": "Nome do negócio",
+            "business_domain": "Domínio de negócio",
+            "short_description": "Descrição curta",
+            "primary_goal": "Objetivo principal",
+            "tone": "Tom",
+            "initial_message": "Mensagem inicial",
+            "widget_title": "Título do widget",
+            "launcher_label": "Texto do launcher",
+            "primary_color": "Cor primária",
+            "position": "Posição",
+            "placeholder_text": "Placeholder",
+            "show_branding": "Exibir branding",
+            "is_widget_enabled": "Widget habilitado",
+            "use_ai": "Usar IA",
+            "is_active": "Perfil ativo",
+        }
+        for name, label in labels.items():
+            if name in self.fields:
+                self.fields[name].label = label
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            elif isinstance(field.widget, forms.Select):
+                field.widget.attrs["class"] = "form-select"
+            else:
+                field.widget.attrs["class"] = "form-control"
+        self.fields["use_ai"].help_text = "Apenas permite tentativa de IA no perfil; não habilita chaves, gates globais ou side effects."
+
+
+class AssistantSettingsProfileForm(AssistantProfilePortalForm):
+    class Meta(AssistantProfilePortalForm.Meta):
+        fields = AssistantProfilePortalForm.Meta.fields + ["is_active"]
+
+
+
+class TenantAllowedOriginsPortalForm(forms.Form):
+    origins = forms.CharField(
+        required=False,
+        label="Allowed origins",
+        widget=forms.Textarea(attrs={"rows": 6, "class": "form-control", "placeholder": "https://www.exemplo.com.br"}),
+        help_text="Informe uma origin por linha. Origins removidas serão desativadas, não excluídas.",
+    )
+
+    def __init__(self, *args, tenant=None, **kwargs):
+        self.tenant = tenant
+        super().__init__(*args, **kwargs)
+        if not self.is_bound and tenant is not None:
+            active = tenant.allowed_origins.filter(is_active=True).order_by("origin").values_list("origin", flat=True)
+            self.fields["origins"].initial = "\n".join(active)
+
+    def clean_origins(self):
+        raw = str(self.cleaned_data.get("origins") or "")
+        normalized = []
+        errors = []
+        for line in raw.splitlines():
+            value = line.strip()
+            if not value:
+                continue
+            try:
+                origin = normalize_origin(value)
+            except ValidationError as exc:
+                errors.append(f"{value}: {'; '.join(exc.messages)}")
+                continue
+            if origin not in normalized:
+                normalized.append(origin)
+        if errors:
+            raise forms.ValidationError(errors)
+        return normalized
 
 
 class ConversationFilterForm(PortalFilterForm):
@@ -121,6 +267,12 @@ class HumanHandoffSettingsForm(forms.ModelForm):
         self.fields["handoff_whatsapp_number"].help_text = "Use telefone internacional. O valor será salvo apenas com dígitos."
 
 
+KNOWLEDGE_DOCUMENT_STATUS_CHOICES = [
+    (KnowledgeDocument.Status.ACTIVE, "Ativo"),
+    (KnowledgeDocument.Status.DRAFT, "Rascunho"),
+    (KnowledgeDocument.Status.ARCHIVED, "Arquivado"),
+]
+
 MANIFEST_STATUS_CHOICES = [
     ("discovered", "Descoberto"),
     ("exported", "Exportado"),
@@ -140,9 +292,128 @@ CHUNK_STATUS_CHOICES = [
 
 
 class KnowledgeDocumentFilterForm(PortalFilterForm):
-    status = forms.ChoiceField(required=False, choices=[("", "Todos")] + MANIFEST_STATUS_CHOICES)
-    is_active = forms.ChoiceField(required=False, choices=[("", "Todos"), ("yes", "Ativo"), ("no", "Inativo")])
-    q = forms.CharField(required=False, max_length=120)
+    status = forms.ChoiceField(required=False, choices=[("", "Todos")] + KNOWLEDGE_DOCUMENT_STATUS_CHOICES)
+    q = forms.CharField(required=False, max_length=160)
+
+
+class KnowledgeDocumentPortalForm(forms.ModelForm):
+    tags_text = forms.CharField(
+        required=False,
+        label="Tags",
+        widget=forms.Textarea(attrs={"rows": 2}),
+        help_text="Use vírgula ou uma tag por linha.",
+    )
+
+    class Meta:
+        model = KnowledgeDocument
+        fields = ["tenant", "title", "slug", "status", "source_type", "source_url", "content"]
+        widgets = {"content": forms.Textarea(attrs={"rows": 12})}
+
+    def __init__(self, *args, tenant_queryset=None, fixed_tenant=None, **kwargs):
+        self.fixed_tenant = fixed_tenant
+        super().__init__(*args, **kwargs)
+        self.fields["tenant"].label = "Tenant"
+        self.fields["title"].label = "Título"
+        self.fields["slug"].label = "Slug"
+        self.fields["status"].label = "Status"
+        self.fields["source_type"].label = "Source type"
+        self.fields["source_url"].label = "Source URL"
+        self.fields["content"].label = "Conteúdo"
+        self.fields["source_type"].required = True
+        if tenant_queryset is not None:
+            self.fields["tenant"].queryset = tenant_queryset
+        if fixed_tenant is not None:
+            self.fields["tenant"].initial = fixed_tenant
+            self.fields["tenant"].disabled = True
+        if self.instance and self.instance.pk and not self.is_bound:
+            self.fields["tags_text"].initial = ", ".join(str(tag) for tag in (self.instance.tags or []))
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.Select):
+                field.widget.attrs["class"] = "form-select"
+            else:
+                field.widget.attrs["class"] = "form-control"
+
+    def clean_tenant(self):
+        if self.fixed_tenant is not None:
+            return self.fixed_tenant
+        tenant = self.cleaned_data.get("tenant")
+        if tenant is None:
+            raise forms.ValidationError("Tenant é obrigatório.")
+        return tenant
+
+    def clean_tags_text(self):
+        raw = str(self.cleaned_data.get("tags_text") or "")
+        tags = []
+        for value in raw.replace("\r", "\n").replace(",", "\n").splitlines():
+            tag = value.strip()
+            if tag and tag not in tags:
+                tags.append(tag)
+        return tags
+
+    def clean_source_url(self):
+        return str(self.cleaned_data.get("source_url") or "").strip()
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        instance.tags = self.cleaned_data.get("tags_text") or []
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
+
+
+class KnowledgeImportPortalForm(forms.Form):
+    file = forms.FileField(label="Arquivo")
+    source_type = forms.CharField(label="Source type", max_length=40, initial="import")
+    tags_text = forms.CharField(
+        required=False,
+        label="Tags",
+        widget=forms.Textarea(attrs={"rows": 2}),
+        help_text="Use vírgula ou uma tag por linha.",
+    )
+    status = forms.ChoiceField(label="Status", choices=KNOWLEDGE_DOCUMENT_STATUS_CHOICES, initial=KnowledgeDocument.Status.ACTIVE)
+    replace = forms.BooleanField(required=False, label="Atualizar documento existente com mesmo slug")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            elif isinstance(field.widget, forms.Select):
+                field.widget.attrs["class"] = "form-select"
+            else:
+                field.widget.attrs["class"] = "form-control"
+
+    def clean_file(self):
+        uploaded = self.cleaned_data["file"]
+        from knowledge_base.services.importing import SUPPORTED_EXTENSIONS
+        from pathlib import Path
+
+        if Path(uploaded.name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise forms.ValidationError("Formato não suportado. Use .txt, .md ou .markdown.")
+        return uploaded
+
+    def clean_tags_text(self):
+        raw = str(self.cleaned_data.get("tags_text") or "")
+        tags = []
+        for value in raw.replace("\r", "\n").replace(",", "\n").splitlines():
+            tag = value.strip()
+            if tag and tag not in tags:
+                tags.append(tag)
+        return tags
+
+
+class KnowledgeTextRetrievalForm(forms.Form):
+    query = forms.CharField(
+        required=True,
+        max_length=500,
+        label="Consulta",
+        widget=forms.TextInput(attrs={"placeholder": "Digite uma busca textual neste tenant"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["query"].widget.attrs["class"] = "form-control"
 
 
 class KnowledgeChunkFilterForm(PortalFilterForm):
@@ -245,11 +516,11 @@ class TenantRagConfigurationPortalForm(forms.ModelForm):
 
 
 PORTAL_RAG_OPERATIONS = [
-    ("inventory", "Inventário da origem"),
-    ("sync_export", "Sincronização de documentos"),
-    ("build_chunks", "Atualização de chunks"),
-    ("index_embeddings", "Geração de embeddings pendentes"),
-    ("full_reindex", "Reindexação completa"),
+    ("inventory", "Google Drive: inventariar origem"),
+    ("sync_export", "Google Drive: sincronizar textos"),
+    ("build_chunks", "Processar documentos e chunks"),
+    ("index_embeddings", "Gerar embeddings pendentes"),
+    ("full_reindex", "Processar chunks e embeddings"),
 ]
 
 

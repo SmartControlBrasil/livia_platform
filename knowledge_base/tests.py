@@ -1,3 +1,7 @@
+from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 from django.core.management import call_command
 from django.test import TestCase
 
@@ -152,3 +156,47 @@ class KnowledgeRetrievalTests(TestCase):
         results = retrieve_relevant_knowledge(self.tenant, "conteudo privado rag em chunk", service_area="robotics")
 
         self.assertFalse(any("Privado RAG" in result.title for result in results))
+
+
+class ImportTenantKnowledgeCommandTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Tenant Import", slug="tenant-import", domain="tenant.example")
+        self.other_tenant = Tenant.objects.create(name="Other", slug="other-import", domain="other.example")
+
+    def test_imports_markdown_file_for_selected_tenant(self):
+        with TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "frete-rapido.md"
+            source.write_text("Atendimento de frete rápido com origem, destino e volume.", encoding="utf-8")
+            output = StringIO()
+
+            call_command(
+                "import_tenant_knowledge",
+                tenant=self.tenant.slug,
+                source=str(source),
+                tag=["logistica"],
+                stdout=output,
+            )
+
+        document = KnowledgeDocument.objects.get(tenant=self.tenant, slug="frete-rapido")
+        self.assertEqual(document.title, "Frete Rapido")
+        self.assertIn("frete rápido", document.content)
+        self.assertEqual(document.tags, ["logistica"])
+        self.assertFalse(KnowledgeDocument.objects.filter(tenant=self.other_tenant, slug="frete-rapido").exists())
+        self.assertIn("created=1", output.getvalue())
+
+    def test_dry_run_does_not_write_documents(self):
+        with TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "agente-ia.txt"
+            source.write_text("Agentes de IA para atendimento.", encoding="utf-8")
+            output = StringIO()
+
+            call_command(
+                "import_tenant_knowledge",
+                tenant=self.tenant.slug,
+                source=str(source),
+                dry_run=True,
+                stdout=output,
+            )
+
+        self.assertFalse(KnowledgeDocument.objects.filter(tenant=self.tenant, slug="agente-ia").exists())
+        self.assertIn("agente-ia", output.getvalue())

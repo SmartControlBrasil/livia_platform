@@ -37,6 +37,14 @@ class WidgetTests(TestCase):
         self.assertIn("maxSendAttempts", content)
         self.assertIn("request_in_progress", content)
         self.assertIn("isSending", content)
+        self.assertIn("livia-typing-bubble", content)
+        self.assertIn("livia-typing-dot", content)
+        self.assertIn("livia-typing-wave", content)
+        self.assertIn("prefers-reduced-motion: reduce", content)
+        self.assertIn("aria-label", content)
+        self.assertIn("está respondendo", content)
+        self.assertIn("for (let index = 0; index < 3; index += 1)", content)
+        self.assertNotIn("Digitando...", content)
 
     def test_demo_page_loads_widget_script(self):
         response = self.client.get("/demo/")

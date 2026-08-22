@@ -1,0 +1,125 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Integrações{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Integrações</h4>
+      <p class="text-muted mb-0 mt-1">Side effects, readiness e outbox por tenant. {{ tenant_scope_note }}</p>
+    </div>
+    <div class="mt-3 mt-sm-0 d-flex gap-2 flex-wrap">
+      <a class="btn btn-light border" href="{% url 'operations_portal:tenant_detail' selected_tenant.pk %}">Detalhe do Tenant</a>
+      <a class="btn btn-light border" href="{% url 'operations_portal:settings' %}?tenant={{ selected_tenant.pk }}">Configurações</a>
+      <a class="btn btn-light border" href="{% url 'operations_portal:knowledge_base_health' %}?tenant={{ selected_tenant.pk }}">Health RAG</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-4">
+          <label class="form-label" for="tenant-select">Tenant</label>
+          <select id="tenant-select" name="tenant" class="form-select" onchange="this.form.submit()">
+            {% for tenant in tenants %}<option value="{{ tenant.pk }}" {% if tenant.pk == selected_tenant.pk %}selected{% endif %}>{{ tenant.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="status-filter">Status outbox</label>
+          <select id="status-filter" name="status" class="form-select">
+            <option value="">Todos</option>
+            {% for value,label in outbox_status_choices %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label" for="event-filter">Evento</label>
+          <select id="event-filter" name="event_type" class="form-select">
+            <option value="">Todos</option>
+            {% for value,label in outbox_event_type_choices %}<option value="{{ value }}" {% if request.GET.event_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Filtrar</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Outbox total</p><h3 class="mb-0">{{ outbox_summary.total }}</h3><small>último: {{ outbox_summary.latest_created_at|default:'-' }}</small></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Pending</p><h3 class="mb-0">{{ outbox_summary.pending }}</h3></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Retry</p><h3 class="mb-0">{{ outbox_summary.retry }}</h3></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Dead letter</p><h3 class="mb-0">{{ outbox_summary.failed }}</h3></div></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Visão geral</h5></div>
+    <div class="card-body">
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Integração</th><th>Estado</th><th>Dry-run</th><th>Readiness</th><th>Pending</th><th>Failed</th><th>Retry</th><th>Última tentativa</th><th>Último sucesso</th><th>Último erro</th></tr></thead>
+        <tbody>
+          {% for item in integration_rows %}
+          <tr>
+            <td><strong>{{ item.name }}</strong><div class="text-muted small">{{ item.code }}{% if item.detail %} · {{ item.detail }}{% endif %}</div></td>
+            <td><span class="badge bg-{{ item.tone }}-subtle text-{{ item.tone }}">{{ item.status }}</span></td>
+            <td>{{ item.dry_run|yesno:'sim,não' }}</td>
+            <td><span class="badge bg-{{ item.readiness_tone }}-subtle text-{{ item.readiness_tone }}">{{ item.readiness }}</span></td>
+            <td>{{ item.pending }}</td><td>{{ item.failed }}</td><td>{{ item.retry }}</td>
+            <td>{{ item.latest_attempt_at|default:'-' }}</td>
+            <td>{{ item.latest_success_at|default:'-' }}</td>
+            <td>{{ item.latest_error|default:'-'|truncatechars:100 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Readiness consolidado</h5></div>
+    <div class="card-body">
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Grupo</th><th>Código</th><th>Status</th><th>Detalhe</th></tr></thead>
+        <tbody>
+          {% for row in readiness_rows %}<tr><td>{{ row.group }}</td><td>{{ row.code }}</td><td><span class="badge bg-{{ row.tone }}-subtle text-{{ row.tone }}">{{ row.status }}</span></td><td>{{ row.detail }}</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Webhook configs</h5></div>
+    <div class="card-body">
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Nome</th><th>Evento</th><th>Ativo</th><th>Dry-run</th><th>Target</th><th>Atualizado</th></tr></thead>
+        <tbody>
+          {% for cfg in webhook_configs %}<tr><td>{{ cfg.name }}</td><td>{{ cfg.event_type }}</td><td>{{ cfg.is_active|yesno:'sim,não' }}</td><td>{{ cfg.dry_run|yesno:'sim,não' }}</td><td>{{ cfg.target_url }}</td><td>{{ cfg.updated_at }}</td></tr>{% empty %}<tr><td colspan="6" class="text-muted">Nenhum webhook configurado para este tenant.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h5 class="card-title mb-0">Outbox</h5></div>
+    <div class="card-body">
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Evento</th><th>Status</th><th>Aggregate</th><th>Tentativas</th><th>Disponível</th><th>Última tentativa</th><th>Erro</th><th></th></tr></thead>
+        <tbody>
+          {% for event in outbox_page %}
+          <tr>
+            <td><div>{{ event.event_type }}</div><small class="text-muted">{{ event.event_id }}</small></td>
+            <td><span class="badge bg-{% if event.status == 'succeeded' %}success{% elif event.status == 'dead_letter' %}danger{% elif event.status == 'retry' %}warning{% else %}secondary{% endif %}-subtle text-{% if event.status == 'succeeded' %}success{% elif event.status == 'dead_letter' %}danger{% elif event.status == 'retry' %}warning{% else %}secondary{% endif %}">{{ event.status }}</span></td>
+            <td>{{ event.aggregate_type }} #{{ event.aggregate_id }}</td>
+            <td>{{ event.attempts }}/{{ event.max_attempts }}</td>
+            <td>{{ event.available_at }}</td>
+            <td>{{ event.last_attempt_at|default:'-' }}</td>
+            <td>{{ event.last_error_message|default:'-'|truncatechars:120 }}</td>
+            <td><a class="btn btn-sm btn-light border" href="{% url 'operations_portal:outbox_event_detail' event.pk %}">Detalhe</a></td>
+          </tr>
+          {% empty %}<tr><td colspan="8" class="text-muted">Nenhum evento encontrado.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+      {% include 'operations_portal/partials/pagination.html' with page_obj=outbox_page querystring=querystring %}
+    </div>
+  </div>
+</div>
+{% endblock %}

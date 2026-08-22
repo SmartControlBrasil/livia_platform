@@ -164,14 +164,14 @@ class GroundedResponseTests(TestCase):
         self.assertIn("marmoraria", question.lower())
         self.assertNotIn("automação industrial", question.lower())
 
-    def test_natural_stone_service_area_detected(self):
+    def test_discovery_engine_keeps_service_area_generic(self):
         discovery = analyze_message("Quais materiais vocês trabalham para bancada?")
-        self.assertEqual(discovery.service_area, "natural_stone")
+        self.assertEqual(discovery.service_area, "unknown")
 
     def test_ambiguous_product_query_allows_clarify_synthesis(self):
         from assistant_core.services.decision_outcome import is_ambiguous_product_query, resolve_decision_outcome
 
-        discovery = analyze_message("Quero uma pedra bonita")
+        discovery = analyze_message("Quero um produto para avaliar")
         self.assertTrue(is_ambiguous_product_query(discovery))
         outcome = resolve_decision_outcome(
             decision=LiviaReply(intent="commercial_interest", reply="Perfeito."),

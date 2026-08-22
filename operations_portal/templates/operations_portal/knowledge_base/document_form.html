@@ -1,0 +1,35 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}{% if mode == 'create' %}Novo documento{% else %}Editar documento{% endif %}{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">{% if mode == 'create' %}Novo documento{% else %}Editar documento{% endif %}</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    <a class="btn btn-light border mt-3 mt-sm-0" href="{% url 'operations_portal:knowledge_base_documents' %}?tenant={{ selected_tenant.pk }}">Voltar</a>
+  </div>
+  {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="card"><div class="card-body">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="row g-3">
+        <div class="col-md-4"><label class="form-label" for="{{ form.tenant.id_for_label }}">{{ form.tenant.label }}</label>{{ form.tenant }}{{ form.tenant.errors }}</div>
+        <div class="col-md-5"><label class="form-label" for="{{ form.title.id_for_label }}">{{ form.title.label }}</label>{{ form.title }}{{ form.title.errors }}</div>
+        <div class="col-md-3"><label class="form-label" for="{{ form.slug.id_for_label }}">{{ form.slug.label }}</label>{{ form.slug }}{{ form.slug.errors }}</div>
+        <div class="col-md-3"><label class="form-label" for="{{ form.status.id_for_label }}">{{ form.status.label }}</label>{{ form.status }}{{ form.status.errors }}</div>
+        <div class="col-md-3"><label class="form-label" for="{{ form.source_type.id_for_label }}">{{ form.source_type.label }}</label>{{ form.source_type }}{{ form.source_type.errors }}</div>
+        <div class="col-md-6"><label class="form-label" for="{{ form.source_url.id_for_label }}">{{ form.source_url.label }}</label>{{ form.source_url }}{{ form.source_url.errors }}</div>
+        <div class="col-12"><label class="form-label" for="{{ form.tags_text.id_for_label }}">{{ form.tags_text.label }}</label>{{ form.tags_text }}<div class="form-text">{{ form.tags_text.help_text }}</div>{{ form.tags_text.errors }}</div>
+        <div class="col-12"><label class="form-label" for="{{ form.content.id_for_label }}">{{ form.content.label }}</label>{{ form.content }}{{ form.content.errors }}</div>
+      </div>
+      <div class="d-flex justify-content-end gap-2 mt-4"><a class="btn btn-light border" href="{% url 'operations_portal:knowledge_base_documents' %}?tenant={{ selected_tenant.pk }}">Cancelar</a><button class="btn btn-primary" type="submit">Salvar</button></div>
+    </form>
+  </div></div>
+</div>
+{% endblock %}

@@ -487,10 +487,17 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["intent"], "commercial_interest")
         self.assertEqual(LeadDraft.objects.count(), 0)
-        self.assertIn("academia", response.json()["reply"].lower())
-        self.assertIn("hospital", response.json()["reply"].lower())
+        reply = response.json()["reply"].lower()
+        self.assertIn("pouco mais", reply)
+        self.assertNotIn("bancada", reply)
+        self.assertNotIn("granito", reply)
 
-    def test_chat_api_maintenance_interest_asks_technical_context(self):
+    def test_chat_api_profile_driven_maintenance_interest_asks_technical_context(self):
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            business_domain="serviços técnicos e atendimento comercial",
+            short_description="Qualifica necessidades técnicas com detalhes do problema e do objetivo.",
+        )
         payload = {
             "tenant": self.tenant.slug,
             "session_id": "session-maintenance",
@@ -507,7 +514,7 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(LeadDraft.objects.count(), 0)
         self.assertIn("esteira", response.json()["reply"].lower())
-        self.assertIn("problema", response.json()["reply"].lower())
+        self.assertIn("arrumar", response.json()["reply"].lower())
 
     def test_chat_api_software_web_interest_is_identified(self):
         payload = {
@@ -749,6 +756,175 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.json()["intent"], "unknown")
 
 
+    def test_chat_api_pitondo_kitchen_sink_uses_natural_stone_discovery_without_smart_fallback(self):
+        pitondo = Tenant.objects.create(
+            name="Granimármores Pitondo",
+            slug="granimarmores-pitondo",
+            domain="granimarmorespitondo.com.br",
+            is_active=True,
+        )
+        AssistantProfile.objects.create(
+            tenant=pitondo,
+            name="Lívia",
+            initial_message="Olá! Sou a Lívia da Granimármores Pitondo. Como posso ajudar?",
+            business_domain="marmoraria, pedras naturais e projetos sob medida",
+            short_description="Qualifica projetos informando ambiente, medidas, fotos e detalhes do material.",
+        )
+        payload = {
+            "tenant": pitondo.slug,
+            "session_id": "pitondo-kitchen-sink",
+            "message": "gostaria de um orçamento sobre uma pia para minha cozinha",
+            "source_page": "https://www.granimarmorespitondo.com.br/",
+        }
+
+        response = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        reply = response.json()["reply"].lower()
+        self.assertEqual(response.json()["tenant"], "granimarmores-pitondo")
+        self.assertIn("medidas", reply)
+        self.assertIn("pia", reply)
+        self.assertIn("cozinha", reply)
+        self.assertNotIn("automação industrial", reply)
+        self.assertNotIn("robótica", reply)
+        self.assertNotIn("manutenção técnica", reply)
+        self.assertNotIn("sistema web", reply)
+        self.assertEqual(LeadDraft.objects.count(), 0)
+
+    def test_chat_api_smart_automation_machine_asks_specific_automation_question(self):
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            name="Lívia",
+            business_domain="automação industrial, robótica, manutenção técnica e sistemas web",
+        )
+        payload = {
+            "tenant": self.tenant.slug,
+            "session_id": "smart-automation-machine",
+            "message": "Preciso automatizar uma máquina",
+            "source_page": "https://www.smartcontrolbrasil.com.br/",
+        }
+
+        response = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        reply = response.json()["reply"].lower()
+        self.assertEqual(response.json()["tenant"], "smart-control-brasil")
+        self.assertIn("maquina", reply)
+        self.assertIn("automatizar", reply)
+        self.assertNotIn("pia", reply)
+        self.assertNotIn("bancada", reply)
+        self.assertEqual(LeadDraft.objects.count(), 0)
+
+    def test_chat_api_tenant_isolation_blocks_cross_tenant_fallback_phrases(self):
+        pitondo = Tenant.objects.create(
+            name="Granimármores Pitondo",
+            slug="granimarmores-pitondo",
+            domain="granimarmorespitondo.com.br",
+            is_active=True,
+        )
+        AssistantProfile.objects.create(
+            tenant=pitondo,
+            name="Lívia",
+            business_domain="marmoraria e pedras naturais",
+            short_description="Qualifica projetos com ambiente, medidas e fotos.",
+        )
+        AssistantProfile.objects.create(
+            tenant=self.tenant,
+            name="Lívia",
+            business_domain="automação industrial, robótica, manutenção técnica e sistemas web",
+        )
+
+        pitondo_response = self.client.post(
+            "/api/chat/",
+            data=json.dumps({
+                "tenant": pitondo.slug,
+                "session_id": "tenant-isolation-pitondo",
+                "message": "Quero uma pia para minha cozinha",
+            }),
+            content_type="application/json",
+        )
+        smart_response = self.client.post(
+            "/api/chat/",
+            data=json.dumps({
+                "tenant": self.tenant.slug,
+                "session_id": "tenant-isolation-smart",
+                "message": "Preciso automatizar uma máquina",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(pitondo_response.status_code, 200)
+        self.assertEqual(smart_response.status_code, 200)
+        pitondo_reply = pitondo_response.json()["reply"].lower()
+        smart_reply = smart_response.json()["reply"].lower()
+        for forbidden in ("smart control", "automação industrial", "robótica", "manutenção técnica", "sistema web"):
+            self.assertNotIn(forbidden, pitondo_reply)
+        for forbidden in ("granimármores", "pitondo", "pia", "bancada", "mármore", "granito"):
+            self.assertNotIn(forbidden, smart_reply)
+
+    def test_chat_api_profile_driven_logistics_tenant_without_engine_taxonomy(self):
+        tenant = Tenant.objects.create(
+            name="Logistics Demo",
+            slug="logistics-demo",
+            domain="logistics.example",
+            is_active=True,
+        )
+        AssistantProfile.objects.create(
+            tenant=tenant,
+            name="Lívia",
+            business_domain="logística e transporte de cargas",
+            short_description="Qualifica pedidos de frete com origem, destino, prazo e volume.",
+        )
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps({
+                "tenant": tenant.slug,
+                "session_id": "logistics-demo-session",
+                "message": "Preciso contratar um frete para amanhã",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        reply = response.json()["reply"].lower()
+        self.assertIn("frete", reply)
+        self.assertIn("contratar", reply)
+        self.assertNotIn("automação", reply)
+        self.assertNotIn("mármore", reply)
+
+    def test_chat_api_profile_driven_ai_tenant_without_engine_taxonomy(self):
+        tenant = Tenant.objects.create(
+            name="AI Demo",
+            slug="ai-demo",
+            domain="ai.example",
+            is_active=True,
+        )
+        AssistantProfile.objects.create(
+            tenant=tenant,
+            name="Lívia",
+            business_domain="inteligência artificial aplicada a atendimento",
+            short_description="Qualifica agentes de IA, integrações, canais e objetivos de atendimento.",
+        )
+
+        response = self.client.post(
+            "/api/chat/",
+            data=json.dumps({
+                "tenant": tenant.slug,
+                "session_id": "ai-demo-session",
+                "message": "Quero criar um agente de inteligência artificial para atendimento",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        reply = response.json()["reply"].lower()
+        self.assertIn("agente", reply)
+        self.assertIn("criar", reply)
+        self.assertNotIn("frete", reply)
+        self.assertNotIn("granito", reply)
+
+
 class LiviaDecisionKnowledgeTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(
@@ -803,8 +979,8 @@ class LiviaDecisionKnowledgeTests(TestCase):
 
         self.assertEqual(decision.intent, "commercial_interest")
         self.assertNotIn("HygiBot", decision.reply)
-        self.assertIn("academia", decision.reply.lower())
-        self.assertIn("hospital", decision.reply.lower())
+        self.assertIn("pouco mais", decision.reply.lower())
+        self.assertNotIn("bancada", decision.reply.lower())
 
 
 class LiviaHandoffWorkflowTests(TestCase):
@@ -881,7 +1057,7 @@ class LiviaHandoffWorkflowTests(TestCase):
         handoff = HandoffRequest.objects.get(conversation=conversation)
         self.assertEqual(handoff.source_page, "https://example.com/origem")
         self.assertIn("Resumo da Lívia", handoff.summary)
-        self.assertIn("Última mensagem", handoff.summary)
+        self.assertIn("robô de limpeza", handoff.summary)
 
     def test_default_handoff_notification_settings_are_safe(self):
         self.assertFalse(settings.LIVIA_HANDOFF_NOTIFICATIONS_ENABLED)

@@ -79,6 +79,22 @@ class TenantOnboardingServiceTests(TestCase):
         self.assertEqual(AssistantProfile.objects.count(), 1)
         self.assertEqual(result.assistant_profile.primary_goal, "qualificar atendimento comercial")
 
+    def test_onboard_stores_business_domain_and_short_description(self):
+        result = self.service.onboard(
+            slug="logistica-demo",
+            name="Logística Demo",
+            domain="logistica.example",
+            business_domain="logística e transporte de cargas",
+            short_description="Qualifica fretes com origem, destino, prazo e volume.",
+            seed_knowledge=True,
+        )
+
+        self.assertEqual(result.assistant_profile.business_domain, "logística e transporte de cargas")
+        self.assertEqual(result.assistant_profile.short_description, "Qualifica fretes com origem, destino, prazo e volume.")
+        document = KnowledgeDocument.objects.get(tenant=result.tenant, slug="sobre-logistica-demo")
+        self.assertIn("logística e transporte", document.content)
+        self.assertIn("Qualifica fretes", document.content)
+
     def test_onboard_updates_existing_assistant_profile_without_duplicate(self):
         tenant = Tenant.objects.create(slug="profile-existing", name="Profile Existing", domain="https://old.example")
         AssistantProfile.objects.create(tenant=tenant, name="Assistente antiga", primary_goal="antigo")

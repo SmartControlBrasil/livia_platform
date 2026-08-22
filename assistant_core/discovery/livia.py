@@ -65,11 +65,20 @@ COMMERCIAL_PATTERNS = (
     "trabalham com",
     "voces trabalham",
     "voces tem",
-    "tem robo",
     "quero um",
     "quero uma",
+    "quero criar",
+    "preciso contratar",
     "preciso de uma solucao",
     "quero uma solucao",
+)
+
+NEED_ACTION_PATTERNS = (
+    "preciso ",
+    "quero ",
+    "gostaria ",
+    "tenho interesse",
+    "estou procurando",
 )
 
 TECHNICAL_PATTERNS = (
@@ -104,86 +113,6 @@ SUPPORT_PATTERNS = (
     "senha",
 )
 
-CONTACT_PATTERNS = (
-    "meu nome",
-    "sou ",
-    "empresa",
-    "telefone",
-    "whatsapp",
-    "celular",
-    "email",
-    "e-mail",
-    "mail",
-    "cidade",
-    "sou de",
-)
-
-AUTOMATION_PATTERNS = (
-    "clp",
-    "ihm",
-    "inversor",
-    "servo",
-    "scada",
-    "supervisorio",
-    "mitsubishi",
-    "siemens",
-    "weg",
-    "rockwell",
-    "allen bradley",
-    "retrofit",
-    "painel eletrico",
-    "painel de automacao",
-    "automacao industrial",
-)
-
-ROBOTICS_PATTERNS = (
-    "robo",
-    "robotica",
-    "xyron",
-    "liro",
-    "hygibot",
-    "hygi bot",
-    "neobot",
-    "hostbot",
-    "robo de limpeza",
-    "robo de atendimento",
-    "robo de recepcao",
-    "robo patrulha",
-)
-
-MAINTENANCE_PATTERNS = (
-    "manutencao",
-    "conserto",
-    "consertar",
-    "arrumar",
-    "esteira",
-    "bike",
-    "bicicleta ergonometrica",
-    "escada ergonometrica",
-    "equipamento parado",
-    "maquina parada",
-    "visita tecnica",
-    "academia",
-)
-
-SOFTWARE_WEB_PATTERNS = (
-    "site",
-    "sistema web",
-    "sistema",
-    "software",
-    "dashboard",
-    "crm",
-    "agente de ia",
-    "livia",
-    "atlas",
-    "automacao de atendimento",
-    "portal",
-    "app",
-    "aplicativo",
-    "ecommerce",
-    "e-commerce",
-)
-
 GENERIC_NEED_TEXTS = {
     "quero orcamento",
     "preciso de orcamento",
@@ -195,30 +124,9 @@ GENERIC_NEED_TEXTS = {
     "quero proposta",
 }
 
-NATURAL_STONE_PATTERNS = (
-    "marmore",
-    "granito",
-    "quartzito",
-    "travertino",
-    "bancada",
-    "pedra",
-    "revestimento",
-    "piso de pedra",
-    "escada",
-    "fachada",
-    "marmoraria",
-    "silestone",
-    "dekton",
+GENERIC_DISCOVERY_QUESTION = (
+    "Claro. Pode me contar um pouco mais sobre o que você precisa fazer ou resolver?"
 )
-
-AREA_QUESTIONS = {
-    "automation": "Claro. Para eu te direcionar melhor: é automação com CLP/IHM, inversor, servo, SCADA, retrofit ou painel?",
-    "robotics": "Perfeito. É para academia, indústria, hospital, condomínio ou outro ambiente?",
-    "maintenance": "Entendi. É uma esteira residencial, profissional de academia ou equipamento industrial? E qual o problema principal?",
-    "software_web": "Legal. Esse sistema ou site é para vendas, atendimento, operação interna, dashboard ou integração com IA?",
-    "natural_stone": "Perfeito. É para cozinha, banheiro, escada, fachada ou outra área?",
-    "unknown": "Claro. Para eu te orientar melhor, pode me contar um pouco mais do contexto ou da aplicação que você tem em mente?",
-}
 
 
 def normalize_text(text: str) -> str:
@@ -245,11 +153,9 @@ def analyze_message(text: str) -> DiscoveryResult:
     has_quote = _matches_any(normalized, QUOTE_PATTERNS)
     has_support = _matches_any(normalized, SUPPORT_PATTERNS)
     has_technical = _matches_any(normalized, TECHNICAL_PATTERNS)
-    has_commercial = _matches_any(normalized, COMMERCIAL_PATTERNS)
+    has_commercial = _matches_any(normalized, COMMERCIAL_PATTERNS) or _has_need_action(normalized)
     has_contact = _looks_like_contact(normalized)
-    service_area = _detect_service_area(normalized)
-    has_area_context = service_area != "unknown"
-    has_substantive_context = _has_substantive_context(normalized, service_area)
+    has_substantive_context = _has_substantive_context(normalized)
     generic_need = normalized in GENERIC_NEED_TEXTS
 
     if has_greeting:
@@ -257,7 +163,6 @@ def analyze_message(text: str) -> DiscoveryResult:
             "greeting",
             normalized,
             scenario="greeting",
-            service_area=service_area,
             confidence=0.95,
             has_contact_data=has_contact,
             has_quote_request=has_quote,
@@ -273,7 +178,6 @@ def analyze_message(text: str) -> DiscoveryResult:
             "support_request",
             normalized,
             scenario="support_request",
-            service_area=service_area,
             confidence=0.9,
             should_answer_contextually=True,
             has_contact_data=has_contact,
@@ -288,11 +192,10 @@ def analyze_message(text: str) -> DiscoveryResult:
             "quote_request",
             normalized,
             scenario="quote_request",
-            service_area=service_area,
             confidence=0.9 if should_collect else 0.75,
             should_collect_lead=should_collect,
             should_ask_discovery_question=not should_collect,
-            suggested_next_question=AREA_QUESTIONS.get(service_area, AREA_QUESTIONS["unknown"]),
+            suggested_next_question=GENERIC_DISCOVERY_QUESTION,
             has_contact_data=has_contact,
             has_quote_request=True,
             has_commercial_interest=True,
@@ -305,33 +208,41 @@ def analyze_message(text: str) -> DiscoveryResult:
         return _result(
             "technical_question",
             normalized,
-            scenario="technical_question" if service_area != "maintenance" else "maintenance",
-            service_area=service_area,
+            scenario="technical_question",
             confidence=0.82,
             should_answer_contextually=True,
-            should_ask_discovery_question=service_area == "maintenance",
-            suggested_next_question=AREA_QUESTIONS.get(service_area, AREA_QUESTIONS["unknown"]),
             has_contact_data=has_contact,
             has_technical_question=True,
             has_support_request=has_support,
             reason="technical_without_forwarding",
         )
 
-    has_area_interest = service_area in {"robotics", "maintenance"} and any(
-        marker in normalized
-        for marker in ("preciso", "quero", "voces", "trabalham", "tem ", "arrumar", "consertar", "manutencao")
-    )
-    if has_commercial or has_area_interest:
-        should_collect = has_substantive_context and not _should_ask_area_discovery(normalized, service_area)
+    if has_contact and has_commercial:
+        return _result(
+            "contact_data",
+            normalized,
+            scenario="contact_data",
+            confidence=0.85,
+            should_collect_lead=True,
+            has_contact_data=True,
+            has_commercial_interest=True,
+            has_technical_question=has_technical,
+            has_support_request=has_support,
+            reason="contact_with_commercial_context",
+        )
+
+    if has_commercial:
+        informational_question = _looks_informational(normalized)
+        should_collect = has_substantive_context and not informational_question
         return _result(
             "commercial_interest",
             normalized,
-            scenario=service_area if service_area != "unknown" else "commercial_interest",
-            service_area=service_area,
+            scenario="commercial_interest",
             confidence=0.8 if should_collect else 0.68,
             should_collect_lead=should_collect,
             should_ask_discovery_question=not should_collect,
-            suggested_next_question=AREA_QUESTIONS.get(service_area, AREA_QUESTIONS["unknown"]),
+            should_answer_contextually=informational_question,
+            suggested_next_question=GENERIC_DISCOVERY_QUESTION,
             has_contact_data=has_contact,
             has_commercial_interest=True,
             has_technical_question=has_technical,
@@ -344,7 +255,6 @@ def analyze_message(text: str) -> DiscoveryResult:
             "contact_data",
             normalized,
             scenario="contact_data",
-            service_area=service_area,
             confidence=0.75,
             has_contact_data=True,
             reason="contact_marker",
@@ -354,11 +264,7 @@ def analyze_message(text: str) -> DiscoveryResult:
         "unknown",
         normalized,
         scenario="unknown",
-        service_area=service_area,
         confidence=0.45,
-        should_answer_contextually=has_area_context,
-        should_ask_discovery_question=has_area_context,
-        suggested_next_question=AREA_QUESTIONS.get(service_area, AREA_QUESTIONS["unknown"]) if has_area_context else "",
         reason="no_clear_intent",
     )
 
@@ -402,38 +308,26 @@ def _result(
     )
 
 
-def _detect_service_area(normalized_text: str) -> str:
-    if _matches_any(normalized_text, NATURAL_STONE_PATTERNS):
-        return "natural_stone"
-    if _matches_any(normalized_text, ROBOTICS_PATTERNS):
-        return "robotics"
-    if _matches_any(normalized_text, MAINTENANCE_PATTERNS):
-        return "maintenance"
-    if _matches_any(normalized_text, AUTOMATION_PATTERNS):
-        return "automation"
-    if _matches_any(normalized_text, SOFTWARE_WEB_PATTERNS) or re.search(r"\bia\b", normalized_text):
-        return "software_web"
-    return "unknown"
+def _has_substantive_context(normalized_text: str) -> bool:
+    words = [word for word in normalized_text.split() if len(word) > 2]
+    if len(words) >= 3:
+        return True
+    return bool(re.search(r"\d", normalized_text))
 
 
-def _has_substantive_context(normalized_text: str, service_area: str) -> bool:
-    if service_area != "unknown" and len(normalized_text.split()) >= 4:
+def _has_need_action(normalized_text: str) -> bool:
+    if normalized_text in GENERIC_NEED_TEXTS:
         return True
-    return False
-
-
-def _should_ask_area_discovery(normalized_text: str, service_area: str) -> bool:
-    if service_area == "robotics" and not any(marker in normalized_text for marker in ("academia", "industria", "hospital", "condominio", "recepcao", "atendimento", "patrulha")):
-        return True
-    if service_area == "maintenance" and not any(marker in normalized_text for marker in ("residencial", "academia", "industrial", "erro", "parou", "barulho", "nao liga")):
-        return True
-    if service_area == "software_web" and normalized_text in {"quero um site", "preciso de um site", "quero sistema", "preciso de sistema"}:
-        return True
-    return False
+    return any(normalized_text.startswith(pattern) for pattern in NEED_ACTION_PATTERNS)
 
 
 def _has_visit_or_budget_marker(normalized_text: str) -> bool:
     return any(marker in normalized_text for marker in ("orcamento", "proposta", "visita", "diagnostico", "contratar", "comprar"))
+
+
+def _looks_informational(normalized_text: str) -> bool:
+    prefixes = ("como ", "qual ", "quais ", "quando ", "onde ", "posso ", "tem ", "voces tem ", "voces trabalham", "trabalham com")
+    return normalized_text.endswith("?") or normalized_text.startswith(prefixes)
 
 
 def _is_greeting(normalized_text: str) -> bool:
@@ -450,4 +344,4 @@ def _looks_like_contact(normalized_text: str) -> bool:
     digits = re.sub(r"\D", "", normalized_text)
     if len(digits) >= 10:
         return True
-    return bool(re.search(r"(?:meu nome|sou|empresa|telefone|whatsapp|celular|email|e-mail|cidade)", normalized_text))
+    return bool(re.search(r"\b(?:meu nome|sou |telefone|whatsapp|celular|email|e-mail|cidade)\b", normalized_text))

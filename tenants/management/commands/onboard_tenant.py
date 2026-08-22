@@ -16,6 +16,8 @@ class Command(BaseCommand):
         parser.add_argument("--initial-message", default="")
         parser.add_argument("--primary-goal", default="")
         parser.add_argument("--tone", default="")
+        parser.add_argument("--business-domain", default="")
+        parser.add_argument("--short-description", default="")
         parser.add_argument("--use-ai", action="store_true")
         parser.add_argument("--widget-title", default=None)
         parser.add_argument("--launcher-label", default="")
@@ -69,6 +71,12 @@ class Command(BaseCommand):
         tone = options["tone"] or (
             existing_profile.tone if existing_profile else "consultivo, claro e profissional"
         )
+        business_domain = options["business_domain"] or (
+            existing_profile.business_domain if existing_profile else ""
+        )
+        short_description = options["short_description"] or (
+            existing_profile.short_description if existing_profile else ""
+        )
         widget_title = options["widget_title"]
         if widget_title is None:
             widget_title = existing_profile.widget_title if existing_profile else ""
@@ -103,6 +111,8 @@ class Command(BaseCommand):
                 initial_message=initial_message,
                 primary_goal=primary_goal,
                 tone=tone,
+                business_domain=business_domain,
+                short_description=short_description,
                 use_ai=use_ai,
                 widget_title=widget_title,
                 launcher_label=launcher_label,
@@ -129,6 +139,8 @@ class Command(BaseCommand):
             self.stdout.write("Origins autorizadas:")
             for origin in result.allowed_origins:
                 self.stdout.write(f"- {origin}")
+        self.stdout.write(f"Business domain: {result.assistant_profile.business_domain or '(não informado)'}")
+        self.stdout.write(f"Short description: {result.assistant_profile.short_description or '(não informada)'}")
         self.stdout.write(f"Widget: {'ativo' if result.assistant_profile.is_widget_enabled else 'inativo'}")
 
         if result.warnings:

@@ -61,8 +61,6 @@ COMPLEX_TECHNICAL_PATTERNS = (
     "linha parada",
     "maquina parada",
     "máquina parada",
-    "inversor falhando",
-    "clp parou",
 )
 
 
@@ -98,10 +96,10 @@ class HandoffService:
         if lead_draft is not None and lead_draft.status in {LeadDraft.Status.QUALIFIED, LeadDraft.Status.SENT_TO_CRM}:
             return HandoffDecision(True, HandoffRequest.Reason.QUALIFIED_LEAD, HandoffRequest.Priority.NORMAL)
 
-        if service_area in {"maintenance", "automation"} and self._is_urgent(normalized):
+        if self._is_urgent(normalized):
             return HandoffDecision(True, HandoffRequest.Reason.EMERGENCY_OR_URGENT, HandoffRequest.Priority.HIGH)
 
-        if service_area in {"maintenance", "automation"} and self._is_complex_technical(normalized):
+        if self._is_complex_technical(normalized):
             return HandoffDecision(True, HandoffRequest.Reason.TECHNICAL_COMPLEXITY, HandoffRequest.Priority.HIGH)
 
         if intent == "support_request" and self._is_urgent(normalized):

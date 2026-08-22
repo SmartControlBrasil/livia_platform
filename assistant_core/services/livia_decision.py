@@ -7,7 +7,7 @@ from typing import Iterable
 from django.conf import settings
 
 from assistant_core.discovery import analyze_message
-from assistant_core.discovery.contextual import resolve_discovery_question
+from assistant_core.discovery.contextual import resolve_discovery_question, should_ask_profile_discovery
 from assistant_core.services.decision_outcome import has_semantic_knowledge_block, should_combine_kb_with_discovery, is_informational_knowledge_query
 from assistant_core.prompts import (
     DEFAULT_REPLY,
@@ -134,10 +134,17 @@ class LiviaDecisionService:
             if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
                 decision = self._locked_lead_reply(intent)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+            if self._should_ask_profile_discovery(current_message, assistant_profile):
+                decision = self._ask_discovery_question(
+                    discovery, conversation, knowledge_context=knowledge_context,
+                    assistant_profile=assistant_profile, tenant=tenant, current_message=current_message,
+                )
+                decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             if should_combine_kb_with_discovery(discovery, conversation, knowledge_context):
                 decision = self._ask_discovery_question(
                     discovery, conversation, knowledge_context=knowledge_context,
-                    assistant_profile=assistant_profile, tenant=tenant,
+                    assistant_profile=assistant_profile, tenant=tenant, current_message=current_message,
                 )
                 decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
@@ -310,7 +317,7 @@ class LiviaDecisionService:
             reply="Perfeito, já encaminhei seus dados para sequência do atendimento. Se for uma nova demanda, me diga que é um novo pedido.",
         )
 
-    def _ask_discovery_question(self, discovery, conversation, knowledge_context: str = "", assistant_profile=None, tenant=None) -> LiviaReply:
+    def _ask_discovery_question(self, discovery, conversation, knowledge_context: str = "", assistant_profile=None, tenant=None, current_message: str = "") -> LiviaReply:
         if conversation is not None:
             next_state = LeadState.COLLECT_NEED if discovery.intent in {"quote_request", "commercial_interest"} else LeadState.DISCOVERY
             set_state(conversation, next_state)
@@ -320,6 +327,10 @@ class LiviaDecisionService:
                 discovery.service_area,
                 business_domain=profile_ctx.business_domain,
                 business_name=profile_ctx.business_name,
+                short_description=profile_ctx.short_description,
+                primary_goal=profile_ctx.primary_goal,
+                current_message=current_message,
+                knowledge_context=knowledge_context,
             )
         elif discovery.suggested_next_question:
             reply = discovery.suggested_next_question
@@ -328,8 +339,23 @@ class LiviaDecisionService:
                 discovery.service_area,
                 business_domain=profile_ctx.business_domain,
                 business_name=profile_ctx.business_name,
+                short_description=profile_ctx.short_description,
+                primary_goal=profile_ctx.primary_goal,
+                current_message=current_message,
+                knowledge_context=knowledge_context,
             )
         return LiviaReply(intent=discovery.intent, reply=self._with_knowledge(reply, knowledge_context))
+
+
+    def _should_ask_profile_discovery(self, current_message: str, assistant_profile) -> bool:
+        if assistant_profile is None:
+            return False
+        return should_ask_profile_discovery(
+            current_message=current_message,
+            business_domain=getattr(assistant_profile, "business_domain", ""),
+            short_description=getattr(assistant_profile, "short_description", ""),
+            primary_goal=getattr(assistant_profile, "primary_goal", ""),
+        )
 
     def _with_knowledge(self, reply: str, knowledge_context: str) -> str:
         """

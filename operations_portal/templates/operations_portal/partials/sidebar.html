@@ -43,7 +43,7 @@
 
         <li class="menu-title mt-2">Gestão</li>
         <li class="{% if active_section == 'tenants' %}menuitem-active{% endif %}">
-          <a href="{% url 'operations_portal:placeholder' section='tenants' %}" class="tp-link {% if active_section == 'tenants' %}active{% endif %}">
+          <a href="{% url 'operations_portal:tenant_list' %}" class="tp-link {% if active_section == 'tenants' %}active{% endif %}">
             <i data-feather="layers"></i><span> Tenants </span>
           </a>
         </li>
@@ -53,7 +53,7 @@
           </a>
         </li>
         <li class="{% if active_section == 'integracoes' %}menuitem-active{% endif %}">
-          <a href="{% url 'operations_portal:placeholder' section='integracoes' %}" class="tp-link {% if active_section == 'integracoes' %}active{% endif %}">
+          <a href="{% url 'operations_portal:integrations' %}" class="tp-link {% if active_section == 'integracoes' %}active{% endif %}">
             <i data-feather="shuffle"></i><span> Integrações </span>
           </a>
         </li>

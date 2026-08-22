@@ -170,14 +170,19 @@ def build_dashboard_metrics(*, tenant, configuration: TenantRagConfiguration | N
     from django.db.models import Count
 
     from knowledge_base.models import (
+        KnowledgeDocument,
         TenantRagChunkEmbedding,
         TenantRagDocumentChunk,
         TenantRagDriveFileManifest,
     )
+    from knowledge_base.services.manual_rag import MANUAL_SOURCE_PREFIX
 
     documents_qs = TenantRagDriveFileManifest.objects.filter(tenant=tenant)
     documents_total = documents_qs.count()
     documents_active = documents_qs.filter(is_active=True).count()
+    manual_documents_qs = KnowledgeDocument.objects.filter(tenant=tenant)
+    manual_manifest_qs = documents_qs.filter(drive_file_id__startswith=MANUAL_SOURCE_PREFIX)
+    drive_manifest_qs = documents_qs.exclude(drive_file_id__startswith=MANUAL_SOURCE_PREFIX)
 
     chunks_qs = TenantRagDocumentChunk.objects.filter(tenant=tenant)
     chunks_active = chunks_qs.filter(is_active=True, status=TenantRagDocumentChunk.Status.ACTIVE).count()
@@ -216,6 +221,15 @@ def build_dashboard_metrics(*, tenant, configuration: TenantRagConfiguration | N
         "coverage": coverage,
         "documents_total": documents_total,
         "documents_active": documents_active,
+        "manual_documents_total": manual_documents_qs.count(),
+        "manual_documents_active": manual_documents_qs.filter(status=KnowledgeDocument.Status.ACTIVE).count(),
+        "manual_manifests_total": manual_manifest_qs.count(),
+        "manual_manifests_active": manual_manifest_qs.filter(is_active=True).count(),
+        "drive_manifests_total": drive_manifest_qs.count(),
+        "drive_manifests_active": drive_manifest_qs.filter(is_active=True).count(),
+        "drive_new_files": drive_manifest_qs.filter(status=TenantRagDriveFileManifest.Status.DISCOVERED).count(),
+        "drive_changed_files": drive_manifest_qs.filter(status=TenantRagDriveFileManifest.Status.UPDATED).count(),
+        "drive_removed_files": drive_manifest_qs.filter(status=TenantRagDriveFileManifest.Status.REMOVED).count(),
         "manifest_status_counts": manifest_status_counts,
         "chunks_active": chunks_active,
         "chunks_with_embedding": chunks_with_embedding,

@@ -4,35 +4,55 @@
 
 {% block page_content %}
 <div class="container-fluid">
-  <div class="py-3"><h4 class="fs-18 fw-semibold m-0">Documentos da base</h4><p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p></div>
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Documentos da base</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+    </div>
+    <div class="mt-3 mt-sm-0 d-flex gap-2">
+      {% if selected_tenant %}<a class="btn btn-light border" href="{% url 'operations_portal:tenant_detail' selected_tenant.pk %}">Abrir tenant</a>{% endif %}
+      {% if can_change_documents %}<a class="btn btn-light border" href="{% url 'operations_portal:knowledge_base_document_import' %}?tenant={{ selected_tenant.pk }}">Importar conhecimento</a><a class="btn btn-primary" href="{% url 'operations_portal:knowledge_base_document_create' %}?tenant={{ selected_tenant.pk }}">Novo documento</a>{% endif %}
+    </div>
+  </div>
   {% include 'operations_portal/knowledge_base/_nav.html' %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">KnowledgeDocument</p><h4 class="mb-0">{{ counters.documents }}</h4><small>{{ counters.active_documents }} ativos</small></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Rascunhos</p><h4 class="mb-0">{{ counters.draft_documents }}</h4></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Arquivados</p><h4 class="mb-0">{{ counters.archived_documents }}</h4></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">RAG chunks</p><h4 class="mb-0">{{ counters.rag_active_chunks }}</h4><small>{{ counters.rag_embeddings }} embeddings ativos</small></div></div></div>
+  </div>
 
   <div class="card mb-3"><div class="card-body">
     <form method="get" class="row g-2 align-items-end">
       <input type="hidden" name="tenant" value="{{ selected_tenant.pk }}">
       <div class="col-md-3"><label class="form-label">Status</label>{{ form.status }}</div>
-      <div class="col-md-3"><label class="form-label">Ativo</label>{{ form.is_active }}</div>
-      <div class="col-md-4"><label class="form-label">Busca</label>{{ form.q }}</div>
+      <div class="col-md-7"><label class="form-label">Busca</label>{{ form.q }}</div>
       <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Filtrar</button></div>
     </form>
   </div></div>
 
   <div class="card">
-    <div class="card-header"><h5 class="card-title mb-0">Documentos indexados</h5></div>
+    <div class="card-header"><h5 class="card-title mb-0">Documentos</h5></div>
     <div class="card-body">
       {% if page_obj.object_list %}
       <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
-          <thead><tr><th>Título</th><th>Origem</th><th>Status</th><th>Ativo</th><th>Chunks</th><th>Atualizado</th></tr></thead>
+          <thead><tr><th>Tenant</th><th>Título</th><th>Status</th><th>RAG</th><th>Source type</th><th>Tags</th><th>Atualizado em</th><th class="text-end">Ações</th></tr></thead>
           <tbody>
             {% for item in page_obj.object_list %}
             <tr>
-              <td>{{ item.title }}</td>
-              <td>{{ item.origin_label }}</td>
-              <td><span class="badge bg-secondary-subtle text-secondary">{{ item.index_status_label }}</span></td>
-              <td>{% if item.is_active %}Sim{% else %}Não{% endif %}</td>
-              <td>{{ item.chunk_count }}</td>
-              <td>{{ item.updated_at_display|date:"d/m/Y H:i" }}</td>
+              <td>{{ item.tenant.name }}</td>
+              <td><strong>{{ item.title }}</strong><br><small class="text-muted">{{ item.content_excerpt }}</small></td>
+              <td><span class="badge bg-{% if item.status == 'active' %}success{% elif item.status == 'draft' %}warning{% else %}secondary{% endif %}-subtle text-{% if item.status == 'active' %}success{% elif item.status == 'draft' %}warning{% else %}secondary{% endif %}">{{ item.status_label }}</span></td>
+              <td>
+                <span class="badge bg-{% if item.rag_state.state == 'READY' %}success{% elif item.rag_state.state == 'FAILED' %}danger{% elif item.rag_state.state == 'BLOCKED' %}secondary{% else %}warning{% endif %}-subtle text-{% if item.rag_state.state == 'READY' %}success{% elif item.rag_state.state == 'FAILED' %}danger{% elif item.rag_state.state == 'BLOCKED' %}secondary{% else %}warning{% endif %}">{{ item.rag_state.state }}</span>
+                <br><small class="text-muted">{{ item.rag_state.chunks }} chunks · {{ item.rag_state.embeddings }} emb.</small>
+              </td>
+              <td>{{ item.source_type }}</td>
+              <td>{{ item.tags_label }}</td>
+              <td>{{ item.updated_at|date:"d/m/Y H:i" }}</td>
+              <td class="text-end"><a class="btn btn-sm btn-light border" href="{% url 'operations_portal:knowledge_base_document_detail' item.pk %}?tenant={{ selected_tenant.pk }}">Abrir</a>{% if can_change_documents %} <a class="btn btn-sm btn-primary" href="{% url 'operations_portal:knowledge_base_document_edit' item.pk %}?tenant={{ selected_tenant.pk }}">Editar</a>{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -40,9 +60,23 @@
       </div>
       {% include 'operations_portal/partials/pagination.html' %}
       {% else %}
-      <div class="text-center text-muted py-5">Nenhum documento encontrado para este tenant.</div>
+      <div class="text-center text-muted py-5">Nenhum KnowledgeDocument encontrado para este tenant.</div>
       {% endif %}
     </div>
   </div>
+
+  <div class="card mt-3">
+    <div class="card-header"><h5 class="card-title mb-0">Documentos RAG sincronizados</h5></div>
+    <div class="card-body">
+      {% if rag_manifests %}
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Título</th><th>Status</th><th>Origem</th><th>Ativo</th><th>Atualizado</th></tr></thead><tbody>
+        {% for manifest in rag_manifests %}
+        <tr><td>{{ manifest.name }}</td><td>{{ manifest.get_status_display }}</td><td>{{ manifest.mime_type|default:"Google Drive" }}</td><td>{% if manifest.is_active %}Sim{% else %}Não{% endif %}</td><td>{{ manifest.updated_at|date:"d/m/Y H:i" }}</td></tr>
+        {% endfor %}
+      </tbody></table></div>
+      {% else %}<div class="text-center text-muted py-4">Nenhum documento RAG sincronizado para este tenant.</div>{% endif %}
+    </div>
+  </div>
+
 </div>
 {% endblock %}

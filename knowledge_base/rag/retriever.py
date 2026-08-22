@@ -12,25 +12,6 @@ STOPWORDS = {
     "e", "em", "o", "os", "para", "por", "que", "um", "uma", "voces", "voce",
     "tem", "sobre", "preciso", "quero", "saber",
 }
-ALIASES = {
-    "robo": {"robotica", "xyron", "hygibot"},
-    "robos": {"robo", "robotica", "xyron"},
-    "limpeza": {"hygibot", "higienizacao", "robo"},
-    "higienizacao": {"limpeza", "hygibot"},
-    "clp": {"automacao", "mitsubishi"},
-    "mitsubishi": {"automacao", "clp", "ihm", "inversor", "servo"},
-    "esteira": {"academia", "manutencao"},
-    "academia": {"esteira", "manutencao"},
-    "ia": {"agente", "livia", "atlas", "software"},
-}
-SERVICE_AREA_TERMS = {
-    "automation": {"automacao", "mitsubishi", "clp", "ihm", "inversor", "servo", "retrofit"},
-    "robotics": {"robotica", "robo", "robos", "xyron", "hygibot", "limpeza"},
-    "maintenance": {"manutencao", "esteira", "academia", "tecnica", "equipamento"},
-    "software_web": {"software", "sistema", "web", "agente", "ia", "livia", "atlas"},
-}
-
-
 @dataclass(frozen=True)
 class KnowledgeSnippet:
     title: str
@@ -79,12 +60,7 @@ def _score_document(document, terms, service_area):
             score += 8
         if re.search(rf"(?:^|\W){re.escape(term)}(?:$|\W)", corpus):
             score += 2
-    if service_area and service_area != "unknown":
-        area_terms = SERVICE_AREA_TERMS.get(service_area, set())
-        if terms.intersection(area_terms) or tags.intersection(area_terms) or any(term in corpus for term in area_terms):
-            score += 14
-        elif service_area not in tags:
-            score -= 3
+    _ = service_area
     return score
 
 
@@ -109,8 +85,6 @@ def _excerpt(content, terms, max_chars=260):
 def _terms(text):
     normalized = _normalize(text)
     terms = {term for term in re.findall(r"[a-z0-9-]{2,}", normalized) if term not in STOPWORDS}
-    for term in tuple(terms):
-        terms.update(ALIASES.get(term, set()))
     return terms
 
 

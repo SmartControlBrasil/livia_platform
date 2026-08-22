@@ -27,6 +27,7 @@ def build_livia_ai_prompt(
             or "a empresa"
         ),
         "business_domain": str(getattr(assistant_profile, "business_domain", "") or "").strip(),
+        "short_description": str(getattr(assistant_profile, "short_description", "") or "").strip(),
     }
     tenant_name = str(getattr(tenant, "name", "") or "").strip()
     tenant_slug = str(getattr(tenant, "slug", "") or "").strip()
@@ -59,6 +60,7 @@ def build_livia_ai_prompt(
                 f"- Nome: {profile['name']}\n"
                 f"- Tom: {profile['tone']}\n"
                 f"- Objetivo principal: {profile['primary_goal']}\n"
+                f"- Descrição curta: {profile['short_description'] or 'não informada'}\n"
                 f"- Mensagem inicial: {profile['initial_message'] or 'não informada'}"
             ),
             f"lead_state atual: {lead_state or 'não informado'}",

@@ -88,11 +88,12 @@ class AuditPortalTests(TestCase):
             reverse("operations_portal:settings"),
             {
                 "tenant": self.tenant.pk,
-                "human_handoff_enabled": "on",
-                "human_handoff_channel": "whatsapp",
-                "handoff_whatsapp_number": "+55 (11) 99999-8888",
-                "handoff_whatsapp_label": "Falar com um especialista",
-                "handoff_whatsapp_message": profile.handoff_whatsapp_message,
+                "action": "save_handoff",
+                "handoff-human_handoff_enabled": "on",
+                "handoff-human_handoff_channel": "whatsapp",
+                "handoff-handoff_whatsapp_number": "+55 (11) 99999-8888",
+                "handoff-handoff_whatsapp_label": "Falar com um especialista",
+                "handoff-handoff_whatsapp_message": profile.handoff_whatsapp_message,
             },
         )
 

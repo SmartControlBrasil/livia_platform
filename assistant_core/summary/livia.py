@@ -24,36 +24,15 @@ class ConversationSummary:
 
 
 AREA_LABELS = {
-    "automation": "automação",
-    "robotics": "robótica",
-    "maintenance": "manutenção",
-    "software_web": "sistema web",
     "support": "suporte",
     "unknown": "indefinido",
 }
 
-PRODUCT_RULES = (
-    ("CLP", ("clp",)),
-    ("IHM", ("ihm",)),
-    ("inversor", ("inversor",)),
-    ("servo", ("servo",)),
-    ("SCADA", ("scada",)),
-    ("Mitsubishi", ("mitsubishi",)),
-    ("retrofit", ("retrofit",)),
-    ("painel", ("painel",)),
-    ("robô de limpeza", ("robo de limpeza", "robô de limpeza", "hygibot", "liro")),
-    ("Xyron", ("xyron",)),
-    ("esteira", ("esteira",)),
-    ("bike", ("bike",)),
-    ("escada ergométrica", ("escada ergonometrica", "escada ergométrica")),
-    ("site", ("site",)),
-    ("dashboard", ("dashboard",)),
-    ("CRM", ("crm",)),
-    ("agente de IA", ("agente de ia", " ia ")),
-    ("Lívia", ("livia", "lívia")),
-    ("Atlas", ("atlas",)),
-)
-
+GENERIC_PRODUCT_STOPWORDS = {
+    "atendimento", "cidade", "contato", "empresa", "gostaria", "mensagem", "nome",
+    "orcamento", "orçamento", "preciso", "proposta", "quero", "sobre", "telefone",
+    "com", "minha", "meu", "visita", "tecnica", "técnica",
+}
 
 def build_conversation_summary(conversation, lead_draft=None) -> ConversationSummary:
     messages = _conversation_messages(conversation)
@@ -155,11 +134,33 @@ def _resolve_service_area(service_area: str, corpus: str) -> str:
 
 
 def _extract_products_or_services(corpus: str) -> tuple[str, ...]:
-    normalized = _normalize(f" {corpus} ")
+    text = str(corpus or "")
+    normalized = _normalize(text)
     found: list[str] = []
-    for label, markers in PRODUCT_RULES:
-        if any(marker in normalized for marker in markers) and label not in found:
-            found.append(label)
+
+    for acronym in re.findall(r"\b[A-Z0-9]{2,}(?:[-/][A-Z0-9]{2,})?\b", text):
+        if acronym not in found:
+            found.append(acronym)
+
+    patterns = (
+        r"\b(?:quero|preciso|para|sobre|de|um|uma|o|a|minha|meu)\s+([a-z0-9çãõáéíóúâêô-]{3,}(?:\s+[a-z0-9çãõáéíóúâêô-]{3,})?)",
+        r"\b(?:criar|contratar|comprar|automatizar|arrumar|desenvolver|fazer)\s+([a-z0-9çãõáéíóúâêô-]{3,}(?:\s+[a-z0-9çãõáéíóúâêô-]{3,})?)",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized):
+            candidate = _clean_candidate(match.group(1))
+            if candidate and candidate not in found:
+                found.append(candidate)
+            if len(found) >= 8:
+                return tuple(found)
+
+    for word in re.findall(r"[a-z0-9çãõáéíóúâêô-]{4,}", normalized):
+        if word in GENERIC_PRODUCT_STOPWORDS:
+            continue
+        if not any(word in item.split() for item in found):
+            found.append(word)
+        if len(found) >= 8:
+            break
     return tuple(found[:8])
 
 
@@ -209,15 +210,9 @@ def _detect_urgency(corpus: str, service_area: str) -> str:
 def _recommended_next_step(intent: str, service_area: str, urgency: str, corpus: str) -> str:
     normalized = _normalize(corpus)
     if urgency == "alta":
-        return "Retornar por telefone/WhatsApp para triagem de urgência e avaliar visita técnica."
-    if service_area == "maintenance":
-        return "Confirmar equipamento, sintoma, marca/modelo e avaliar visita técnica ou diagnóstico remoto."
-    if service_area == "automation":
-        return "Alinhar escopo técnico de automação, equipamento envolvido e objetivo do orçamento."
-    if service_area == "robotics":
-        return "Confirmar ambiente de uso, aplicação esperada e próximos passos comerciais."
-    if service_area == "software_web":
-        return "Agendar conversa para detalhar escopo, integrações, prazo e expectativa de investimento."
+        return "Retornar por telefone/WhatsApp para triagem de urgência e entender o impacto imediato."
+    if service_area == "support":
+        return "Retornar contato para triagem de suporte com base no histórico."
     if "orcamento" in normalized or "orçamento" in normalized or intent == "quote_request":
         return "Retornar contato para entender escopo e preparar proposta comercial."
     return "Retornar contato para continuar a qualificação com base no histórico."
@@ -228,6 +223,13 @@ def _build_title(service_area: str, intent: str) -> str:
     if intent == "quote_request":
         return f"Pedido de orçamento - {area}"
     return f"Lead Lívia - {area}"
+
+
+def _clean_candidate(candidate: str) -> str:
+    words = [word for word in str(candidate or "").split() if word not in GENERIC_PRODUCT_STOPWORDS]
+    while words and words[0] in {"minha", "meu", "uma", "um", "para"}:
+        words.pop(0)
+    return " ".join(words[:3]).strip()
 
 
 def _is_contact_only(text: str) -> bool:

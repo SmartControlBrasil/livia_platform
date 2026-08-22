@@ -81,6 +81,8 @@ class TenantOnboardingService:
         initial_message="Olá! Sou a Lívia. Como posso te ajudar?",
         primary_goal="qualificar leads",
         tone="consultivo, claro e profissional",
+        business_domain="",
+        short_description="",
         use_ai=False,
         widget_title="",
         launcher_label="Fale com a Lívia",
@@ -118,6 +120,8 @@ class TenantOnboardingService:
             assistant_profile.initial_message = initial_message
             assistant_profile.tone = tone
             assistant_profile.primary_goal = primary_goal
+            assistant_profile.business_domain = business_domain
+            assistant_profile.short_description = short_description
             assistant_profile.use_ai = use_ai
             assistant_profile.widget_title = widget_title
             assistant_profile.launcher_label = launcher_label
@@ -149,6 +153,8 @@ class TenantOnboardingService:
                 assistant_profile.initial_message = initial_message
                 assistant_profile.tone = tone
                 assistant_profile.primary_goal = primary_goal
+                assistant_profile.business_domain = business_domain
+                assistant_profile.short_description = short_description
                 assistant_profile.use_ai = use_ai
                 assistant_profile.widget_title = widget_title
                 assistant_profile.launcher_label = launcher_label
@@ -161,7 +167,7 @@ class TenantOnboardingService:
                 assistant_profile.save()
                 created_knowledge_count = 0
                 if seed_knowledge:
-                    created_knowledge_count = self._seed_base_knowledge(tenant, name, primary_goal, allowed_origin)
+                    created_knowledge_count = self._seed_base_knowledge(tenant, name, primary_goal, allowed_origin, business_domain, short_description)
                 for origin in normalized_origins:
                     TenantAllowedOrigin.objects.update_or_create(
                         tenant=tenant,
@@ -189,11 +195,13 @@ class TenantOnboardingService:
             return False
         return KnowledgeDocument.objects.filter(tenant=tenant, title=f"Sobre {name}").exists()
 
-    def _seed_base_knowledge(self, tenant, name, primary_goal, allowed_origin):
+    def _seed_base_knowledge(self, tenant, name, primary_goal, allowed_origin, business_domain="", short_description=""):
         title = f"Sobre {name}"
         content = (
             f"{name} é um cliente atendido pela Lívia Platform. "
             f"O objetivo principal da assistente é {primary_goal}. "
+            f"Domínio de atuação configurado: {business_domain or 'não informado'}. "
+            f"Descrição curta configurada: {short_description or 'não informada'}. "
             f"Use este documento como base institucional inicial e complemente com informações reais do negócio. "
             f"Domínio informado para o widget: {allowed_origin}."
         )

@@ -375,7 +375,7 @@ class WebhookDispatchServiceTests(TestCase):
         self.assertEqual(payload["tenant_slug"], self.tenant.slug)
         self.assertEqual(payload["event_type"], TenantWebhookConfig.EventType.LEAD_QUALIFIED)
         self.assertEqual(payload["lead_id"], self.lead.id)
-        self.assertEqual(payload["service_area"], "automation")
+        self.assertEqual(payload["service_area"], "unknown")
         self.assertEqual(payload["source_page"], "https://example.com/origem")
 
     @override_settings(LIVIA_WEBHOOKS_ENABLED=True, LIVIA_WEBHOOKS_DRY_RUN=True)

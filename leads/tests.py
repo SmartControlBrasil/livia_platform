@@ -253,7 +253,7 @@ class ConversationSummaryTests(TestCase):
         summary = build_conversation_summary(conversation, lead)
         notes = format_conversation_summary_notes(summary)
 
-        self.assertEqual(summary.service_area, "automation")
+        self.assertEqual(summary.service_area, "unknown")
         self.assertIn("CLP", summary.products_or_services)
         self.assertIn("smart-control-brasil", notes)
         self.assertIn("https://example.com/origem", notes)
@@ -267,9 +267,9 @@ class ConversationSummaryTests(TestCase):
 
         summary = build_conversation_summary(conversation, lead)
 
-        self.assertEqual(summary.service_area, "robotics")
-        self.assertIn("robô de limpeza", summary.products_or_services)
-        self.assertIn("ambiente", summary.recommended_next_step.lower())
+        self.assertEqual(summary.service_area, "unknown")
+        self.assertTrue(any("limpeza" in item for item in summary.products_or_services))
+        self.assertIn("histórico", summary.recommended_next_step.lower())
 
     def test_build_conversation_summary_with_maintenance_lead(self):
         conversation = self._conversation("summary-maintenance")
@@ -278,10 +278,10 @@ class ConversationSummaryTests(TestCase):
 
         summary = build_conversation_summary(conversation, lead)
 
-        self.assertEqual(summary.service_area, "maintenance")
+        self.assertEqual(summary.service_area, "unknown")
         self.assertEqual(summary.urgency, "alta")
-        self.assertIn("esteira", summary.products_or_services)
-        self.assertIn("visita técnica", summary.recommended_next_step.lower())
+        self.assertTrue(any("esteira" in item for item in summary.products_or_services))
+        self.assertIn("impacto", summary.recommended_next_step.lower())
 
     def test_build_conversation_summary_with_software_web_lead(self):
         conversation = self._conversation("summary-software")
@@ -290,9 +290,9 @@ class ConversationSummaryTests(TestCase):
 
         summary = build_conversation_summary(conversation, lead)
 
-        self.assertEqual(summary.service_area, "software_web")
-        self.assertIn("site", summary.products_or_services)
-        self.assertIn("dashboard", summary.products_or_services)
+        self.assertEqual(summary.service_area, "unknown")
+        self.assertTrue(any("site" in item for item in summary.products_or_services))
+        self.assertTrue(any("dashboard" in item for item in summary.products_or_services))
 
     def test_summary_omits_empty_collected_fields(self):
         conversation = self._conversation("summary-partial")
@@ -372,7 +372,7 @@ class CRMDispatchServiceTests(TestCase):
         self.assertEqual(payload.city, "São Paulo")
         self.assertEqual(payload.need_summary, "Preciso de automação industrial.")
         self.assertIn("Resumo da Lívia", payload.notes)
-        self.assertIn("Interesse: automação", payload.notes)
+        self.assertIn("Interesse: indefinido", payload.notes)
         self.assertIn("smart-control-brasil", payload.notes)
         self.assertEqual(payload.source_page, "https://example.com/demo")
         self.assertEqual(payload.conversation_id, "session-crm")

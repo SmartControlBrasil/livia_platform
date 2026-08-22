@@ -171,12 +171,17 @@ def widget_js(request):
       ".livia-message.user { align-self: flex-end; background: var(--livia-primary, #2563eb); color: #fff; border-bottom-right-radius: 6px; }",
       ".livia-message.assistant { align-self: flex-start; background: #fff; color: #0f172a; border: 1px solid rgba(15, 23, 42, .08); border-bottom-left-radius: 6px; }",
       ".livia-message.system { align-self: center; background: transparent; color: #64748b; font-size: 12px; padding: 0; }",
+      ".livia-typing-bubble { display: inline-flex; align-items: center; gap: 5px; min-width: 44px; min-height: 18px; }",
+      ".livia-typing-dot { width: 6px; height: 6px; border-radius: 999px; background: #64748b; opacity: .75; animation: livia-typing-wave 1.05s ease-in-out infinite; }",
+      ".livia-typing-dot:nth-child(2) { animation-delay: .14s; }",
+      ".livia-typing-dot:nth-child(3) { animation-delay: .28s; }",
+      "@keyframes livia-typing-wave { 0%, 70%, 100% { transform: translateY(0); opacity: .55; } 35% { transform: translateY(-5px); opacity: 1; } }",
+      "@media (prefers-reduced-motion: reduce) { .livia-typing-dot { animation: none; } }",
       "#livia-branding { color: #64748b; font-size: 11px; padding: 0 12px 10px; text-align: center; background: #fff; }",
       "#livia-footer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(15, 23, 42, .08); background: #fff; }",
       "#livia-input { flex: 1; border: 1px solid rgba(15, 23, 42, .15); border-radius: 12px; padding: 10px 12px; outline: none; font: inherit; min-width: 0; }",
       "#livia-send { border: 0; border-radius: 12px; padding: 10px 14px; background: var(--livia-primary, #2563eb); color: #fff; cursor: pointer; font: 600 14px/1 Arial, sans-serif; }",
-      "#livia-send:disabled, #livia-input:disabled { opacity: .65; cursor: not-allowed; }",
-      "#livia-typing { align-self: flex-start; color: #64748b; font-size: 12px; padding: 2px 4px; }"
+      "#livia-send:disabled, #livia-input:disabled { opacity: .65; cursor: not-allowed; }"
     ].join("\n");
     document.head.appendChild(style);
   }
@@ -199,7 +204,16 @@ def widget_js(request):
   function createTypingIndicator() {
     const typing = document.createElement("div");
     typing.id = "livia-typing";
-    typing.textContent = "Digitando...";
+    typing.className = "livia-message assistant livia-typing-bubble";
+    typing.setAttribute("role", "status");
+    typing.setAttribute("aria-live", "polite");
+    typing.setAttribute("aria-label", assistantName + " está respondendo");
+    for (let index = 0; index < 3; index += 1) {
+      const dot = document.createElement("span");
+      dot.className = "livia-typing-dot";
+      dot.setAttribute("aria-hidden", "true");
+      typing.appendChild(dot);
+    }
     return typing;
   }
 

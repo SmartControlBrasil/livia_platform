@@ -52,6 +52,7 @@ from knowledge_base.rag.sync import (
     run_chunk_build_for_tenant,
     run_sync_for_inventory,
 )
+from knowledge_base.services.manual_rag import sync_manual_knowledge_documents_for_tenant
 from tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
@@ -420,8 +421,10 @@ def _execute_sync_operation(
     mode = SYNC_OPERATION_MODES[operation]
     configuration = acquire_tenant_sync_lock(tenant=tenant, mode=mode)
     if operation == TenantRagOperationRequest.Operation.BUILD_CHUNKS:
+        manual_result = sync_manual_knowledge_documents_for_tenant(tenant=tenant)
         outcome = run_chunk_build_for_tenant(configuration=configuration)
     else:
+        manual_result = None
         service = build_google_drive_readonly_service()
         inventory = GoogleDriveInventoryService(service).inventory_approved_folder(configuration.approved_folder_id)
         outcome = run_sync_for_inventory(
@@ -432,6 +435,9 @@ def _execute_sync_operation(
         )
     counters = outcome.counters.as_dict()
     counters["documents"] = outcome.file_count
+    if manual_result is not None:
+        counters["manual_synced"] = manual_result.synced
+        counters["manual_deactivated"] = manual_result.deactivated
     status = (
         TenantRagOperationRequest.Status.PARTIAL
         if outcome.status == TenantRagConfiguration.InventoryStatus.PARTIAL

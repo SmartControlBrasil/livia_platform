@@ -4,12 +4,15 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Exists, OuterRef, Q
 
 from knowledge_base.models import (
+    KnowledgeDocument,
     RagRetrievalEvent,
     TenantRagChunkEmbedding,
     TenantRagConfiguration,
     TenantRagDocumentChunk,
     TenantRagDriveFileManifest,
 )
+
+from knowledge_base.services.manual_rag import manual_document_rag_state
 
 from .knowledge_base_services import sanitize_excerpt, serialize_retrieval_event
 
@@ -23,39 +26,55 @@ def get_tenant_rag_configuration(tenant) -> TenantRagConfiguration | None:
 
 
 def get_knowledge_document_list(*, tenant, form, page_number=1):
-    queryset = (
-        TenantRagDriveFileManifest.objects.filter(tenant=tenant)
-        .annotate(
-            chunk_count=Count(
-                "chunks",
-                filter=Q(
-                    chunks__is_active=True,
-                    chunks__status=TenantRagDocumentChunk.Status.ACTIVE,
-                ),
-                distinct=True,
+    queryset = KnowledgeDocument.objects.filter(tenant=tenant).order_by("-updated_at", "title", "id")
+    if form.is_valid():
+        status = form.cleaned_data.get("status")
+        if status:
+            queryset = queryset.filter(status=status)
+        q = form.cleaned_data.get("q")
+        if q:
+            queryset = queryset.filter(
+                Q(title__icontains=q)
+                | Q(slug__icontains=q)
+                | Q(content__icontains=q)
+                | Q(tags__icontains=q)
+                | Q(source_type__icontains=q)
+                | Q(source_url__icontains=q)
             )
-        )
-        .order_by("-updated_at", "-id")
-    )
-    status = form.cleaned_data.get("status") if form.is_valid() else ""
-    if status:
-        queryset = queryset.filter(status=status)
-    active = form.cleaned_data.get("is_active") if form.is_valid() else ""
-    if active == "yes":
-        queryset = queryset.filter(is_active=True)
-    elif active == "no":
-        queryset = queryset.filter(is_active=False)
-    q = form.cleaned_data.get("q") if form.is_valid() else ""
-    if q:
-        queryset = queryset.filter(Q(name__icontains=q) | Q(relative_path__icontains=q))
 
     page = Paginator(queryset, PAGE_SIZE).get_page(page_number)
     for item in page.object_list:
-        item.title = item.name
-        item.origin_label = item.mime_type or "Google Drive"
-        item.index_status_label = item.get_status_display()
-        item.updated_at_display = item.updated_at or item.last_seen_at
+        item.tags_label = ", ".join(str(tag) for tag in (item.tags or [])) or "-"
+        item.status_label = item.get_status_display()
+        item.content_excerpt = sanitize_excerpt(item.content, max_len=140)
+        item.rag_state = manual_document_rag_state(document=item)
     return page
+
+
+def get_knowledge_document_detail(*, tenant, pk: int):
+    document = KnowledgeDocument.objects.filter(tenant=tenant, pk=pk).first()
+    if document is not None:
+        document.rag_state = manual_document_rag_state(document=document)
+    return document
+
+
+def get_knowledge_document_counters(*, tenant) -> dict:
+    documents = KnowledgeDocument.objects.filter(tenant=tenant)
+    status_counts = {row["status"]: row["total"] for row in documents.values("status").annotate(total=Count("id"))}
+    manifests = TenantRagDriveFileManifest.objects.filter(tenant=tenant)
+    chunks = TenantRagDocumentChunk.objects.filter(tenant=tenant)
+    embeddings = TenantRagChunkEmbedding.objects.filter(tenant=tenant, is_active=True, status=TenantRagChunkEmbedding.Status.ACTIVE)
+    return {
+        "documents": documents.count(),
+        "active_documents": status_counts.get(KnowledgeDocument.Status.ACTIVE, 0),
+        "draft_documents": status_counts.get(KnowledgeDocument.Status.DRAFT, 0),
+        "archived_documents": status_counts.get(KnowledgeDocument.Status.ARCHIVED, 0),
+        "rag_manifests": manifests.count(),
+        "rag_active_manifests": manifests.filter(is_active=True).count(),
+        "rag_chunks": chunks.count(),
+        "rag_active_chunks": chunks.filter(is_active=True, status=TenantRagDocumentChunk.Status.ACTIVE).count(),
+        "rag_embeddings": embeddings.count(),
+    }
 
 
 def get_knowledge_chunk_list(*, tenant, form, page_number=1):

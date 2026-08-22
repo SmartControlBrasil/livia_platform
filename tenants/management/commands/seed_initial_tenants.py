@@ -12,6 +12,8 @@ INITIAL_TENANTS = (
         "initial_message": "Olá! Sou a Lívia da Smart Control Brasil. Como posso ajudar?",
         "tone": "consultivo, claro e profissional",
         "primary_goal": "qualificar oportunidades comerciais e técnicas",
+        "business_domain": "engenharia aplicada, automação industrial, robótica, manutenção técnica, sistemas web e agentes de IA",
+        "short_description": "Atendimento consultivo para entender processos, máquinas, operações técnicas e projetos digitais antes de direcionar a solução.",
     },
     {
         "name": "Granimármores Pitondo",
@@ -21,6 +23,8 @@ INITIAL_TENANTS = (
         "initial_message": "Olá! Sou a Lívia da Granimármores Pitondo. Como posso ajudar?",
         "tone": "consultivo, cordial e objetivo",
         "primary_goal": "qualificar solicitações de atendimento e orçamento",
+        "business_domain": "marmoraria, pedras naturais, bancadas, pias, cubas, cooktops, banheiros, escadas e áreas gourmet",
+        "short_description": "Atendimento consultivo para avaliar projetos sob medida, solicitar medidas, fotos, planta e detalhes do ambiente antes do orçamento.",
     },
 )
 
@@ -47,6 +51,8 @@ class Command(BaseCommand):
                     "initial_message": item["initial_message"],
                     "tone": item["tone"],
                     "primary_goal": item["primary_goal"],
+                    "business_domain": item.get("business_domain", ""),
+                    "short_description": item.get("short_description", ""),
                     "is_active": True,
                 },
             )

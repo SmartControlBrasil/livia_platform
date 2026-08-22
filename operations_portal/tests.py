@@ -145,7 +145,7 @@ class OperationsPortalDashboardTests(PortalUserMixin, TestCase):
         self.assertContains(response, reverse("operations_portal:conversation_list"))
         self.assertContains(response, reverse("operations_portal:lead_list"))
         self.assertContains(response, reverse("operations_portal:handoff_list"))
-        self.assertContains(response, reverse("operations_portal:placeholder", kwargs={"section": "integracoes"}))
+        self.assertContains(response, reverse("operations_portal:integrations"))
         self.assertContains(response, reverse("operations_portal:settings"))
         self.assertContains(response, reverse("admin:index"))
 
@@ -182,13 +182,14 @@ class OperationsPortalSettingsTests(PortalUserMixin, TestCase):
             url,
             {
                 "tenant": self.tenant.pk,
-                "human_handoff_enabled": "on",
-                "human_handoff_channel": "whatsapp",
-                "handoff_whatsapp_number": "+55 (11) 51968-525",
-                "handoff_whatsapp_label": "Falar com um especialista",
-                "handoff_whatsapp_message": "Olá, vim pelo atendimento da Lívia.",
-                "name": "Nome indevido",
-                "use_ai": "on",
+                "action": "save_handoff",
+                "handoff-human_handoff_enabled": "on",
+                "handoff-human_handoff_channel": "whatsapp",
+                "handoff-handoff_whatsapp_number": "+55 (11) 51968-525",
+                "handoff-handoff_whatsapp_label": "Falar com um especialista",
+                "handoff-handoff_whatsapp_message": "Olá, vim pelo atendimento da Lívia.",
+                "profile-name": "Nome indevido",
+                "profile-use_ai": "on",
             },
         )
 
@@ -204,11 +205,12 @@ class OperationsPortalSettingsTests(PortalUserMixin, TestCase):
             reverse("operations_portal:settings"),
             {
                 "tenant": self.tenant.pk,
-                "human_handoff_enabled": "on",
-                "human_handoff_channel": "whatsapp",
-                "handoff_whatsapp_number": "123",
-                "handoff_whatsapp_label": "Falar com um especialista",
-                "handoff_whatsapp_message": "Olá",
+                "action": "save_handoff",
+                "handoff-human_handoff_enabled": "on",
+                "handoff-human_handoff_channel": "whatsapp",
+                "handoff-handoff_whatsapp_number": "123",
+                "handoff-handoff_whatsapp_label": "Falar com um especialista",
+                "handoff-handoff_whatsapp_message": "Olá",
             },
         )
 
