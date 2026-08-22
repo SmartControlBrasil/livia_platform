@@ -390,6 +390,36 @@ class SideEffectPolicyTests(TestCase):
         self.assertEqual(decision.status, SideEffectStatus.BLOCKED)
         self.assertEqual(decision.code, "webhooks_disabled")
 
+    @override_settings(
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+        LIVIA_ENVIRONMENT="production",
+        LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="/tmp/fake-livia-google-sa.json",
+        LIVIA_GOOGLE_DRIVE_SYNC_REAL_ENABLED=True,
+        LIVIA_GOOGLE_DRIVE_SYNC_REAL_ALLOWED_ENVS="production",
+        LIVIA_GOOGLE_DRIVE_SYNC_REAL_TENANT_ALLOWLIST="tenant",
+    )
+    def test_google_drive_sync_real_enabled_only_with_all_gates(self):
+        decision = evaluate_side_effect_policy(
+            side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
+            tenant=self.tenant,
+        )
+        self.assertEqual(decision.status, SideEffectStatus.REAL_ENABLED)
+        self.assertTrue(decision.external_call_allowed)
+
+    @override_settings(
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+        LIVIA_RAG_ENABLED=True,
+        LIVIA_RAG_EMBEDDING_PROVIDER="openai",
+        LIVIA_RAG_EMBEDDING_API_KEY="",
+    )
+    def test_openai_embedding_without_api_key_is_fail_closed(self):
+        decision = evaluate_side_effect_policy(
+            side_effect=SideEffectType.OPENAI_EMBEDDING,
+            tenant=self.tenant,
+        )
+        self.assertEqual(decision.status, SideEffectStatus.BLOCKED)
+        self.assertEqual(decision.code, "openai_embedding_missing_api_key")
+
 
 class SideEffectReadinessCommandTests(TestCase):
     def setUp(self):

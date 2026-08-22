@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from audit.models import ACTION_TENANT_RAG_CONFIGURED
 from audit.services import record_audit_event
+from integrations.side_effect_policy import SideEffectType, evaluate_side_effect_policy, log_side_effect_decision
 from knowledge_base.models import TenantRagConfiguration
 from knowledge_base.rag.google_drive_inventory import (
     GoogleDriveAuthenticationError,
@@ -69,6 +70,31 @@ class Command(BaseCommand):
             if mode == "build_chunks":
                 outcome = run_chunk_build_for_tenant(configuration=configuration)
             else:
+                decision = evaluate_side_effect_policy(
+                    side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
+                    tenant=tenant,
+                )
+                log_side_effect_decision(decision, tenant=tenant, correlation_id=run_id)
+                if not decision.external_call_allowed:
+                    safe_error = sanitize_external_error_message(decision.reason)
+                    mark_configuration_failed(configuration, error_message=safe_error)
+                    record_audit_event(
+                        action=ACTION_TENANT_RAG_CONFIGURED,
+                        tenant=tenant,
+                        object_type="knowledge_base.tenantragconfiguration",
+                        object_id=str(configuration.pk),
+                        object_repr=f"{tenant.slug} / sync",
+                        metadata={
+                            "source": "management_command.sync_tenant_rag",
+                            "phase": "failed",
+                            "run_id": run_id,
+                            "mode": mode,
+                            "error": safe_error,
+                            "error_code": decision.code,
+                            "side_effect_status": decision.status.value,
+                        },
+                    )
+                    raise CommandError(safe_error)
                 service = build_google_drive_readonly_service()
                 inventory = GoogleDriveInventoryService(service).inventory_approved_folder(configuration.approved_folder_id)
                 outcome = run_sync_for_inventory(
@@ -113,6 +139,8 @@ class Command(BaseCommand):
                 },
             )
             raise CommandError(str(exc)) from exc
+        except CommandError:
+            raise
         except Exception as exc:  # pragma: no cover - defensive fallback
             safe_error = "Unexpected inventory failure."
             mark_configuration_failed(configuration, error_message=safe_error)

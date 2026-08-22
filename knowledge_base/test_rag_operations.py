@@ -63,6 +63,45 @@ class RagOperationsServiceTests(TestCase):
         self.assertTrue(finished.dry_run)
         mock_drive.assert_not_called()
 
+    @override_settings(
+        LIVIA_RAG_OPERATIONS_DRY_RUN=False,
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+        LIVIA_ENVIRONMENT="production",
+        LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="/tmp/fake-livia-google-sa.json",
+        LIVIA_GOOGLE_DRIVE_SYNC_REAL_ENABLED=False,
+    )
+    @patch("knowledge_base.rag.operations.build_google_drive_readonly_service")
+    def test_real_inventory_operation_policy_block_never_calls_drive(self, mock_drive):
+        request_obj = create_operation_request(
+            tenant=self.tenant,
+            operation=TenantRagOperationRequest.Operation.INVENTORY,
+            requested_by=self.user,
+        )
+        finished = execute_operation_request(request_id=request_obj.pk)
+        self.assertFalse(finished.dry_run)
+        self.assertEqual(finished.status, TenantRagOperationRequest.Status.FAILED)
+        self.assertEqual(finished.error_code, "drive_sync_real_not_enabled")
+        mock_drive.assert_not_called()
+
+    @override_settings(
+        LIVIA_RAG_OPERATIONS_DRY_RUN=False,
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+        LIVIA_ENVIRONMENT="production",
+        LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="/tmp/fake-livia-google-sa.json",
+        LIVIA_GOOGLE_DRIVE_SYNC_REAL_ENABLED=False,
+    )
+    @patch("knowledge_base.rag.operations.build_google_drive_readonly_service")
+    def test_real_sync_export_operation_policy_block_never_calls_drive(self, mock_drive):
+        request_obj = create_operation_request(
+            tenant=self.tenant,
+            operation=TenantRagOperationRequest.Operation.SYNC_EXPORT,
+            requested_by=self.user,
+        )
+        finished = execute_operation_request(request_id=request_obj.pk)
+        self.assertEqual(finished.status, TenantRagOperationRequest.Status.FAILED)
+        self.assertEqual(finished.error_code, "drive_sync_real_not_enabled")
+        mock_drive.assert_not_called()
+
     @patch("knowledge_base.rag.operations.build_google_drive_readonly_service")
     def test_worker_processes_pending_queue(self, mock_drive):
         create_operation_request(

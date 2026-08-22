@@ -22,6 +22,7 @@ from audit.models import (
     ACTION_TENANT_RAG_OPERATION_STARTED,
 )
 from audit.services import record_audit_event
+from integrations.side_effect_policy import SideEffectType, evaluate_side_effect_policy, log_side_effect_decision
 from knowledge_base.models import (
     TenantRagConfiguration,
     TenantRagDocumentChunk,
@@ -145,6 +146,19 @@ def _sanitize_error(exc: Exception, *, fallback: str = "operation_failed") -> tu
         return exc.__class__.__name__.lower(), str(exc)[:500]
     message = sanitize_external_error_message(str(exc))[:500]
     return fallback, message or fallback
+
+
+def _assert_google_drive_sync_real_allowed(*, tenant: Tenant, run_id: str = "") -> None:
+    decision = evaluate_side_effect_policy(
+        side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
+        tenant=tenant,
+    )
+    log_side_effect_decision(decision, tenant=tenant, correlation_id=run_id)
+    if not decision.external_call_allowed:
+        raise RagOperationsError(
+            sanitize_external_error_message(decision.reason),
+            code=decision.code or "drive_sync_not_allowed",
+        )
 
 
 def _configuration_for_tenant(tenant: Tenant) -> TenantRagConfiguration:
@@ -413,6 +427,7 @@ def _execute_sync_operation(
     operation: str,
     dry_run: bool,
     configuration: TenantRagConfiguration | None = None,
+    run_id: str = "",
 ) -> tuple[str, dict]:
     if dry_run:
         counters = _simulate_sync_preview(tenant=tenant, operation=operation)
@@ -425,6 +440,7 @@ def _execute_sync_operation(
         outcome = run_chunk_build_for_tenant(configuration=configuration)
     else:
         manual_result = None
+        _assert_google_drive_sync_real_allowed(tenant=tenant, run_id=run_id)
         service = build_google_drive_readonly_service()
         inventory = GoogleDriveInventoryService(service).inventory_approved_folder(configuration.approved_folder_id)
         outcome = run_sync_for_inventory(
@@ -586,6 +602,7 @@ def execute_operation_request(*, request_id: int) -> TenantRagOperationRequest:
                 tenant=request.tenant,
                 operation=request.operation,
                 dry_run=request.dry_run,
+                run_id=request.run_id,
             )
             index_run = None
         elif request.operation == TenantRagOperationRequest.Operation.INDEX_EMBEDDINGS:
@@ -595,6 +612,7 @@ def execute_operation_request(*, request_id: int) -> TenantRagOperationRequest:
                 tenant=request.tenant,
                 operation=TenantRagOperationRequest.Operation.BUILD_CHUNKS,
                 dry_run=request.dry_run,
+                run_id=request.run_id,
             )
             _renew_operation_lease(request=request, stage="after_build_chunks")
             index_status, index_counters, index_run = _execute_index_operation(request=request, only_stale=False)

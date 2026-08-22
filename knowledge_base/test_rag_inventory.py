@@ -265,6 +265,14 @@ class GoogleDriveInventoryServiceTests(SimpleTestCase):
             service.inventory_approved_folder("1Wbo-Vwj01NiWlYS_F1XWoN7umP9DZ6Jm")
 
 
+@override_settings(
+    LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    LIVIA_ENVIRONMENT="production",
+    LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="/tmp/fake-livia-google-sa.json",
+    LIVIA_GOOGLE_DRIVE_SYNC_REAL_ENABLED=True,
+    LIVIA_GOOGLE_DRIVE_SYNC_REAL_ALLOWED_ENVS="production",
+    LIVIA_GOOGLE_DRIVE_SYNC_REAL_TENANT_ALLOWLIST="granimarmores-pitondo,outro-tenant",
+)
 class SyncTenantRagCommandTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Granimarmores Pitondo", slug="granimarmores-pitondo")
@@ -302,6 +310,58 @@ class SyncTenantRagCommandTests(TestCase):
         self.config.save(update_fields=["sync_enabled", "updated_at"])
         with self.assertRaises(CommandError):
             call_command("sync_tenant_rag", "--tenant", self.tenant.slug, "--inventory-only")
+
+    @override_settings(LIVIA_GOOGLE_DRIVE_SYNC_REAL_ENABLED=False)
+    def test_sync_policy_blocks_when_real_drive_disabled_before_building_service(self):
+        with patch("knowledge_base.management.commands.sync_tenant_rag.build_google_drive_readonly_service") as drive_builder:
+            with self.assertRaises(CommandError) as ctx:
+                call_command("sync_tenant_rag", "--tenant", self.tenant.slug, "--inventory-only")
+        drive_builder.assert_not_called()
+        self.assertIn("autorização explícita", str(ctx.exception))
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.last_inventory_status, TenantRagConfiguration.InventoryStatus.FAILED)
+
+    @override_settings(LIVIA_ENVIRONMENT="staging", LIVIA_GOOGLE_DRIVE_SYNC_REAL_ALLOWED_ENVS="production")
+    def test_sync_policy_blocks_when_environment_is_not_allowed_before_building_service(self):
+        with patch("knowledge_base.management.commands.sync_tenant_rag.build_google_drive_readonly_service") as drive_builder:
+            with self.assertRaises(CommandError) as ctx:
+                call_command("sync_tenant_rag", "--tenant", self.tenant.slug, "--inventory-only")
+        drive_builder.assert_not_called()
+        self.assertIn("Ambiente não autorizado", str(ctx.exception))
+
+    @override_settings(LIVIA_GOOGLE_DRIVE_SYNC_REAL_TENANT_ALLOWLIST="outro-tenant")
+    def test_sync_policy_blocks_when_tenant_is_not_allowlisted_before_building_service(self):
+        with patch("knowledge_base.management.commands.sync_tenant_rag.build_google_drive_readonly_service") as drive_builder:
+            with self.assertRaises(CommandError) as ctx:
+                call_command("sync_tenant_rag", "--tenant", self.tenant.slug, "--inventory-only")
+        drive_builder.assert_not_called()
+        self.assertIn("Tenant não autorizado", str(ctx.exception))
+
+    @override_settings(LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="")
+    def test_sync_policy_blocks_when_service_account_is_missing_before_building_service(self):
+        with patch("knowledge_base.management.commands.sync_tenant_rag.build_google_drive_readonly_service") as drive_builder:
+            with self.assertRaises(CommandError) as ctx:
+                call_command("sync_tenant_rag", "--tenant", self.tenant.slug, "--inventory-only")
+        drive_builder.assert_not_called()
+        self.assertIn("service account", str(ctx.exception))
+
+    @override_settings(
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+        LIVIA_ENVIRONMENT="production",
+        LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="/tmp/fake-livia-google-sa.json",
+        LIVIA_GOOGLE_DRIVE_SYNC_REAL_ENABLED=True,
+        LIVIA_GOOGLE_DRIVE_SYNC_REAL_ALLOWED_ENVS="production",
+        LIVIA_GOOGLE_DRIVE_SYNC_REAL_TENANT_ALLOWLIST="granimarmores-pitondo",
+    )
+    def test_sync_policy_allows_authorized_drive_path_with_mocked_api(self):
+        summary = InventorySummary(files=[], traversed_folders=1, blocked_shortcuts=0, scanned_items=0)
+        with patch("knowledge_base.management.commands.sync_tenant_rag.build_google_drive_readonly_service", return_value=object()) as drive_builder:
+            with patch(
+                "knowledge_base.management.commands.sync_tenant_rag.GoogleDriveInventoryService.inventory_approved_folder",
+                return_value=summary,
+            ):
+                call_command("sync_tenant_rag", "--tenant", self.tenant.slug, "--inventory-only")
+        drive_builder.assert_called_once()
 
     def test_sync_handles_missing_credentials(self):
         with patch(
