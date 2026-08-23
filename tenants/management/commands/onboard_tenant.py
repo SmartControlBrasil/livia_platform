@@ -2,7 +2,7 @@ from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.management.base import BaseCommand, CommandError
 
 from tenants.models import Tenant
-from tenants.services.onboarding import TenantOnboardingService
+from tenants.services.onboarding import TenantOnboardingConflict, TenantOnboardingService
 
 
 class Command(BaseCommand):
@@ -11,7 +11,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--slug", required=True)
         parser.add_argument("--name", required=True)
-        parser.add_argument("--domain", required=True)
+        parser.add_argument("--domain", default="")
         parser.add_argument("--assistant-name", default="")
         parser.add_argument("--initial-message", default="")
         parser.add_argument("--primary-goal", default="")
@@ -38,7 +38,7 @@ class Command(BaseCommand):
             action="store_true",
             help="Permite atualizar tenant existente quando usado com --apply.",
         )
-        parser.add_argument("--allowed-origin", action="append", dest="allowed_origins", default=[])
+        parser.add_argument("--allowed-origin", "--origin", action="append", dest="allowed_origins", default=[])
 
     def handle(self, *args, **options):
         if options["dry_run"] and options["apply"]:
@@ -47,6 +47,9 @@ class Command(BaseCommand):
             raise CommandError("Modo explícito obrigatório: use --dry-run para simular ou --apply para gravar.")
         if options["disable_widget"] and options["widget_enabled"]:
             raise CommandError("Use apenas uma opção de widget: --disable-widget ou --widget-enabled.")
+
+        if not options["domain"] and not options["allowed_origins"]:
+            raise CommandError("Informe --domain ou ao menos um --origin.")
 
         existing_tenant = Tenant.objects.filter(slug=options["slug"]).first()
         if existing_tenant is not None and options["apply"] and not options["allow_update_existing"]:
@@ -100,13 +103,13 @@ class Command(BaseCommand):
         elif existing_profile is not None:
             widget_enabled = existing_profile.is_widget_enabled
         else:
-            widget_enabled = True
+            widget_enabled = False
 
         try:
             result = TenantOnboardingService().onboard(
                 slug=options["slug"],
                 name=options["name"],
-                domain=options["domain"],
+                domain=options["domain"] or (options["allowed_origins"][0] if options["allowed_origins"] else ""),
                 assistant_name=assistant_name,
                 initial_message=initial_message,
                 primary_goal=primary_goal,
@@ -123,12 +126,19 @@ class Command(BaseCommand):
                 seed_knowledge=options["seed_knowledge"],
                 dry_run=options["dry_run"],
                 allowed_origins=options["allowed_origins"],
+                allow_update_existing=options["dry_run"] or options["allow_update_existing"] or existing_tenant is None,
+                source="management.onboard_tenant",
             )
+        except TenantOnboardingConflict as exc:
+            raise CommandError(str(exc)) from exc
         except (ValueError, ValidationError) as exc:
             raise CommandError(str(exc)) from exc
 
         mode = "DRY RUN - nenhuma alteração gravada" if options["dry_run"] else "Onboarding aplicado"
         self.stdout.write(self.style.SUCCESS(mode))
+        self.stdout.write(f"Status: {result.status}")
+        self.stdout.write(f"Readiness: {result.readiness_status}")
+        self.stdout.write(f"Knowledge: {result.knowledge_status}")
         self.stdout.write(f"Tenant: {result.tenant.slug} ({'criado' if result.created_tenant else 'mantido/atualizado'})")
         self.stdout.write(
             f"AssistantProfile: {result.assistant_profile.name} ({'criado' if result.created_profile else 'mantido/atualizado'})"
@@ -138,6 +148,18 @@ class Command(BaseCommand):
         if result.allowed_origins:
             self.stdout.write("Origins autorizadas:")
             for origin in result.allowed_origins:
+                self.stdout.write(f"- {origin}")
+        if result.origins_added:
+            self.stdout.write("Origins adicionadas/reativadas:")
+            for origin in result.origins_added:
+                self.stdout.write(f"- {origin}")
+        if result.origins_existing:
+            self.stdout.write("Origins já existentes:")
+            for origin in result.origins_existing:
+                self.stdout.write(f"- {origin}")
+        if result.origins_removed:
+            self.stdout.write("Origins desativadas:")
+            for origin in result.origins_removed:
                 self.stdout.write(f"- {origin}")
         self.stdout.write(f"Business domain: {result.assistant_profile.business_domain or '(não informado)'}")
         self.stdout.write(f"Short description: {result.assistant_profile.short_description or '(não informada)'}")

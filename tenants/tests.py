@@ -1,5 +1,6 @@
 from io import StringIO
 import uuid
+from unittest.mock import patch
 from datetime import timedelta
 
 from django.contrib import admin
@@ -11,12 +12,17 @@ from django.conf import settings
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
+from audit.models import AuditEvent
 from conversations.models import ChatRequest
 from knowledge_base.models import KnowledgeDocument
 from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
 from tenants.services.database_validation import build_database_validation_report
 from tenants.services.install_package import TenantInstallPackageService
 from tenants.services.onboarding import (
+    ONBOARDING_CREATED,
+    ONBOARDING_UNCHANGED,
+    ONBOARDING_UPDATED,
+    TenantOnboardingConflict,
     TenantOnboardingService,
     build_widget_snippet,
     normalize_allowed_origin,
@@ -40,6 +46,136 @@ class SeedInitialTenantsCommandTests(TestCase):
 class TenantOnboardingServiceTests(TestCase):
     def setUp(self):
         self.service = TenantOnboardingService()
+
+
+    def test_onboard_complete_result_includes_origins_readiness_install_package_and_safe_defaults(self):
+        result = self.service.onboard(
+            slug="complete-client",
+            name="Complete Client",
+            domain="https://cliente.com.br",
+            allowed_origins=["https://cliente.com.br", "https://www.cliente.com.br"],
+        )
+
+        self.assertEqual(result.status, ONBOARDING_CREATED)
+        self.assertEqual(result.allowed_origins, ["https://cliente.com.br", "https://www.cliente.com.br"])
+        self.assertEqual(result.origins_added, ["https://cliente.com.br", "https://www.cliente.com.br"])
+        self.assertEqual(result.origins_existing, [])
+        self.assertEqual(result.origins_removed, [])
+        self.assertFalse(result.assistant_profile.use_ai)
+        self.assertFalse(result.assistant_profile.is_widget_enabled)
+        self.assertEqual(result.readiness_status, "NOT_READY")
+        self.assertIsNotNone(result.install_package)
+        self.assertIn('data-tenant="complete-client"', result.install_package.snippet)
+        self.assertEqual(TenantAllowedOrigin.objects.filter(tenant=result.tenant, is_active=True).count(), 2)
+
+    def test_onboard_is_idempotent_and_reports_unchanged(self):
+        first = self.service.onboard(
+            slug="idem-client",
+            name="Idem Client",
+            domain="https://idem.example",
+            widget_enabled=True,
+        )
+        second = self.service.onboard(
+            slug="idem-client",
+            name="Idem Client",
+            domain="https://idem.example",
+            widget_enabled=True,
+        )
+
+        self.assertEqual(first.status, ONBOARDING_CREATED)
+        self.assertEqual(second.status, ONBOARDING_UNCHANGED)
+        self.assertEqual(second.origins_added, [])
+        self.assertEqual(second.origins_existing, ["https://idem.example"])
+        self.assertEqual(second.origins_removed, [])
+        self.assertEqual(Tenant.objects.filter(slug="idem-client").count(), 1)
+        self.assertEqual(AssistantProfile.objects.filter(tenant=second.tenant).count(), 1)
+        self.assertEqual(TenantAllowedOrigin.objects.filter(tenant=second.tenant, origin="https://idem.example").count(), 1)
+
+    def test_onboard_reports_updated_for_existing_allowed_update(self):
+        self.service.onboard(slug="update-client", name="Update Client", domain="https://update.example")
+        result = self.service.onboard(
+            slug="update-client",
+            name="Update Client Novo",
+            domain="https://update.example",
+        )
+
+        self.assertEqual(result.status, ONBOARDING_UPDATED)
+        self.assertEqual(result.tenant.name, "Update Client Novo")
+
+    def test_onboard_conflict_does_not_overwrite_existing_tenant(self):
+        Tenant.objects.create(slug="conflict-client", name="Original", domain="https://original.example")
+
+        with self.assertRaises(TenantOnboardingConflict):
+            self.service.onboard(
+                slug="conflict-client",
+                name="Novo",
+                domain="https://novo.example",
+                allow_update_existing=False,
+            )
+
+        tenant = Tenant.objects.get(slug="conflict-client")
+        self.assertEqual(tenant.name, "Original")
+        self.assertEqual(tenant.domain, "https://original.example")
+        self.assertTrue(AuditEvent.objects.filter(action="tenant.onboarding_failed", object_id="conflict-client").exists())
+
+    def test_onboard_rolls_back_partial_state_and_audits_failure(self):
+        with patch.object(self.service, "_sync_origins", side_effect=RuntimeError("forced onboarding failure")):
+            with self.assertRaises(RuntimeError):
+                self.service.onboard(
+                    slug="rollback-client",
+                    name="Rollback Client",
+                    domain="https://rollback.example",
+                )
+
+        self.assertFalse(Tenant.objects.filter(slug="rollback-client").exists())
+        self.assertFalse(AssistantProfile.objects.filter(tenant__slug="rollback-client").exists())
+        self.assertFalse(TenantAllowedOrigin.objects.filter(tenant__slug="rollback-client").exists())
+        self.assertTrue(AuditEvent.objects.filter(action="tenant.onboarding_failed", object_id="rollback-client").exists())
+
+    def test_onboard_audits_completion_and_origin_creation_without_secrets(self):
+        result = self.service.onboard(
+            slug="audit-client",
+            name="Audit Client",
+            domain="https://audit.example",
+            source="tests.onboarding",
+        )
+
+        self.assertTrue(AuditEvent.objects.filter(tenant=result.tenant, action="tenant.onboarding_completed").exists())
+        self.assertTrue(AuditEvent.objects.filter(tenant=result.tenant, action="tenant_origin.created").exists())
+        payload = " ".join(str(event.metadata) + str(event.after_data) for event in AuditEvent.objects.filter(tenant=result.tenant))
+        self.assertNotIn("secret", payload.lower())
+        self.assertNotIn("token", payload.lower())
+
+    def test_onboard_deactivates_missing_origins_only_when_explicit(self):
+        tenant = self.service.onboard(
+            slug="origin-sync",
+            name="Origin Sync",
+            domain="https://origin.example",
+            allowed_origins=["https://origin.example", "https://www.origin.example"],
+        ).tenant
+
+        result = self.service.onboard(
+            slug="origin-sync",
+            name="Origin Sync",
+            domain="https://origin.example",
+            allowed_origins=["https://origin.example"],
+            deactivate_missing_origins=True,
+        )
+
+        self.assertEqual(result.origins_existing, ["https://origin.example"])
+        self.assertEqual(result.origins_removed, ["https://www.origin.example"])
+        self.assertTrue(TenantAllowedOrigin.objects.get(tenant=tenant, origin="https://origin.example").is_active)
+        self.assertFalse(TenantAllowedOrigin.objects.get(tenant=tenant, origin="https://www.origin.example").is_active)
+
+    def test_onboard_rejects_wildcard_origin(self):
+        with self.assertRaises(ValidationError):
+            self.service.onboard(
+                slug="wildcard-client",
+                name="Wildcard Client",
+                domain="https://wildcard.example",
+                allowed_origins=["*"],
+            )
+        self.assertFalse(Tenant.objects.filter(slug="wildcard-client").exists())
 
     def test_onboard_creates_tenant_when_missing(self):
         result = self.service.onboard(
@@ -224,6 +360,48 @@ class TenantOnboardingServiceTests(TestCase):
 
 
 class OnboardTenantCommandTests(TestCase):
+
+    def test_onboard_tenant_command_accepts_origin_alias_without_domain(self):
+        output = StringIO()
+
+        call_command(
+            "onboard_tenant",
+            "--slug",
+            "command-origin",
+            "--name",
+            "Command Origin",
+            "--origin",
+            "https://command-origin.example",
+            "--apply",
+            stdout=output,
+        )
+
+        tenant = Tenant.objects.get(slug="command-origin")
+        self.assertEqual(tenant.domain, "https://command-origin.example")
+        self.assertTrue(TenantAllowedOrigin.objects.filter(tenant=tenant, origin="https://command-origin.example").exists())
+        self.assertIn("Status: CREATED", output.getvalue())
+        self.assertTrue(AuditEvent.objects.filter(tenant=tenant, action="tenant.onboarding_completed", metadata__source="management.onboard_tenant").exists())
+
+
+    def test_tenant_onboard_alias_command_runs_dry_run(self):
+        output = StringIO()
+
+        call_command(
+            "tenant_onboard",
+            "--slug",
+            "alias-dry-run",
+            "--name",
+            "Alias Dry Run",
+            "--origin",
+            "https://alias-dry-run.example",
+            "--dry-run",
+            stdout=output,
+        )
+
+        self.assertFalse(Tenant.objects.filter(slug="alias-dry-run").exists())
+        self.assertIn("DRY RUN", output.getvalue())
+        self.assertIn("Status: CREATED", output.getvalue())
+
     def test_onboard_tenant_command_prints_snippet(self):
         output = StringIO()
 

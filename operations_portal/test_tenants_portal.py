@@ -100,6 +100,13 @@ class OperationsPortalTenantManagementTests(TestCase):
         self.assertFalse(profile.use_ai)
         self.assertEqual(TenantAllowedOrigin.objects.filter(tenant=tenant, is_active=True).count(), 2)
         self.assertFalse(TenantWebhookConfig.objects.filter(tenant=tenant).exists())
+        self.assertTrue(
+            AuditEvent.objects.filter(
+                tenant=tenant,
+                action="tenant.onboarding_completed",
+                metadata__source="operations_portal.tenants.create",
+            ).exists()
+        )
 
     def test_edit_tenant_profile_widget_and_inactive_state(self):
         self.client.force_login(self.admin)

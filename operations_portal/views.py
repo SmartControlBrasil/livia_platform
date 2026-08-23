@@ -3,7 +3,6 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db import transaction
 from django.db.models import Count, Q
 from django.db.utils import OperationalError, ProgrammingError
 from django.shortcuts import redirect, render
@@ -153,44 +152,32 @@ def tenant_create(request):
         origins_form = TenantAllowedOriginsPortalForm(request.POST)
         if tenant_form.is_valid() and profile_form.is_valid() and origins_form.is_valid():
             cleaned_profile = profile_form.cleaned_data
-            with transaction.atomic():
-                result = TenantOnboardingService().onboard(
-                    slug=tenant_form.cleaned_data["slug"],
-                    name=tenant_form.cleaned_data["name"],
-                    domain=tenant_form.cleaned_data["domain"],
-                    assistant_name=cleaned_profile.get("name") or "Lívia",
-                    initial_message=cleaned_profile.get("initial_message") or "Olá! Sou a Lívia. Como posso te ajudar?",
-                    primary_goal=cleaned_profile.get("primary_goal") or "qualificar leads",
-                    tone=cleaned_profile.get("tone") or "consultivo, claro e profissional",
-                    business_domain=cleaned_profile.get("business_domain") or "",
-                    short_description=cleaned_profile.get("short_description") or "",
-                    use_ai=bool(cleaned_profile.get("use_ai")),
-                    widget_title=cleaned_profile.get("widget_title") or "",
-                    launcher_label=cleaned_profile.get("launcher_label") or "Fale com a Lívia",
-                    primary_color=cleaned_profile.get("primary_color") or "#2563eb",
-                    position=cleaned_profile.get("position") or "bottom_right",
-                    placeholder_text=cleaned_profile.get("placeholder_text") or "Digite sua mensagem...",
-                    widget_enabled=bool(cleaned_profile.get("is_widget_enabled")),
-                    allowed_origins=origins_form.cleaned_data.get("origins") or [],
-                )
-                tenant = result.tenant
-                tenant.is_active = bool(tenant_form.cleaned_data.get("is_active"))
-                tenant.save(update_fields=["is_active", "updated_at"])
-                profile = result.assistant_profile
-                profile.business_name = cleaned_profile.get("business_name") or ""
-                profile.show_branding = bool(cleaned_profile.get("show_branding"))
-                profile.full_clean()
-                profile.save(update_fields=["business_name", "show_branding", "updated_at"])
-                record_audit_event(
-                    action=ACTION_TENANT_CREATED,
-                    actor=request.user,
-                    tenant=tenant,
-                    obj=tenant,
-                    before_data={},
-                    after_data=audit_model_snapshot(tenant, fields=TENANT_AUDIT_FIELDS),
-                    metadata={"source": "operations_portal.tenants.create"},
-                    request=request,
-                )
+            result = TenantOnboardingService().onboard(
+                slug=tenant_form.cleaned_data["slug"],
+                name=tenant_form.cleaned_data["name"],
+                domain=tenant_form.cleaned_data["domain"],
+                assistant_name=cleaned_profile.get("name") or "Lívia",
+                initial_message=cleaned_profile.get("initial_message") or "Olá! Sou a Lívia. Como posso te ajudar?",
+                primary_goal=cleaned_profile.get("primary_goal") or "qualificar leads",
+                tone=cleaned_profile.get("tone") or "consultivo, claro e profissional",
+                business_name=cleaned_profile.get("business_name") or "",
+                business_domain=cleaned_profile.get("business_domain") or "",
+                short_description=cleaned_profile.get("short_description") or "",
+                use_ai=bool(cleaned_profile.get("use_ai")),
+                widget_title=cleaned_profile.get("widget_title") or "",
+                launcher_label=cleaned_profile.get("launcher_label") or "Fale com a Lívia",
+                primary_color=cleaned_profile.get("primary_color") or "#2563eb",
+                position=cleaned_profile.get("position") or "bottom_right",
+                placeholder_text=cleaned_profile.get("placeholder_text") or "Digite sua mensagem...",
+                widget_enabled=bool(cleaned_profile.get("is_widget_enabled")),
+                show_branding=bool(cleaned_profile.get("show_branding")),
+                tenant_active=bool(tenant_form.cleaned_data.get("is_active")),
+                allowed_origins=origins_form.cleaned_data.get("origins") or [],
+                actor=request.user,
+                request=request,
+                source="operations_portal.tenants.create",
+            )
+            tenant = result.tenant
             messages.success(request, "Tenant criado com sucesso.")
             return redirect("operations_portal:tenant_detail", pk=tenant.pk)
         messages.error(request, "Revise os campos destacados antes de criar o tenant.")

@@ -1,30 +1,43 @@
 # Onboarding de tenants da Lívia Platform
 
-A Fase 19 cria um fluxo operacional para instalar a Lívia em múltiplos sites sem depender de cadastro manual em vários pontos. A plataforma continua independente em livia.smartcontrolbrasil.com.br e este fluxo não ativa IA real, dispatch real ou notificações reais por conta própria.
+O fluxo operacional instala a Lívia em múltiplos sites sem depender de cadastro manual em vários pontos. A plataforma continua independente em livia.smartcontrolbrasil.com.br e este fluxo não ativa IA real, dispatch real, Google Drive real ou webhooks reais por conta própria.
 
-## Criar tenant pelo admin
+## Serviço central
 
-1. Acesse /admin/ com usuário staff/superuser.
-2. Crie o registro em Tenants > Tenants com name, slug, domain e is_active=True.
-3. Crie ou revise Tenants > Assistant profiles para o tenant.
-4. Cadastre conteúdo inicial em Knowledge base > Knowledge documents.
-5. Copie o snippet exibido no detalhe do tenant ou gere pelo comando abaixo.
+`TenantOnboardingService` é a fonte única para provisionamento comercial. O comando `tenant_onboard` (`onboard_tenant` continua disponível como alias histórico) e a criação pelo `/painel/` convergem para esse serviço. O serviço executa a operação dentro de `transaction.atomic()`, normaliza origins com as mesmas regras públicas do widget, produz status `CREATED`, `UPDATED` ou `UNCHANGED`, retorna readiness, install package e deltas `origins_added`, `origins_existing` e `origins_removed`, e registra auditoria de tenant, origins e conclusão do onboarding.
+
+Defaults seguros para novos tenants:
+
+- `use_ai=False`;
+- `widget_enabled=False`, exceto quando habilitado explicitamente;
+- side effects reais continuam desabilitados por configuração global;
+- origins root e www precisam ser informadas explicitamente, uma por uma.
+
+## Criar tenant pelo portal
+
+1. Acesse `/painel/tenants/` com permissão de gestão.
+2. Use `Novo tenant`.
+3. Informe slug, nome, domínio/origins e configurações públicas do widget.
+4. Salve; o portal chama o mesmo `TenantOnboardingService` usado pelo comando.
+5. Abra o detalhe do tenant para consultar readiness, snippet e package de instalação.
 
 ## Criar tenant pelo comando
 
-Use onboard_tenant para criar ou atualizar tenant, profile, knowledge inicial opcional e snippet do widget.
+Use `tenant_onboard` para criar ou atualizar tenant, profile, origins, readiness, install package e snippet do widget. O comando antigo `onboard_tenant` permanece compatível.
 
 Modo de execução explícito:
 
 - `--dry-run`: simula sem gravar.
 - `--apply`: grava alterações no banco.
 - `--allow-update-existing`: obrigatório junto com `--apply` quando o slug já existe.
+- `--origin`: pode ser repetido; alias de `--allowed-origin`. Use root e www separadamente quando ambos forem necessários.
 
 ~~~bash
-.venv/bin/python manage.py onboard_tenant \
+.venv/bin/python manage.py tenant_onboard \
   --slug granimarmores-pitondo \
   --name "Granimármores Pitondo" \
-  --domain "https://www.granimarmorespitondo.com.br" \
+  --origin "https://granimarmorespitondo.com.br" \
+  --origin "https://www.granimarmorespitondo.com.br" \
   --assistant-name "Lívia" \
   --initial-message "Olá, eu sou a Lívia da Granimármores Pitondo. Posso te ajudar com orçamentos, materiais, medidas e atendimento comercial." \
   --primary-goal "Qualificar oportunidades comerciais para marmoraria" \
@@ -36,10 +49,11 @@ Modo de execução explícito:
 Aplicação explícita:
 
 ~~~bash
-.venv/bin/python manage.py onboard_tenant \
+.venv/bin/python manage.py tenant_onboard \
   --slug granimarmores-pitondo \
   --name "Granimármores Pitondo" \
-  --domain "https://www.granimarmorespitondo.com.br" \
+  --origin "https://granimarmorespitondo.com.br" \
+  --origin "https://www.granimarmorespitondo.com.br" \
   --assistant-name "Lívia" \
   --initial-message "Olá, eu sou a Lívia da Granimarmores Pitondo. Posso te ajudar com orçamentos, materiais, medidas e atendimento comercial." \
   --primary-goal "Qualificar oportunidades comerciais para marmoraria" \
@@ -54,40 +68,44 @@ Aplicação explícita:
 ### Smart Control Brasil
 
 ~~~bash
-.venv/bin/python manage.py onboard_tenant \
+.venv/bin/python manage.py tenant_onboard \
   --slug smart-control-brasil \
   --name "Smart Control Brasil" \
   --domain "https://www.smartcontrolbrasil.com.br" \
   --assistant-name "Lívia" \
   --primary-goal "Qualificar oportunidades comerciais e técnicas" \
   --tone "consultivo, claro e profissional" \
-  --seed-knowledge
+  --seed-knowledge \
+  --dry-run
 ~~~
 
 ### Granimármores Pitondo
 
 ~~~bash
-.venv/bin/python manage.py onboard_tenant \
+.venv/bin/python manage.py tenant_onboard \
   --slug granimarmores-pitondo \
   --name "Granimármores Pitondo" \
-  --domain "https://www.granimarmorespitondo.com.br" \
+  --origin "https://granimarmorespitondo.com.br" \
+  --origin "https://www.granimarmorespitondo.com.br" \
   --assistant-name "Lívia" \
   --primary-goal "Qualificar oportunidades comerciais para marmoraria" \
   --tone "consultivo, direto e profissional" \
-  --seed-knowledge
+  --seed-knowledge \
+  --dry-run
 ~~~
 
 ### Caneca de Garagem
 
 ~~~bash
-.venv/bin/python manage.py onboard_tenant \
+.venv/bin/python manage.py tenant_onboard \
   --slug canecadegaragem \
   --name "Caneca de Garagem" \
   --domain "https://www.canecadegaragem.com.br" \
   --assistant-name "Lívia" \
   --primary-goal "Qualificar contatos e pedidos comerciais" \
   --tone "cordial, direto e profissional" \
-  --seed-knowledge
+  --seed-knowledge \
+  --dry-run
 ~~~
 
 ## Configurar origins permitidas
@@ -96,11 +114,11 @@ O comando normaliza `--domain` e pode criar origins explícitas com `--allowed-o
 
 Exemplo:
 
-~~~env
-.venv/bin/python manage.py onboard_tenant --slug exemplo --name "Exemplo" --domain https://www.exemplo.com.br --allowed-origin https://www.exemplo.com.br
+~~~bash
+.venv/bin/python manage.py tenant_onboard --slug exemplo --name "Exemplo" --origin https://exemplo.com.br --origin https://www.exemplo.com.br --dry-run
 ~~~
 
-Domínios sem esquema recebem https:// por padrão. Domínios http:// ou localhost geram alertas para evitar uso acidental em produção.
+O `--domain` continua aceito e é normalizado para uma origin base. Domínios sem esquema recebem https:// por padrão. Origins com wildcard, path, query string, fragmento ou scheme inválido são rejeitadas. Não há equivalência automática entre root e www.
 
 ## Copiar snippet para o site
 
@@ -143,3 +161,10 @@ Use --seed-knowledge no onboarding para criar um documento base:
 - status ativo.
 
 O seed é idempotente: repetir o comando atualiza o documento base sem duplicar. Depois do onboarding, complete a base com informações reais do cliente antes de depender do retrieval em atendimento real.
+
+
+## Resultado operacional
+
+O comando imprime `Status`, `Readiness`, `Knowledge`, origins normalizadas, deltas de origins adicionadas/existentes/desativadas, alertas e snippet. `--dry-run` valida e calcula o resultado sem persistir `Tenant`, `AssistantProfile`, origins, knowledge ou audit events de conclusão.
+
+Readiness e install package são gerados pelos serviços existentes `inspect_tenant_site_readiness` e `TenantInstallPackageService`; não há formato paralelo de snippet.
