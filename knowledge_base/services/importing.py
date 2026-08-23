@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
 from django.utils.text import slugify
 
 from knowledge_base.models import KnowledgeDocument
@@ -33,6 +32,7 @@ class TenantKnowledgeImportResult:
     planned: list[TenantKnowledgeImportItem] = field(default_factory=list)
     created: int = 0
     updated: int = 0
+    unchanged: int = 0
     skipped: int = 0
     dry_run: bool = False
 
@@ -128,27 +128,51 @@ def import_tenant_knowledge_items(*, tenant, items: list[TenantKnowledgeImportIt
         raise TenantKnowledgeImportError("No supported .txt/.md/.markdown files found.")
     if dry_run:
         return TenantKnowledgeImportResult(tenant=tenant, planned=items, dry_run=True)
-    created = updated = skipped = 0
-    with transaction.atomic():
-        for item in items:
-            existing = KnowledgeDocument.objects.filter(tenant=tenant, slug=item.slug).first()
-            if existing is not None and not replace:
+
+    from knowledge_base.services.lifecycle import IMPORT_CREATED, IMPORT_UNCHANGED, IMPORT_UPDATED, KnowledgeLifecycleService
+
+    created = updated = unchanged = skipped = 0
+    service = KnowledgeLifecycleService()
+    for item in items:
+        existing = KnowledgeDocument.objects.filter(tenant=tenant, slug=item.slug).first()
+        if existing is not None and not replace:
+            result = service.upsert_document(
+                tenant=tenant,
+                title=item.title,
+                slug=item.slug,
+                content=item.content,
+                source_type=item.source_type,
+                source_url=item.source_url,
+                tags=item.tags,
+                status=item.status,
+                replace=False,
+                source="knowledge_import",
+            )
+            if result.status == IMPORT_UNCHANGED:
+                unchanged += 1
+            else:
                 skipped += 1
-                continue
-            payload = item.__dict__.copy()
-            if existing is not None:
-                for field_name, value in payload.items():
-                    setattr(existing, field_name, value)
-                existing.full_clean()
-                existing.save(update_fields=["title", "slug", "content", "source_type", "source_url", "tags", "status", "updated_at"])
-                updated += 1
-                continue
-            document = KnowledgeDocument(tenant=tenant, **payload)
-            document.full_clean()
-            document.save()
+            continue
+        result = service.upsert_document(
+            tenant=tenant,
+            title=item.title,
+            slug=item.slug,
+            content=item.content,
+            source_type=item.source_type,
+            source_url=item.source_url,
+            tags=item.tags,
+            status=item.status,
+            replace=True,
+            source="knowledge_import",
+        )
+        if result.status == IMPORT_CREATED:
             created += 1
+        elif result.status == IMPORT_UPDATED:
+            updated += 1
+        else:
+            unchanged += 1
     return TenantKnowledgeImportResult(
-        tenant=tenant, planned=items, created=created, updated=updated, skipped=skipped, dry_run=False
+        tenant=tenant, planned=items, created=created, updated=updated, unchanged=unchanged, skipped=skipped, dry_run=False
     )
 
 

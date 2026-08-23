@@ -38,7 +38,7 @@
       {% if page_obj.object_list %}
       <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
-          <thead><tr><th>Tenant</th><th>Título</th><th>Status</th><th>RAG</th><th>Source type</th><th>Tags</th><th>Atualizado em</th><th class="text-end">Ações</th></tr></thead>
+          <thead><tr><th>Tenant</th><th>Título</th><th>Status</th><th>Lifecycle</th><th>Fingerprint</th><th>Source type</th><th>Tags</th><th>Atualizado em</th><th class="text-end">Ações</th></tr></thead>
           <tbody>
             {% for item in page_obj.object_list %}
             <tr>
@@ -46,9 +46,10 @@
               <td><strong>{{ item.title }}</strong><br><small class="text-muted">{{ item.content_excerpt }}</small></td>
               <td><span class="badge bg-{% if item.status == 'active' %}success{% elif item.status == 'draft' %}warning{% else %}secondary{% endif %}-subtle text-{% if item.status == 'active' %}success{% elif item.status == 'draft' %}warning{% else %}secondary{% endif %}">{{ item.status_label }}</span></td>
               <td>
-                <span class="badge bg-{% if item.rag_state.state == 'READY' %}success{% elif item.rag_state.state == 'FAILED' %}danger{% elif item.rag_state.state == 'BLOCKED' %}secondary{% else %}warning{% endif %}-subtle text-{% if item.rag_state.state == 'READY' %}success{% elif item.rag_state.state == 'FAILED' %}danger{% elif item.rag_state.state == 'BLOCKED' %}secondary{% else %}warning{% endif %}">{{ item.rag_state.state }}</span>
-                <br><small class="text-muted">{{ item.rag_state.chunks }} chunks · {{ item.rag_state.embeddings }} emb.</small>
+                <span class="badge bg-{% if item.lifecycle_state.lifecycle_status == 'indexed' %}success{% elif item.lifecycle_state.lifecycle_status == 'failed' %}danger{% elif item.lifecycle_state.lifecycle_status == 'disabled' %}secondary{% elif item.lifecycle_state.lifecycle_status == 'indexing' %}info{% else %}warning{% endif %}-subtle text-{% if item.lifecycle_state.lifecycle_status == 'indexed' %}success{% elif item.lifecycle_state.lifecycle_status == 'failed' %}danger{% elif item.lifecycle_state.lifecycle_status == 'disabled' %}secondary{% elif item.lifecycle_state.lifecycle_status == 'indexing' %}info{% else %}warning{% endif %}">{{ item.lifecycle_state.lifecycle_status|upper }}</span>
+                <br><small class="text-muted">{{ item.lifecycle_state.active_chunks }} chunks · {{ item.lifecycle_state.active_embeddings }} emb.</small>
               </td>
+              <td><code>{{ item.fingerprint_short }}</code></td>
               <td>{{ item.source_type }}</td>
               <td>{{ item.tags_label }}</td>
               <td>{{ item.updated_at|date:"d/m/Y H:i" }}</td>

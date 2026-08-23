@@ -201,6 +201,9 @@ def build_dashboard_metrics(*, tenant, configuration: TenantRagConfiguration | N
     coverage = embedding_coverage_breakdown(tenant=tenant)
     limits = compute_effective_rag_limits(configuration=configuration)
     readiness = compute_knowledge_base_readiness(tenant=tenant, configuration=configuration, coverage=coverage)
+    from knowledge_base.services.lifecycle import KnowledgeLifecycleService
+
+    lifecycle_readiness = KnowledgeLifecycleService().readiness(tenant=tenant)
 
     profile = None
     profile_error = ""
@@ -217,6 +220,7 @@ def build_dashboard_metrics(*, tenant, configuration: TenantRagConfiguration | N
 
     return {
         "readiness": readiness,
+        "lifecycle_readiness": lifecycle_readiness,
         "limits": limits,
         "coverage": coverage,
         "documents_total": documents_total,

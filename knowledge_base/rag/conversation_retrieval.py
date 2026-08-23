@@ -205,6 +205,18 @@ def _tenant_has_usable_index(*, tenant: Tenant, config: EmbeddingConfig) -> bool
         dimension=config.dimension,
         provider=config.provider,
         model=config.model,
+        chunk__tenant=tenant,
+        chunk__is_active=True,
+        chunk__status=TenantRagDocumentChunk.Status.ACTIVE,
+        manifest__tenant=tenant,
+        manifest__is_active=True,
+    ).exclude(
+        manifest__status__in=[
+            "failed",
+            "removed",
+            "unavailable",
+            "skipped_unsupported",
+        ]
     ).exists()
 
 
@@ -245,8 +257,12 @@ def _dedupe_and_limit(
         chunk.id: chunk
         for chunk in TenantRagDocumentChunk.objects.filter(
             id__in=chunk_ids,
+            tenant_id__in={embedding.tenant_id for embedding, _score in scored},
             is_active=True,
             status=TenantRagDocumentChunk.Status.ACTIVE,
+            manifest__is_active=True,
+        ).exclude(
+            manifest__status__in=["failed", "removed", "unavailable", "skipped_unsupported"]
         ).select_related("manifest")
     }
 

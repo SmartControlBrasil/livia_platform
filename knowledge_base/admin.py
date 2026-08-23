@@ -46,14 +46,14 @@ class KnowledgeIsActiveFilter(admin.SimpleListFilter):
 
 @admin.register(KnowledgeDocument)
 class KnowledgeDocumentAdmin(admin.ModelAdmin):
-    list_display = ["tenant", "title", "source_type", "is_active", "tags", "updated_at"]
-    list_filter = ["tenant", KnowledgeIsActiveFilter, "source_type"]
+    list_display = ["tenant", "title", "source_type", "is_active", "lifecycle_status", "content_sha256", "updated_at"]
+    list_filter = ["tenant", KnowledgeIsActiveFilter, "source_type", "lifecycle_status"]
     search_fields = ["title", "slug", "content", "tags", "source_url", "tenant__name", "tenant__slug"]
     prepopulated_fields = {"slug": ["title"]}
-    readonly_fields = ["created_at", "updated_at"]
+    readonly_fields = ["content_sha256", "indexed_content_sha256", "lifecycle_status", "last_indexed_at", "last_index_error", "created_at", "updated_at"]
     actions = [activate_knowledge_documents, deactivate_knowledge_documents]
 
-    audit_fields = ["tenant", "title", "slug", "source_type", "source_url", "tags", "status"]
+    audit_fields = ["tenant", "title", "slug", "source_type", "source_url", "tags", "status", "content_sha256", "indexed_content_sha256", "lifecycle_status"]
 
     def save_model(self, request, obj, form, change):
         before_data = {}

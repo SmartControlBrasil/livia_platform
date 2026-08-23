@@ -526,11 +526,14 @@ class TenantOnboardingService:
     def _knowledge_status(self, tenant):
         if tenant is None or tenant.pk is None:
             return KNOWLEDGE_EMPTY
-        if TenantRagChunkEmbedding.objects.filter(chunk__tenant=tenant, is_active=True).exists():
+        from knowledge_base.services.lifecycle import KnowledgeLifecycleService
+
+        readiness = KnowledgeLifecycleService().readiness(tenant=tenant)
+        if readiness.status == "READY":
             return KNOWLEDGE_INDEXED
-        if TenantRagDocumentChunk.objects.filter(tenant=tenant, is_active=True).exists() or KnowledgeDocument.objects.filter(tenant=tenant, status=KnowledgeDocument.Status.ACTIVE).exists():
-            return KNOWLEDGE_AVAILABLE
-        return KNOWLEDGE_EMPTY
+        if readiness.status == "EMPTY":
+            return KNOWLEDGE_EMPTY
+        return readiness.status
 
     def _knowledge_exists(self, tenant, name):
         if tenant is None or tenant.pk is None:
@@ -538,7 +541,6 @@ class TenantOnboardingService:
         return KnowledgeDocument.objects.filter(tenant=tenant, title=f"Sobre {name}").exists()
 
     def _seed_base_knowledge(self, tenant, name, primary_goal, allowed_origin, business_domain="", short_description=""):
-        title = f"Sobre {name}"
         content = (
             f"{name} é um cliente atendido pela Lívia Platform. "
             f"O objetivo principal da assistente é {primary_goal}. "
@@ -547,21 +549,17 @@ class TenantOnboardingService:
             f"Use este documento como base institucional inicial e complemente com informações reais do negócio. "
             f"Domínio informado para o widget: {allowed_origin}."
         )
-        document_slug = f"sobre-{tenant.slug}"
-        existing = KnowledgeDocument.objects.filter(tenant=tenant).filter(Q(title=title) | Q(slug=document_slug)).first()
-        defaults = {
-            "title": title,
-            "content": content,
-            "source_type": "manual",
-            "source_url": "",
-            "tags": ["institucional", "onboarding"],
-            "status": KnowledgeDocument.Status.ACTIVE,
-        }
-        if existing is not None:
-            for field, value in defaults.items():
-                setattr(existing, field, value)
-            existing.save(update_fields=[*defaults.keys(), "updated_at"])
-            return 0
+        from knowledge_base.services.lifecycle import IMPORT_CREATED, KnowledgeLifecycleService
 
-        KnowledgeDocument.objects.create(tenant=tenant, slug=document_slug, **defaults)
-        return 1
+        result = KnowledgeLifecycleService().upsert_document(
+            tenant=tenant,
+            title=f"Sobre {name}",
+            slug=f"sobre-{tenant.slug}",
+            content=content,
+            source_type="manual",
+            source_url="",
+            tags=["institucional", "onboarding"],
+            status=KnowledgeDocument.Status.ACTIVE,
+            source="tenant_onboarding.seed_knowledge",
+        )
+        return 1 if result.status == IMPORT_CREATED else 0

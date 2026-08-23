@@ -37,6 +37,13 @@
         <p class="mb-0"><strong>Resultado:</strong> {{ metrics.last_index_status|default:"-" }}</p>
       </div></div>
     </div>
+    <div class="col-md-12 col-xl-4">
+      <div class="card h-100"><div class="card-body">
+        <p class="text-muted mb-1">Lifecycle</p>
+        <h4 class="mb-1">{{ metrics.lifecycle_readiness.status }}</h4>
+        <small class="text-muted">{{ metrics.lifecycle_readiness.documents_indexed }} indexados · {{ metrics.lifecycle_readiness.documents_stale }} stale · {{ metrics.lifecycle_readiness.documents_failed }} failed · {{ metrics.lifecycle_readiness.documents_disabled }} disabled</small>
+      </div></div>
+    </div>
   </div>
 
   <div class="row g-3 mb-3">

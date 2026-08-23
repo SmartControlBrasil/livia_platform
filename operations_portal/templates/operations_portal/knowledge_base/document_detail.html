@@ -30,10 +30,14 @@
       <p class="mb-0"><strong>Source URL:</strong> {% if document.source_url %}<a href="{{ document.source_url }}" target="_blank" rel="noopener">{{ document.source_url }}</a>{% else %}-{% endif %}</p>
     </div></div></div>
     <div class="col-lg-4"><div class="card h-100"><div class="card-header"><h5 class="card-title mb-0">Status RAG/indexação</h5></div><div class="card-body">
-      <p class="mb-1"><strong>Estado:</strong> <span class="badge bg-{% if document.rag_state.state == 'READY' %}success{% elif document.rag_state.state == 'FAILED' %}danger{% elif document.rag_state.state == 'BLOCKED' %}secondary{% else %}warning{% endif %}-subtle text-{% if document.rag_state.state == 'READY' %}success{% elif document.rag_state.state == 'FAILED' %}danger{% elif document.rag_state.state == 'BLOCKED' %}secondary{% else %}warning{% endif %}">{{ document.rag_state.state }}</span></p>
-      <p class="mb-1"><strong>Manifest:</strong> {% if document.rag_state.manifest %}{{ document.rag_state.manifest.get_status_display }}{% else %}Aguardando{% endif %}</p>
-      <p class="mb-1"><strong>Chunks deste documento:</strong> {{ document.rag_state.chunks }}</p>
-      <p class="mb-0"><strong>Embeddings deste documento:</strong> {{ document.rag_state.embeddings }}</p>
+      <p class="mb-1"><strong>Estado:</strong> <span class="badge bg-{% if document.lifecycle_state.lifecycle_status == 'indexed' %}success{% elif document.lifecycle_state.lifecycle_status == 'failed' %}danger{% elif document.lifecycle_state.lifecycle_status == 'disabled' %}secondary{% elif document.lifecycle_state.lifecycle_status == 'indexing' %}info{% else %}warning{% endif %}-subtle text-{% if document.lifecycle_state.lifecycle_status == 'indexed' %}success{% elif document.lifecycle_state.lifecycle_status == 'failed' %}danger{% elif document.lifecycle_state.lifecycle_status == 'disabled' %}secondary{% elif document.lifecycle_state.lifecycle_status == 'indexing' %}info{% else %}warning{% endif %}">{{ document.lifecycle_state.lifecycle_status|upper }}</span></p>
+      <p class="mb-1"><strong>Fingerprint:</strong> <code>{{ document.fingerprint_short }}</code></p>
+      <p class="mb-1"><strong>Index fingerprint:</strong> <code>{{ document.indexed_fingerprint_short }}</code></p>
+      <p class="mb-1"><strong>Última indexação:</strong> {% if document.lifecycle_state.last_indexed_at %}{{ document.lifecycle_state.last_indexed_at|date:"d/m/Y H:i" }}{% else %}-{% endif %}</p>
+      <p class="mb-1"><strong>Erro operacional:</strong> {{ document.lifecycle_state.last_error|default:"-" }}</p>
+      <p class="mb-1"><strong>Manifest:</strong> {{ document.lifecycle_state.manifest_status|default:"Aguardando" }}</p>
+      <p class="mb-1"><strong>Chunks deste documento:</strong> {{ document.lifecycle_state.active_chunks }}</p>
+      <p class="mb-0"><strong>Embeddings deste documento:</strong> {{ document.lifecycle_state.active_embeddings }}</p>
       <a class="btn btn-sm btn-light border mt-3" href="{% url 'operations_portal:knowledge_base_operations' %}?tenant={{ selected_tenant.pk }}">Processar base</a>
     </div></div></div>
   </div>

@@ -71,6 +71,13 @@ class InMemoryVectorSearchBackend(RagVectorSearchBackend):
                 dimension=config.dimension,
                 provider=config.provider,
                 model=config.model,
+                chunk__tenant=tenant,
+                chunk__is_active=True,
+                chunk__status="active",
+                manifest__tenant=tenant,
+                manifest__is_active=True,
+            ).exclude(
+                manifest__status__in=["failed", "removed", "unavailable", "skipped_unsupported"]
             )
             .select_related("chunk", "manifest")
             .order_by("id")
@@ -131,6 +138,13 @@ class PostgresPgvectorSearchBackend(RagVectorSearchBackend):
                 dimension=config.dimension,
                 provider=config.provider,
                 model=config.model,
+                chunk__tenant=tenant,
+                chunk__is_active=True,
+                chunk__status="active",
+                manifest__tenant=tenant,
+                manifest__is_active=True,
+            ).exclude(
+                manifest__status__in=["failed", "removed", "unavailable", "skipped_unsupported"]
             )
             .annotate(distance=CosineDistance("vector", query_vector))
             .select_related("chunk", "manifest")

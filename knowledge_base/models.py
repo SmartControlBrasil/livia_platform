@@ -521,6 +521,15 @@ class KnowledgeDocument(models.Model):
         DRAFT = "draft", "Draft"
         ARCHIVED = "archived", "Archived"
 
+    class LifecycleStatus(models.TextChoices):
+        NEW = "new", "New"
+        IMPORTED = "imported", "Imported"
+        INDEXING = "indexing", "Indexing"
+        INDEXED = "indexed", "Indexed"
+        STALE = "stale", "Stale"
+        FAILED = "failed", "Failed"
+        DISABLED = "disabled", "Disabled"
+
     tenant = models.ForeignKey(
         Tenant,
         on_delete=models.CASCADE,
@@ -538,6 +547,15 @@ class KnowledgeDocument(models.Model):
         choices=Status.choices,
         default=Status.ACTIVE,
     )
+    content_sha256 = models.CharField(max_length=64, blank=True)
+    indexed_content_sha256 = models.CharField(max_length=64, blank=True)
+    lifecycle_status = models.CharField(
+        max_length=20,
+        choices=LifecycleStatus.choices,
+        default=LifecycleStatus.NEW,
+    )
+    last_indexed_at = models.DateTimeField(null=True, blank=True)
+    last_index_error = models.CharField(max_length=500, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

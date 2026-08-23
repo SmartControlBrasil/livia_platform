@@ -85,7 +85,7 @@ from knowledge_base.services.importing import (
     build_document_item_from_upload,
     import_tenant_knowledge_items,
 )
-from knowledge_base.services.manual_rag import sync_manual_knowledge_document_to_rag, sync_manual_knowledge_documents_for_tenant
+from knowledge_base.services.lifecycle import KnowledgeLifecycleService
 
 KNOWLEDGE_DOCUMENT_AUDIT_FIELDS = ["tenant", "title", "slug", "source_type", "source_url", "tags", "status"]
 
@@ -174,18 +174,20 @@ def knowledge_base_document_create(request):
     if request.method == "POST":
         form = KnowledgeDocumentPortalForm(request.POST, fixed_tenant=access.tenant)
         if form.is_valid():
-            document = form.save()
-            record_audit_event(
-                action=ACTION_KNOWLEDGE_DOCUMENT_CREATED,
-                actor=request.user,
+            result = KnowledgeLifecycleService().upsert_document(
                 tenant=access.tenant,
-                obj=document,
-                before_data={},
-                after_data=audit_model_snapshot(document, fields=KNOWLEDGE_DOCUMENT_AUDIT_FIELDS),
-                metadata={"source": "operations_portal.knowledge_base_document_create"},
+                title=form.cleaned_data["title"],
+                slug=form.cleaned_data["slug"],
+                content=form.cleaned_data["content"],
+                source_type=form.cleaned_data["source_type"],
+                source_url=form.cleaned_data.get("source_url") or "",
+                tags=form.cleaned_data.get("tags_text") or [],
+                status=form.cleaned_data["status"],
+                actor=request.user,
                 request=request,
+                source="operations_portal.knowledge_base_document_create",
             )
-            sync_manual_knowledge_document_to_rag(document=document)
+            document = result.document
             messages.success(request, "Documento criado com sucesso. Solicite processamento para atualizar chunks e embeddings.")
             return redirect(f"{reverse('operations_portal:knowledge_base_document_detail', kwargs={'pk': document.pk})}?tenant={access.tenant.pk}")
         messages.error(request, "Revise os campos destacados antes de criar o documento.")
@@ -243,21 +245,20 @@ def knowledge_base_document_edit(request, pk: int):
             raise PermissionDenied
         form = KnowledgeDocumentPortalForm(request.POST, instance=document, fixed_tenant=access.tenant)
         if form.is_valid():
-            before_data = audit_model_snapshot(KnowledgeDocument.objects.get(pk=document.pk), fields=KNOWLEDGE_DOCUMENT_AUDIT_FIELDS)
-            saved = form.save()
-            changes = changed_fields(before_data, audit_model_snapshot(saved, fields=KNOWLEDGE_DOCUMENT_AUDIT_FIELDS))
-            if changes["before"] or changes["after"]:
-                record_audit_event(
-                    action=ACTION_KNOWLEDGE_DOCUMENT_UPDATED,
-                    actor=request.user,
-                    tenant=access.tenant,
-                    obj=saved,
-                    before_data=changes["before"],
-                    after_data=changes["after"],
-                    metadata={"source": "operations_portal.knowledge_base_document_edit"},
-                    request=request,
-                )
-            sync_manual_knowledge_document_to_rag(document=saved)
+            result = KnowledgeLifecycleService().upsert_document(
+                tenant=access.tenant,
+                title=form.cleaned_data["title"],
+                slug=form.cleaned_data["slug"],
+                content=form.cleaned_data["content"],
+                source_type=form.cleaned_data["source_type"],
+                source_url=form.cleaned_data.get("source_url") or "",
+                tags=form.cleaned_data.get("tags_text") or [],
+                status=form.cleaned_data["status"],
+                actor=request.user,
+                request=request,
+                source="operations_portal.knowledge_base_document_edit",
+            )
+            saved = result.document
             messages.success(request, "Documento atualizado. Solicite processamento para refletir a versão atual no índice RAG.")
             return redirect(f"{reverse('operations_portal:knowledge_base_document_detail', kwargs={'pk': saved.pk})}?tenant={access.tenant.pk}")
         messages.error(request, "Revise os campos destacados antes de salvar.")
@@ -296,7 +297,6 @@ def knowledge_base_document_import(request):
             except TenantKnowledgeImportError as exc:
                 form.add_error("file", str(exc))
             else:
-                sync_manual_knowledge_documents_for_tenant(tenant=access.tenant)
                 messages.success(
                     request,
                     f"Importação concluída. Criados: {result.created}. Atualizados: {result.updated}. Ignorados: {result.skipped}. Solicite processamento para atualizar o índice RAG.",

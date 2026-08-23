@@ -52,6 +52,6 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS("Tenant knowledge import completed."))
         self.stdout.write(f"tenant={tenant.slug}")
-        self.stdout.write(f"created={result.created} updated={result.updated} skipped={result.skipped}")
+        self.stdout.write(f"created={result.created} updated={result.updated} unchanged={result.unchanged} skipped={result.skipped}")
         self.stdout.write("formats=" + ",".join(sorted(SUPPORTED_EXTENSIONS)))
-        self.stdout.write("Next: execute the existing tenant RAG chunking/indexing commands when semantic retrieval is required.")
+        self.stdout.write("Next: run reindex_tenant_knowledge when semantic retrieval is required.")

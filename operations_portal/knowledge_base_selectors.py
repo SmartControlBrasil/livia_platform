@@ -12,7 +12,7 @@ from knowledge_base.models import (
     TenantRagDriveFileManifest,
 )
 
-from knowledge_base.services.manual_rag import manual_document_rag_state
+from knowledge_base.services.lifecycle import KnowledgeLifecycleService
 
 from .knowledge_base_services import sanitize_excerpt, serialize_retrieval_event
 
@@ -43,18 +43,37 @@ def get_knowledge_document_list(*, tenant, form, page_number=1):
             )
 
     page = Paginator(queryset, PAGE_SIZE).get_page(page_number)
+    lifecycle = KnowledgeLifecycleService()
     for item in page.object_list:
         item.tags_label = ", ".join(str(tag) for tag in (item.tags or [])) or "-"
         item.status_label = item.get_status_display()
         item.content_excerpt = sanitize_excerpt(item.content, max_len=140)
-        item.rag_state = manual_document_rag_state(document=item)
+        item.lifecycle_state = lifecycle.document_state(document=item)
+        item.rag_state = {
+            "state": item.lifecycle_state.lifecycle_status.upper(),
+            "manifest": None,
+            "chunks": item.lifecycle_state.active_chunks,
+            "embeddings": item.lifecycle_state.active_embeddings,
+            "stale": item.lifecycle_state.lifecycle_status in {"new", "imported", "stale"},
+        }
+        item.fingerprint_short = (item.lifecycle_state.content_sha256 or "-")[:12]
     return page
 
 
 def get_knowledge_document_detail(*, tenant, pk: int):
     document = KnowledgeDocument.objects.filter(tenant=tenant, pk=pk).first()
     if document is not None:
-        document.rag_state = manual_document_rag_state(document=document)
+        lifecycle = KnowledgeLifecycleService()
+        document.lifecycle_state = lifecycle.document_state(document=document)
+        document.rag_state = {
+            "state": document.lifecycle_state.lifecycle_status.upper(),
+            "manifest": None,
+            "chunks": document.lifecycle_state.active_chunks,
+            "embeddings": document.lifecycle_state.active_embeddings,
+            "stale": document.lifecycle_state.lifecycle_status in {"new", "imported", "stale"},
+        }
+        document.fingerprint_short = (document.lifecycle_state.content_sha256 or "-")[:12]
+        document.indexed_fingerprint_short = (document.lifecycle_state.indexed_content_sha256 or "-")[:12]
     return document
 
 

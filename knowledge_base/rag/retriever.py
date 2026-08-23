@@ -28,7 +28,9 @@ def retrieve_relevant_knowledge(tenant, query, service_area=None, limit=3):
     if not terms:
         return []
 
-    documents = KnowledgeDocument.objects.filter(tenant=tenant, status=KnowledgeDocument.Status.ACTIVE)
+    from knowledge_base.services.lifecycle import KnowledgeLifecycleService
+
+    documents = KnowledgeLifecycleService().usable_keyword_documents(tenant=tenant)
     snippets = []
     for document in documents:
         score = _score_document(document, terms, service_area)
