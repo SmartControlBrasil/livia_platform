@@ -100,8 +100,10 @@ class PublicEndpointOriginTests(TestCase):
             HTTP_X_LIVIA_TENANT="tenant",
         )
         self.assertEqual(response.status_code, 200)
+        self.assertIn("reply", response.json())
         self.assertNotEqual(response["Access-Control-Allow-Origin"], "*")
         self.assertEqual(response["Access-Control-Allow-Origin"], "https://www.example.com")
+        self.assertIn("X-Livia-Request-ID", response["Access-Control-Allow-Headers"])
 
         response = self.client.post(
             "/api/chat/",
@@ -147,12 +149,23 @@ class PublicEndpointOriginTests(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response["Access-Control-Allow-Origin"], "https://www.example.com")
         self.assertIn("X-Livia-Tenant", response["Access-Control-Allow-Headers"])
+        self.assertIn("X-Livia-Request-ID", response["Access-Control-Allow-Headers"])
+        self.assertNotEqual(response["Access-Control-Allow-Origin"], "*")
         self.assertIn("Origin", response["Vary"])
 
+        query_response = self.client.options(
+            "/api/chat/?tenant=tenant",
+            HTTP_ORIGIN="https://www.example.com",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type,x-livia-request-id,x-livia-tenant",
+        )
+        self.assertEqual(query_response.status_code, 204)
+        self.assertEqual(query_response["Access-Control-Allow-Origin"], "https://www.example.com")
+        self.assertIn("X-Livia-Request-ID", query_response["Access-Control-Allow-Headers"])
+
         response = self.client.options(
-            "/api/chat/",
+            "/api/chat/?tenant=tenant",
             HTTP_ORIGIN="https://evil-example.com",
-            HTTP_X_LIVIA_TENANT="tenant",
             HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
         )
         self.assertEqual(response.status_code, 403)

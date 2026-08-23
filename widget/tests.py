@@ -1,3 +1,6 @@
+import json
+import subprocess
+
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 
@@ -14,7 +17,10 @@ class WidgetTests(TestCase):
         content = response.content.decode("utf-8")
         self.assertIn("fetch", content)
         self.assertIn('getAttribute("data-api-url")', content)
-        self.assertIn('new URL("/api/chat/", scriptEl.src).href', content)
+        self.assertIn('appendTenantParam', content)
+        self.assertIn('url.searchParams.set("tenant", tenant)', content)
+        self.assertIn('return appendTenantParam(configuredUrl);', content)
+        self.assertIn('return appendTenantParam(new URL("/api/chat/", scriptEl.src).href);', content)
         self.assertIn("session_key: sessionId", content)
         self.assertIn("/api/widget/config/", content)
         self.assertIn("loadConfig", content)
@@ -34,6 +40,8 @@ class WidgetTests(TestCase):
         self.assertIn("X-Livia-Request-ID", content)
         self.assertIn("X-Livia-Tenant", content)
         self.assertIn("fetchWithTimeout", content)
+        self.assertIn("AbortController", content)
+        self.assertIn("controller.abort()", content)
         self.assertIn("maxSendAttempts", content)
         self.assertIn("request_in_progress", content)
         self.assertIn("isSending", content)
@@ -45,6 +53,155 @@ class WidgetTests(TestCase):
         self.assertIn("está respondendo", content)
         self.assertIn("for (let index = 0; index < 3; index += 1)", content)
         self.assertNotIn("Digitando...", content)
+
+    def test_widget_runtime_renders_success_and_clears_loading_on_success_and_error(self):
+        source = self.client.get("/widget.js").content.decode("utf-8")
+        runner = r"""
+        const vm = require("vm");
+        const source = WIDGET_SOURCE;
+
+        class Element {
+          constructor(tag, documentRef) {
+            this.tagName = tag.toUpperCase();
+            this.ownerDocument = documentRef;
+            this.children = [];
+            this.parentNode = null;
+            this.attributes = {};
+            this.listeners = {};
+            this.style = {};
+            this.disabled = false;
+            this.value = "";
+            this.textContent = "";
+            this.innerHTML = "";
+            this.className = "";
+            this.type = "";
+            this.id = "";
+            this.scrollTop = 0;
+            this.scrollHeight = 0;
+            this.classList = {
+              add: (...names) => {
+                const current = new Set(String(this.className || "").split(/\s+/).filter(Boolean));
+                names.forEach((name) => current.add(name));
+                this.className = Array.from(current).join(" ");
+              },
+              remove: (...names) => {
+                const remove = new Set(names);
+                this.className = String(this.className || "").split(/\s+/).filter((name) => name && !remove.has(name)).join(" ");
+              },
+              contains: (name) => String(this.className || "").split(/\s+/).includes(name)
+            };
+          }
+          appendChild(child) {
+            child.parentNode = this;
+            this.children.push(child);
+            if (child.id) {
+              this.ownerDocument.byId[child.id] = child;
+            }
+            return child;
+          }
+          removeChild(child) {
+            this.children = this.children.filter((item) => item !== child);
+            if (child.id) {
+              delete this.ownerDocument.byId[child.id];
+            }
+            child.parentNode = null;
+            return child;
+          }
+          setAttribute(name, value) { this.attributes[name] = String(value); }
+          getAttribute(name) { return this.attributes[name] || null; }
+          addEventListener(name, callback) { this.listeners[name] = callback; }
+          dispatchEvent(name, event) { this.listeners[name] && this.listeners[name](event || { preventDefault() {} }); }
+          focus() {}
+          querySelector(selector) {
+            const stack = [...this.children];
+            while (stack.length) {
+              const item = stack.shift();
+              if (selector === ".livia-message.assistant" && String(item.className || "").includes("livia-message") && String(item.className || "").includes("assistant")) {
+                return item;
+              }
+              stack.push(...item.children);
+            }
+            return null;
+          }
+        }
+
+        function makeStorage() {
+          const values = new Map();
+          return { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, String(value)), removeItem: (key) => values.delete(key) };
+        }
+
+        function makeDocument() {
+          const documentRef = { byId: {}, readyState: "complete" };
+          documentRef.createElement = (tag) => new Element(tag, documentRef);
+          documentRef.getElementById = (id) => documentRef.byId[id] || null;
+          documentRef.addEventListener = () => {};
+          documentRef.head = new Element("head", documentRef);
+          documentRef.body = new Element("body", documentRef);
+          documentRef.documentElement = { style: { setProperty() {} } };
+          const script = new Element("script", documentRef);
+          script.src = "https://livia.smartcontrolbrasil.com.br/widget.js";
+          script.setAttribute("data-tenant", "granimarmores-pitondo");
+          script.setAttribute("data-api-url", "https://livia.smartcontrolbrasil.com.br/api/chat/");
+          documentRef.currentScript = script;
+          return documentRef;
+        }
+
+        async function runScenario(fetchImpl) {
+          const document = makeDocument();
+          const fastSetTimeout = (callback, _ms) => setTimeout(callback, 0);
+          const windowRef = {
+            document,
+            location: { href: "https://www.granimarmorespitondo.com.br/" },
+            localStorage: makeStorage(),
+            sessionStorage: makeStorage(),
+            crypto: { randomUUID: () => "11111111-1111-4111-8111-111111111111" },
+            setTimeout: fastSetTimeout,
+            clearTimeout,
+            AbortController,
+            fetch: fetchImpl,
+            console: { error() {}, log() {} }
+          };
+          const sandbox = { window: windowRef, document, fetch: fetchImpl, AbortController, URL, Promise, Error, String, Math, Date, setTimeout, clearTimeout, console: windowRef.console };
+          vm.runInNewContext(source, sandbox);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          const input = document.getElementById("livia-input");
+          const send = document.getElementById("livia-send");
+          const footer = document.getElementById("livia-footer");
+          input.value = "Quero uma pia";
+          footer.dispatchEvent("submit", { preventDefault() {} });
+          await new Promise((resolve) => setTimeout(resolve, 35));
+          return { document, input, send };
+        }
+
+        function response(status, payload) {
+          return { status, ok: status >= 200 && status < 300, json: async () => payload };
+        }
+
+        (async () => {
+          let chatUrl = "";
+          const success = await runScenario(async (url) => {
+            if (String(url).includes("/api/widget/config/")) return response(200, {});
+            chatUrl = String(url);
+            return response(200, { reply: "Resposta da Lívia" });
+          });
+          const messages = success.document.getElementById("livia-messages").children.map((item) => item.textContent).join("\\n");
+          if (!chatUrl.includes("tenant=granimarmores-pitondo")) throw new Error("chat URL missing tenant query");
+          if (!messages.includes("Resposta da Lívia")) throw new Error("assistant reply was not rendered");
+          if (success.input.disabled || success.send.disabled || success.send.textContent !== "Enviar") throw new Error("loading was not cleared on success");
+          if (success.document.getElementById("livia-typing")) throw new Error("typing indicator remained after success");
+
+          const failure = await runScenario(async (url) => {
+            if (String(url).includes("/api/widget/config/")) return response(200, {});
+            throw new Error("network down");
+          });
+          const failureMessages = failure.document.getElementById("livia-messages").children.map((item) => item.textContent).join("\\n");
+          if (!failureMessages.includes("Houve um problema ao conectar")) throw new Error("network fallback was not rendered");
+          if (failure.input.disabled || failure.send.disabled || failure.send.textContent !== "Enviar") throw new Error("loading was not cleared on error");
+          if (failure.document.getElementById("livia-typing")) throw new Error("typing indicator remained after error");
+        })().catch((error) => { console.error(error && error.stack || error); process.exit(1); });
+        """.replace("WIDGET_SOURCE", json.dumps(source))
+        completed = subprocess.run(["node", "-e", runner], text=True, capture_output=True, timeout=5)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_demo_page_loads_widget_script(self):
         response = self.client.get("/demo/")

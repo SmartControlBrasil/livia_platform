@@ -48,21 +48,32 @@ def widget_js(request):
     handoff_whatsapp_label: "Falar com um especialista"
   };
 
+  function appendTenantParam(rawUrl) {
+    try {
+      const url = new URL(rawUrl, window.location.href);
+      url.searchParams.set("tenant", tenant);
+      return url.href;
+    } catch (error) {
+      const separator = String(rawUrl || "").indexOf("?") === -1 ? "?" : "&";
+      return String(rawUrl || "/api/chat/") + separator + "tenant=" + encodeURIComponent(tenant);
+    }
+  }
+
   function resolveApiUrl(scriptEl) {
     if (scriptEl) {
       const configuredUrl = scriptEl.getAttribute("data-api-url");
       if (configuredUrl) {
-        return configuredUrl;
+        return appendTenantParam(configuredUrl);
       }
       if (scriptEl.src) {
         try {
-          return new URL("/api/chat/", scriptEl.src).href;
+          return appendTenantParam(new URL("/api/chat/", scriptEl.src).href);
         } catch (error) {
-          return "/api/chat/";
+          return appendTenantParam("/api/chat/");
         }
       }
     }
-    return "/api/chat/";
+    return appendTenantParam("/api/chat/");
   }
 
   function resolveConfigUrl(scriptEl) {
@@ -120,16 +131,37 @@ def widget_js(request):
   }
 
   function fetchWithTimeout(url, options, timeoutMs) {
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const requestOptions = Object.assign({}, options || {});
+    if (controller) {
+      requestOptions.signal = controller.signal;
+    }
     return new Promise(function (resolve, reject) {
+      let settled = false;
       const timer = window.setTimeout(function () {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (controller) {
+          controller.abort();
+        }
         reject(new Error("request_timeout"));
       }, timeoutMs);
-      fetch(url, options)
+      fetch(url, requestOptions)
         .then(function (response) {
+          if (settled) {
+            return;
+          }
+          settled = true;
           window.clearTimeout(timer);
           resolve(response);
         })
         .catch(function (error) {
+          if (settled) {
+            return;
+          }
+          settled = true;
           window.clearTimeout(timer);
           reject(error);
         });
@@ -182,7 +214,7 @@ def widget_js(request):
       "#livia-input { flex: 1; border: 1px solid rgba(15, 23, 42, .15); border-radius: 12px; padding: 10px 12px; outline: none; font: inherit; min-width: 0; }",
       "#livia-send { border: 0; border-radius: 12px; padding: 10px 14px; background: var(--livia-primary, #2563eb); color: #fff; cursor: pointer; font: 600 14px/1 Arial, sans-serif; }",
       "#livia-send:disabled, #livia-input:disabled { opacity: .65; cursor: not-allowed; }"
-    ].join("\n");
+    ].join("\\n");
     document.head.appendChild(style);
   }
 
@@ -201,13 +233,13 @@ def widget_js(request):
     return bubble;
   }
 
-  function createTypingIndicator() {
+  function createTypingIndicator(assistantLabel) {
     const typing = document.createElement("div");
     typing.id = "livia-typing";
     typing.className = "livia-message assistant livia-typing-bubble";
     typing.setAttribute("role", "status");
     typing.setAttribute("aria-live", "polite");
-    typing.setAttribute("aria-label", assistantName + " está respondendo");
+    typing.setAttribute("aria-label", (assistantLabel || "Lívia") + " está respondendo");
     for (let index = 0; index < 3; index += 1) {
       const dot = document.createElement("span");
       dot.className = "livia-typing-dot";
@@ -434,7 +466,7 @@ def widget_js(request):
 
     function ensureTyping() {
       if (!typingIndicator) {
-        typingIndicator = createTypingIndicator();
+        typingIndicator = createTypingIndicator(assistantName);
         messages.appendChild(typingIndicator);
         messages.scrollTop = messages.scrollHeight;
       }
