@@ -423,7 +423,7 @@ def attach_operational_statuses(tenants):
 
 
 def _blocked_decision_is_misconfiguration(code: str) -> bool:
-    return "missing" in code or "incomplete" in code
+    return "missing" in code or "incomplete" in code or "inconsistent" in code
 
 
 def _int_setting(name: str, default: int) -> int:

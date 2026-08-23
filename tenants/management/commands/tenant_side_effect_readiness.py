@@ -11,6 +11,7 @@ from integrations.side_effect_policy import (
     SideEffectType,
     evaluate_side_effect_policy,
 )
+from operations_portal.integration_services import _google_drive_decision_for_tenant
 from knowledge_base.models import TenantRagConfiguration
 from tenants.models import Tenant
 
@@ -29,7 +30,7 @@ class Command(BaseCommand):
             raise CommandError(f"Tenant não encontrado: {tenant_slug}")
 
         decisions = self._build_decisions(tenant=tenant)
-        overall_safe = all(item.status != SideEffectStatus.REAL_ENABLED for item in decisions)
+        overall_safe = all(item.allowed or item.code in {"openai_chat_disabled", "drive_sync_not_required", "tenant_retrieval_disabled", "smart360_dry_run", "webhooks_disabled", "email_notifications_disabled", "whatsapp_handoff_client_side_only"} for item in decisions)
         overall = "SAFE" if overall_safe else "UNSAFE"
 
         if options["json"]:
@@ -79,23 +80,7 @@ class Command(BaseCommand):
             )
         decisions.append(embedding_decision)
 
-        drive_decision = evaluate_side_effect_policy(
-            side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
-            tenant=tenant,
-            integration_configured=bool(str(getattr(settings, "LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE", "") or "").strip()),
-        )
-        if not bool(getattr(settings, "LIVIA_RAG_OPERATIONS_ENABLED", False)) and not bool(
-            getattr(settings, "LIVIA_RAG_INDEXING_ENABLED", False)
-        ):
-            drive_decision = SideEffectDecision(
-                side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
-                status=SideEffectStatus.BLOCKED,
-                allowed=False,
-                dry_run=False,
-                code="rag_ops_and_indexing_disabled",
-                reason="Operações/indexação RAG estão desabilitadas globalmente.",
-            )
-        decisions.append(drive_decision)
+        decisions.append(_google_drive_decision_for_tenant(tenant=tenant, rag_cfg=rag_cfg))
 
         decisions.append(
             evaluate_side_effect_policy(

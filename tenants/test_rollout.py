@@ -8,7 +8,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from audit.models import AuditEvent
-from knowledge_base.models import KnowledgeDocument
+from knowledge_base.models import KnowledgeDocument, TenantRagConfiguration
 from leads.models import LeadDraft
 from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin, TenantMembership
 from tenants.services.install_package import TenantInstallPackageService
@@ -124,13 +124,125 @@ class TenantRolloutServiceTests(TestCase):
         self.assertIn("widget_enabled", {check.code for check in blocked.blocking_checks})
         self.assertEqual(allowed.status, ROLLOUT_STATUS_READY, [(check.code, check.status, check.detail, check.blocking) for check in allowed.checks])
 
-    @override_settings(SMART360_LEAD_DISPATCH_ENABLED=True, SMART360_LEAD_DISPATCH_DRY_RUN=False, SMART360_LEAD_DISPATCH_REAL_ENABLED=True, SMART360_LEAD_DISPATCH_REAL_ALLOWED_ENVS="development", LIVIA_ENVIRONMENT="development", LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True, SMART360_BASE_URL="https://smart360.example", SMART360_M2M_TOKEN="token")
-    def test_side_effect_real_enabled_is_reported_and_blocks_staging(self):
+    @override_settings(
+        LIVIA_ENVIRONMENT="staging",
+        LIVIA_RAG_ENABLED=True,
+        LIVIA_RAG_INDEXING_ENABLED=True,
+        LIVIA_RAG_EMBEDDING_PROVIDER="openai",
+        LIVIA_RAG_EMBEDDING_API_KEY="sk-test-embedding",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
+    def test_authorized_openai_embedding_real_enabled_allows_staging_rollout(self):
+        TenantRagConfiguration.objects.create(
+            tenant=self.tenant,
+            source_mode=TenantRagConfiguration.SOURCE_MANUAL,
+            sync_enabled=False,
+            retrieval_enabled=True,
+        )
+
+        result = TenantRolloutService().build(TenantRolloutSpec(tenant=self.tenant, target_origin="https://www.empresa-x.com.br"))
+
+        self.assertTrue(result.side_effects_safe)
+        self.assertEqual(result.status, ROLLOUT_STATUS_READY)
+        self.assertNotIn("side_effects_safe", {check.code for check in result.blocking_checks})
+
+    @override_settings(
+        LIVIA_ENVIRONMENT="staging",
+        LIVIA_RAG_ENABLED=True,
+        LIVIA_RAG_INDEXING_ENABLED=True,
+        LIVIA_RAG_EMBEDDING_PROVIDER="openai",
+        LIVIA_RAG_EMBEDDING_API_KEY="",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
+    def test_embedding_missing_key_blocks_staging_rollout(self):
+        TenantRagConfiguration.objects.create(
+            tenant=self.tenant,
+            source_mode=TenantRagConfiguration.SOURCE_MANUAL,
+            sync_enabled=False,
+            retrieval_enabled=True,
+        )
+
         result = TenantRolloutService().build(TenantRolloutSpec(tenant=self.tenant, target_origin="https://www.empresa-x.com.br"))
 
         self.assertFalse(result.side_effects_safe)
         self.assertEqual(result.status, ROLLOUT_STATUS_BLOCKED)
         self.assertIn("side_effects_safe", {check.code for check in result.blocking_checks})
+
+    @override_settings(
+        LIVIA_ENVIRONMENT="staging",
+        LIVIA_RAG_ENABLED=True,
+        LIVIA_RAG_INDEXING_ENABLED=True,
+        LIVIA_RAG_EMBEDDING_PROVIDER="openai",
+        LIVIA_RAG_EMBEDDING_API_KEY="sk-test-embedding",
+        LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
+    def test_drive_required_missing_service_account_blocks_staging_rollout(self):
+        TenantRagConfiguration.objects.create(
+            tenant=self.tenant,
+            source_mode=TenantRagConfiguration.SOURCE_GOOGLE_DRIVE,
+            approved_folder_id="folder-a",
+            sync_enabled=True,
+            retrieval_enabled=True,
+        )
+
+        result = TenantRolloutService().build(TenantRolloutSpec(tenant=self.tenant, target_origin="https://www.empresa-x.com.br"))
+
+        self.assertFalse(result.side_effects_safe)
+        self.assertEqual(result.status, ROLLOUT_STATUS_BLOCKED)
+        self.assertIn("side_effects_safe", {check.code for check in result.blocking_checks})
+
+    @override_settings(
+        LIVIA_ENVIRONMENT="production",
+        LIVIA_RAG_ENABLED=True,
+        LIVIA_RAG_INDEXING_ENABLED=True,
+        LIVIA_RAG_EMBEDDING_PROVIDER="openai",
+        LIVIA_RAG_EMBEDDING_API_KEY="sk-test-embedding",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
+    def test_production_rollout_remains_fail_closed_for_real_embedding(self):
+        TenantRagConfiguration.objects.create(
+            tenant=self.tenant,
+            source_mode=TenantRagConfiguration.SOURCE_MANUAL,
+            sync_enabled=False,
+            retrieval_enabled=True,
+        )
+
+        result = TenantRolloutService().build(
+            TenantRolloutSpec(tenant=self.tenant, target_origin="https://www.empresa-x.com.br", environment=ENVIRONMENT_PRODUCTION)
+        )
+
+        self.assertFalse(result.side_effects_safe)
+        self.assertEqual(result.status, ROLLOUT_STATUS_BLOCKED)
+
+    @override_settings(
+        LIVIA_ENVIRONMENT="staging",
+        LIVIA_AI_ENABLED=False,
+        LIVIA_AI_DRY_RUN=True,
+        LIVIA_RAG_ENABLED=False,
+        SMART360_LEAD_DISPATCH_ENABLED=False,
+        SMART360_LEAD_DISPATCH_DRY_RUN=True,
+        LIVIA_WEBHOOKS_ENABLED=False,
+        LIVIA_WEBHOOKS_DRY_RUN=True,
+    )
+    def test_chat_off_smart360_dry_run_webhooks_off_do_not_block_staging(self):
+        result = TenantRolloutService().build(TenantRolloutSpec(tenant=self.tenant, target_origin="https://www.empresa-x.com.br"))
+
+        self.assertTrue(result.side_effects_safe)
+        self.assertEqual(result.status, ROLLOUT_STATUS_READY)
+
+    def test_commercial_warning_without_handoff_does_not_block_staging(self):
+        tenant = self._tenant("sem-handoff", "https://sem-handoff.com.br")
+        profile = tenant.assistant_profile
+        profile.human_handoff_enabled = False
+        profile.handoff_whatsapp_number = ""
+        profile.save(update_fields=["human_handoff_enabled", "handoff_whatsapp_number", "updated_at"])
+
+        result = TenantRolloutService().build(TenantRolloutSpec(tenant=tenant, target_origin="https://sem-handoff.com.br"))
+
+        self.assertEqual(result.operational_status, "WARNING")
+        self.assertEqual(result.status, ROLLOUT_STATUS_READY)
+        self.assertNotIn("commercial_ready", {check.code for check in result.blocking_checks})
 
     def test_smoke_success_rolls_back_and_blocks_external_calls(self):
         result = self.service.build(TenantRolloutSpec(tenant=self.tenant, target_origin="https://www.empresa-x.com.br"), run_smoke=True)

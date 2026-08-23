@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from conversations.models import ChatRequest, Conversation, HandoffRequest
 from integrations.models import OutboxEvent
-from knowledge_base.models import KnowledgeDocument, TenantOperationalAlert, TenantOperationalMaintenanceWindow
+from knowledge_base.models import KnowledgeDocument, TenantOperationalAlert, TenantOperationalMaintenanceWindow, TenantRagConfiguration
 from leads.models import LeadDraft
 from operations_portal.operational_readiness import (
     STATUS_DEGRADED,
@@ -177,6 +177,85 @@ class TenantOperationalReadinessTests(TestCase):
         self.assertEqual(status.integrations.status, STATUS_DEGRADED)
         self.assertIn("openai_chat_missing_api_key", payload)
         self.assertNotIn("sk-", payload)
+
+    @override_settings(
+        LIVIA_RAG_ENABLED=True,
+        LIVIA_RAG_INDEXING_ENABLED=True,
+        LIVIA_RAG_EMBEDDING_PROVIDER="openai",
+        LIVIA_RAG_EMBEDDING_API_KEY="sk-test-embedding",
+        LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
+    def test_manual_rag_without_drive_service_account_keeps_integrations_ready(self):
+        TenantRagConfiguration.objects.create(
+            tenant=self.tenant,
+            source_mode=TenantRagConfiguration.SOURCE_MANUAL,
+            sync_enabled=False,
+            retrieval_enabled=True,
+        )
+
+        status = TenantOperationalReadinessService(now=self.now).for_tenant(self.tenant)
+        drive = next(item for item in status.integrations.details["decisions"] if item["side_effect"] == "GOOGLE_DRIVE_SYNC")
+        embedding = next(item for item in status.integrations.details["decisions"] if item["side_effect"] == "OPENAI_EMBEDDING")
+
+        self.assertEqual(status.integrations.status, STATUS_READY)
+        self.assertEqual(drive["code"], "drive_sync_not_required")
+        self.assertEqual(drive["readiness"], STATUS_READY)
+        self.assertEqual(embedding["status"], "REAL_ENABLED")
+        self.assertEqual(embedding["readiness"], STATUS_READY)
+
+    @override_settings(
+        LIVIA_RAG_ENABLED=True,
+        LIVIA_RAG_INDEXING_ENABLED=True,
+        LIVIA_RAG_EMBEDDING_PROVIDER="openai",
+        LIVIA_RAG_EMBEDDING_API_KEY="sk-test-embedding",
+        LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
+    def test_google_drive_required_without_service_account_degrades_integrations(self):
+        TenantRagConfiguration.objects.create(
+            tenant=self.tenant,
+            source_mode=TenantRagConfiguration.SOURCE_GOOGLE_DRIVE,
+            approved_folder_id="folder-a",
+            sync_enabled=True,
+            retrieval_enabled=True,
+        )
+
+        status = TenantOperationalReadinessService(now=self.now).for_tenant(self.tenant)
+        drive = next(item for item in status.integrations.details["decisions"] if item["side_effect"] == "GOOGLE_DRIVE_SYNC")
+
+        self.assertEqual(status.integrations.status, STATUS_DEGRADED)
+        self.assertEqual(drive["code"], "drive_sync_missing_service_account")
+        self.assertEqual(drive["readiness"], STATUS_DEGRADED)
+
+    @override_settings(
+        LIVIA_RAG_ENABLED=True,
+        LIVIA_RAG_INDEXING_ENABLED=True,
+        LIVIA_RAG_EMBEDDING_PROVIDER="openai",
+        LIVIA_RAG_EMBEDDING_API_KEY="sk-test-embedding",
+        LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE="",
+        LIVIA_ALLOW_REAL_SIDE_EFFECTS_IN_TESTS=True,
+    )
+    def test_side_effect_decisions_are_tenant_scoped_for_drive_source_mode(self):
+        TenantRagConfiguration.objects.create(
+            tenant=self.tenant,
+            source_mode=TenantRagConfiguration.SOURCE_MANUAL,
+            sync_enabled=False,
+            retrieval_enabled=True,
+        )
+        TenantRagConfiguration.objects.create(
+            tenant=self.other_tenant,
+            source_mode=TenantRagConfiguration.SOURCE_GOOGLE_DRIVE,
+            approved_folder_id="folder-b",
+            sync_enabled=True,
+            retrieval_enabled=True,
+        )
+
+        status = TenantOperationalReadinessService(now=self.now).for_tenant(self.tenant)
+        drive = next(item for item in status.integrations.details["decisions"] if item["side_effect"] == "GOOGLE_DRIVE_SYNC")
+
+        self.assertEqual(status.integrations.status, STATUS_READY)
+        self.assertEqual(drive["code"], "drive_sync_not_required")
 
     def test_open_operational_alerts_contribute_to_incidents(self):
         TenantOperationalAlert.objects.create(

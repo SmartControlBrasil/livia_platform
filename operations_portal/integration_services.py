@@ -81,11 +81,7 @@ def _build_side_effect_decisions(*, tenant):
             tenant=tenant,
             integration_configured=bool(str(getattr(settings, "LIVIA_RAG_EMBEDDING_API_KEY", "") or "").strip()),
         ),
-        evaluate_side_effect_policy(
-            side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
-            tenant=tenant,
-            integration_configured=bool(str(getattr(settings, "LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE", "") or "").strip()),
-        ),
+        _google_drive_decision_for_tenant(tenant=tenant, rag_cfg=rag_cfg),
         evaluate_side_effect_policy(
             side_effect=SideEffectType.SMART360_LEAD_DISPATCH,
             tenant=tenant,
@@ -107,8 +103,39 @@ def _build_side_effect_decisions(*, tenant):
             code="tenant_retrieval_disabled",
             reason="Retrieval semântico do tenant está desabilitado.",
         )
+    return decisions
+
+
+def _google_drive_decision_for_tenant(*, tenant, rag_cfg):
+    if rag_cfg is None or not getattr(rag_cfg, "sync_enabled", False):
+        return SideEffectDecision(
+            side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
+            status=SideEffectStatus.BLOCKED,
+            allowed=False,
+            dry_run=False,
+            code="drive_sync_not_required",
+            reason="Google Drive sync não é requerido para este tenant.",
+        )
+    if getattr(rag_cfg, "source_mode", "") != TenantRagConfiguration.SOURCE_GOOGLE_DRIVE:
+        return SideEffectDecision(
+            side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
+            status=SideEffectStatus.BLOCKED,
+            allowed=False,
+            dry_run=False,
+            code="drive_sync_configuration_inconsistent",
+            reason="Sync Google Drive habilitado sem source_mode=google_drive.",
+        )
+    if not str(getattr(rag_cfg, "approved_folder_id", "") or "").strip():
+        return SideEffectDecision(
+            side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
+            status=SideEffectStatus.BLOCKED,
+            allowed=False,
+            dry_run=False,
+            code="drive_sync_missing_approved_folder",
+            reason="Google Drive sync sem pasta aprovada.",
+        )
     if not bool(getattr(settings, "LIVIA_RAG_OPERATIONS_ENABLED", False)) and not bool(getattr(settings, "LIVIA_RAG_INDEXING_ENABLED", False)):
-        decisions[2] = SideEffectDecision(
+        return SideEffectDecision(
             side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
             status=SideEffectStatus.BLOCKED,
             allowed=False,
@@ -116,7 +143,11 @@ def _build_side_effect_decisions(*, tenant):
             code="rag_ops_and_indexing_disabled",
             reason="Operações/indexação RAG estão desabilitadas globalmente.",
         )
-    return decisions
+    return evaluate_side_effect_policy(
+        side_effect=SideEffectType.GOOGLE_DRIVE_SYNC,
+        tenant=tenant,
+        integration_configured=bool(str(getattr(settings, "LIVIA_GOOGLE_SERVICE_ACCOUNT_FILE", "") or "").strip()),
+    )
 
 
 def _build_integration_row(*, tenant, decision):
@@ -235,4 +266,14 @@ def _decision_readiness(decision):
         return "READY"
     if decision.status == SideEffectStatus.DRY_RUN:
         return "WARNING"
+    if decision.code in {
+        "openai_chat_disabled",
+        "tenant_retrieval_disabled",
+        "drive_sync_not_required",
+        "smart360_dry_run",
+        "webhooks_disabled",
+        "email_notifications_disabled",
+        "whatsapp_handoff_client_side_only",
+    }:
+        return "READY"
     return "BLOCKED"

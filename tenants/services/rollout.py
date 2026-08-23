@@ -224,7 +224,7 @@ class TenantRolloutService:
         if not side_effects_safe:
             checks.append(RolloutCheck("side_effects_safe", "FAIL", "Há side effect real/mal configurado bloqueante para rollout.", True))
         else:
-            checks.append(RolloutCheck("side_effects_safe", "PASS", "Side effects conhecidos e não ativados pelo rollout."))
+            checks.append(RolloutCheck("side_effects_safe", "PASS", "Side effects conhecidos, autorizados ou bloqueados com segurança pelo rollout."))
         install_plan = self._install_plan(package=package, origin=origin)
         smoke_plan = self._smoke_plan(spec.tenant)
         rollback_plan = self._rollback_plan(spec=spec, origin=origin)
@@ -488,9 +488,15 @@ class TenantRolloutService:
         decisions = operational.integrations.details.get("decisions", [])
         if not decisions:
             return True
-        if environment == ENVIRONMENT_STAGING:
-            return all(item.get("status") != "REAL_ENABLED" for item in decisions)
-        return all(item.get("readiness") != STATUS_DEGRADED for item in decisions)
+        for item in decisions:
+            if item.get("readiness") == STATUS_DEGRADED:
+                return False
+            if item.get("status") == "REAL_ENABLED":
+                if not item.get("allowed"):
+                    return False
+                if environment == ENVIRONMENT_PRODUCTION:
+                    return False
+        return True
 
     def _audit(self, action, *, spec, result_status, actor=None, request=None, extra=None):
         metadata = {

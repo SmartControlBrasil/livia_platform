@@ -449,9 +449,11 @@ class SideEffectReadinessCommandTests(TestCase):
         SMART360_BASE_URL="https://smart360.example",
         SMART360_M2M_TOKEN="token",
     )
-    def test_side_effect_readiness_fails_when_real_enabled(self):
-        with self.assertRaises(CommandError):
-            call_command("tenant_side_effect_readiness", tenant="tenant")
+    def test_side_effect_readiness_accepts_authorized_real_enabled(self):
+        out = StringIO()
+        call_command("tenant_side_effect_readiness", tenant="tenant", stdout=out)
+        self.assertIn("SMART360_LEAD_DISPATCH", out.getvalue())
+        self.assertIn("OVERALL: SAFE", out.getvalue())
 
 
 @override_settings(
