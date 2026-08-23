@@ -17,6 +17,42 @@ LEAD_STATUS_TONES = {
     LeadDraft.Status.FAILED: "danger",
 }
 
+QUALIFICATION_STATUS_LABELS = {
+    LeadDraft.QualificationStatus.NEW: "Nova",
+    LeadDraft.QualificationStatus.IN_PROGRESS: "Em qualificação",
+    LeadDraft.QualificationStatus.QUALIFIED: "Qualificada",
+    LeadDraft.QualificationStatus.DISQUALIFIED: "Desqualificada",
+}
+QUALIFICATION_STATUS_TONES = {
+    LeadDraft.QualificationStatus.NEW: "secondary",
+    LeadDraft.QualificationStatus.IN_PROGRESS: "info",
+    LeadDraft.QualificationStatus.QUALIFIED: "success",
+    LeadDraft.QualificationStatus.DISQUALIFIED: "secondary",
+}
+LEAD_HANDOFF_STATUS_LABELS = {
+    LeadDraft.HandoffStatus.NOT_REQUESTED: "Não solicitado",
+    LeadDraft.HandoffStatus.READY: "Pronto",
+    LeadDraft.HandoffStatus.REQUESTED: "Solicitado",
+    LeadDraft.HandoffStatus.COMPLETED: "Concluído",
+    LeadDraft.HandoffStatus.CANCELLED: "Cancelado",
+}
+LEAD_DISPATCH_STATUS_LABELS = {
+    LeadDraft.DispatchStatus.NOT_QUEUED: "Não enfileirado",
+    LeadDraft.DispatchStatus.PENDING: "Pendente",
+    LeadDraft.DispatchStatus.DRY_RUN: "Dry-run",
+    LeadDraft.DispatchStatus.DELIVERED: "Entregue",
+    LeadDraft.DispatchStatus.FAILED: "Falha",
+    LeadDraft.DispatchStatus.RETRYING: "Retry",
+}
+LEAD_DISPATCH_STATUS_TONES = {
+    LeadDraft.DispatchStatus.NOT_QUEUED: "secondary",
+    LeadDraft.DispatchStatus.PENDING: "warning",
+    LeadDraft.DispatchStatus.DRY_RUN: "warning",
+    LeadDraft.DispatchStatus.DELIVERED: "success",
+    LeadDraft.DispatchStatus.FAILED: "danger",
+    LeadDraft.DispatchStatus.RETRYING: "warning",
+}
+
 HANDOFF_STATUS_LABELS = {
     HandoffRequest.Status.PENDING: "Pendente",
     HandoffRequest.Status.SENT: "Notificado",
@@ -61,6 +97,26 @@ def lead_status_label(status):
 
 def lead_status_tone(status):
     return LEAD_STATUS_TONES.get(status, "secondary")
+
+
+def qualification_status_label(status):
+    return QUALIFICATION_STATUS_LABELS.get(status, status or "-")
+
+
+def qualification_status_tone(status):
+    return QUALIFICATION_STATUS_TONES.get(status, "secondary")
+
+
+def lead_handoff_status_label(status):
+    return LEAD_HANDOFF_STATUS_LABELS.get(status, status or "-")
+
+
+def lead_dispatch_status_label(status):
+    return LEAD_DISPATCH_STATUS_LABELS.get(status, status or "-")
+
+
+def lead_dispatch_status_tone(status):
+    return LEAD_DISPATCH_STATUS_TONES.get(status, "secondary")
 
 
 def mask_email(value):

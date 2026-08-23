@@ -92,14 +92,19 @@ class LeadDraftAdmin(admin.ModelAdmin):
         "phone",
         "email",
         "status",
+        "qualification_status",
+        "handoff_status",
+        "dispatch_status",
         "service_area",
         "crm_dispatch_state",
+        "field_sources",
+        "qualification_data",
         "crm_external_id",
         "sent_to_crm_at",
         "created_at",
         "updated_at",
     ]
-    list_filter = ["tenant", "status", LeadServiceAreaFilter, "sent_to_crm_at", "created_at"]
+    list_filter = ["tenant", "status", "qualification_status", "handoff_status", "dispatch_status", LeadServiceAreaFilter, "sent_to_crm_at", "created_at"]
     search_fields = [
         "name",
         "company",
@@ -115,6 +120,8 @@ class LeadDraftAdmin(admin.ModelAdmin):
     ]
     readonly_fields = [
         "crm_dispatch_state",
+        "field_sources",
+        "qualification_data",
         "crm_external_id",
         "crm_error",
         "created_at",
@@ -129,10 +136,4 @@ class LeadDraftAdmin(admin.ModelAdmin):
 
     @admin.display(description="CRM dispatch")
     def crm_dispatch_state(self, obj):
-        if obj.status == LeadDraft.Status.SENT_TO_CRM:
-            return "sent"
-        if obj.status == LeadDraft.Status.FAILED:
-            return "failed"
-        if obj.status == LeadDraft.Status.QUALIFIED:
-            return "ready"
-        return "pending"
+        return getattr(obj, "dispatch_status", "") or "pending"

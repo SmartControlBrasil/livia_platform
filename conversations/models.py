@@ -144,6 +144,18 @@ class HandoffRequest(models.Model):
         HIGH = "high", "High"
         URGENT = "urgent", "Urgent"
 
+    class HandoffState(models.TextChoices):
+        REQUESTED = "requested", "Requested"
+        COMPLETED = "completed", "Completed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    class DispatchState(models.TextChoices):
+        PENDING = "pending", "Pending"
+        DRY_RUN = "dry_run", "Dry run"
+        DELIVERED = "delivered", "Delivered"
+        FAILED = "failed", "Failed"
+        RETRYING = "retrying", "Retrying"
+
     tenant = models.ForeignKey(
         Tenant,
         on_delete=models.CASCADE,
@@ -162,6 +174,8 @@ class HandoffRequest(models.Model):
         related_name="handoff_requests",
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    handoff_state = models.CharField(max_length=30, choices=HandoffState.choices, default=HandoffState.REQUESTED)
+    dispatch_state = models.CharField(max_length=30, choices=DispatchState.choices, default=DispatchState.PENDING)
     reason = models.CharField(max_length=40, choices=Reason.choices, default=Reason.MANUAL)
     priority = models.CharField(max_length=20, choices=Priority.choices, default=Priority.NORMAL)
     visitor_name = models.CharField(max_length=120, blank=True)

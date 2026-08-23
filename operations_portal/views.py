@@ -33,6 +33,7 @@ from tenants.access import (
 from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
 from tenants.services.install_package import TenantInstallPackageService
 from tenants.services.onboarding import TenantOnboardingService
+from tenants.services.rollout import TenantRolloutService, TenantRolloutSpec
 
 from .access import portal_template_context, require_portal_capability, resolve_portal_access
 from .crm_retry import execute_portal_crm_retry
@@ -48,6 +49,7 @@ from .forms import (
     TenantPortalForm,
 )
 from .formatters import can_retry_crm_dispatch
+from .operational_readiness import TenantOperationalReadinessService, attach_operational_statuses
 from .selectors import (
     clean_querystring,
     get_conversation_detail,
@@ -131,6 +133,7 @@ def tenant_list(request):
                 | Q(assistant_profile__business_name__icontains=query)
             )
     page = Paginator(queryset, 25).get_page(request.GET.get("page", 1))
+    attach_operational_statuses(list(page.object_list))
     context = {
         "active_section": "tenants",
         "form": form,
@@ -204,6 +207,7 @@ def tenant_detail(request, pk):
     tenant = _get_portal_tenant_or_404(access, pk)
     profile, _ = AssistantProfile.objects.get_or_create(tenant=tenant)
     can_manage = CAPABILITY_MEMBERSHIPS_MANAGE in access.capabilities
+    rollout_result = None
     if request.method == "POST":
         require_portal_capability(access, CAPABILITY_MEMBERSHIPS_MANAGE)
         action = request.POST.get("action")
@@ -261,6 +265,32 @@ def tenant_detail(request, pk):
                 messages.success(request, "Allowed origins atualizadas.")
                 return redirect("operations_portal:tenant_detail", pk=tenant.pk)
             messages.error(request, "Revise as allowed origins antes de salvar.")
+        elif action == "plan_rollout":
+            origin = request.POST.get("rollout_origin") or ""
+            environment = request.POST.get("rollout_environment") or "staging"
+            allow_widget_disabled = bool(request.POST.get("allow_widget_disabled"))
+            allow_knowledge_warning = bool(request.POST.get("allow_knowledge_warning"))
+            try:
+                rollout_result = TenantRolloutService().build(
+                    TenantRolloutSpec(
+                        tenant=tenant,
+                        target_origin=origin,
+                        environment=environment,
+                        dry_run=True,
+                        allow_widget_disabled=allow_widget_disabled,
+                        allow_knowledge_warning=allow_knowledge_warning,
+                    ),
+                    actor=request.user,
+                    request=request,
+                    record_audit=True,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+            else:
+                if rollout_result.status == "BLOCKED":
+                    messages.warning(request, "Rollout bloqueado. Revise os checks antes de instalar.")
+                else:
+                    messages.success(request, "Rollout planejado com sucesso. Nenhum deploy remoto foi executado.")
         else:
             raise PermissionDenied
 
@@ -272,6 +302,16 @@ def tenant_detail(request, pk):
             for field in form.fields.values():
                 field.disabled = True
     install_package = TenantInstallPackageService().build_for_tenant(tenant)
+    operational_status = TenantOperationalReadinessService().for_tenant(tenant)
+    if rollout_result is None:
+        default_origin = install_package.allowed_origin or (tenant.domain if tenant.domain else "")
+        if default_origin:
+            try:
+                rollout_result = TenantRolloutService().build(
+                    TenantRolloutSpec(tenant=tenant, target_origin=default_origin, environment="staging", dry_run=True)
+                )
+            except ValueError:
+                rollout_result = None
     from knowledge_base.models import KnowledgeDocument, TenantRagChunkEmbedding, TenantRagDocumentChunk, TenantRagDriveTextStaging
 
     knowledge_counts = {
@@ -289,6 +329,8 @@ def tenant_detail(request, pk):
         "profile_form": profile_form,
         "origins_form": origins_form,
         "install_package": install_package,
+        "operational_status": operational_status,
+        "rollout_result": rollout_result,
         "knowledge_counts": knowledge_counts,
         "config_endpoint": f"/api/widget/config/?tenant={tenant.slug}",
         "can_manage_tenants": can_manage,
@@ -560,8 +602,7 @@ def update_handoff_status(request, pk):
         service.mark_resolved(handoff)
         messages.success(request, "Handoff marcado como resolvido.")
     elif target_status == HandoffRequest.Status.CANCELLED:
-        handoff.status = HandoffRequest.Status.CANCELLED
-        handoff.save(update_fields=["status", "updated_at"])
+        service.mark_cancelled(handoff)
         messages.success(request, "Handoff cancelado.")
     handoff.refresh_from_db()
     record_audit_event(
@@ -671,6 +712,17 @@ def _assistant_settings_operational_state(tenant):
 
     rag_config = TenantRagConfiguration.objects.filter(tenant=tenant).first()
     install_package = TenantInstallPackageService().build_for_tenant(tenant)
+    operational_status = TenantOperationalReadinessService().for_tenant(tenant)
+    rollout_result = None
+    if rollout_result is None:
+        default_origin = install_package.allowed_origin or (tenant.domain if tenant.domain else "")
+        if default_origin:
+            try:
+                rollout_result = TenantRolloutService().build(
+                    TenantRolloutSpec(tenant=tenant, target_origin=default_origin, environment="staging", dry_run=True)
+                )
+            except ValueError:
+                rollout_result = None
     latest_index_run = TenantRagIndexRun.objects.filter(tenant=tenant).order_by("-started_at").first()
     knowledge_counts = {
         "documents": KnowledgeDocument.objects.filter(tenant=tenant).count(),
@@ -684,6 +736,8 @@ def _assistant_settings_operational_state(tenant):
         "allowed_origins": list(tenant.allowed_origins.filter(is_active=True).order_by("origin")),
         "config_endpoint": f"/api/widget/config/?tenant={tenant.slug}",
         "install_package": install_package,
+        "operational_status": operational_status,
+        "rollout_result": rollout_result,
         "knowledge_counts": knowledge_counts,
         "latest_index_run": latest_index_run,
         "rag_config": rag_config,

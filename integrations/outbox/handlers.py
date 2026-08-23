@@ -14,6 +14,7 @@ from integrations.smart360.client import Smart360GrowthClient, requests as smart
 from integrations.webhooks.service import WebhookDispatchService, requests as webhook_requests
 from leads.models import LeadDraft
 from leads.services.crm_dispatch import CRMDispatchService
+from leads.services.commercial import update_lead_dispatch_state_from_outbox
 from leads.services.handoff_notification import HandoffNotificationService
 from conversations.models import HandoffRequest
 
@@ -101,7 +102,7 @@ class LeadQualifiedHandler(BaseOutboxHandler):
         else:
             client = Smart360GrowthClient(settings.SMART360_BASE_URL, settings.SMART360_M2M_TOKEN, dry_run=False)
         payload = CRMDispatchService(client=client).build_payload(lead)
-        payload_dict = payload.__dict__ if hasattr(payload, "__dict__") else dict(payload)
+        payload_dict = payload.to_dict() if hasattr(payload, "to_dict") else dict(payload)
         payload_dict["event_id"] = str(event.event_id)
         try:
             result = client.ingest_lead(payload_dict, idempotency_key=str(event.event_id))
@@ -111,14 +112,21 @@ class LeadQualifiedHandler(BaseOutboxHandler):
         if result.success:
             if lead.status != LeadDraft.Status.SENT_TO_CRM:
                 lead.status = LeadDraft.Status.SENT_TO_CRM
+                lead.dispatch_status = LeadDraft.DispatchStatus.DRY_RUN if result.dry_run else LeadDraft.DispatchStatus.DELIVERED
                 lead.crm_external_id = result.external_id or lead.crm_external_id
                 lead.crm_error = ""
                 from django.utils import timezone
                 lead.sent_to_crm_at = timezone.now()
-                lead.save(update_fields=["status", "crm_external_id", "crm_error", "sent_to_crm_at", "updated_at"])
+                lead.save(update_fields=["status", "dispatch_status", "crm_external_id", "crm_error", "sent_to_crm_at", "updated_at"])
             return succeeded("smart360_succeeded", result.message, metadata)
         if _is_retryable_status(result.status_code):
+            lead.dispatch_status = LeadDraft.DispatchStatus.RETRYING
+            lead.crm_error = result.message
+            lead.save(update_fields=["dispatch_status", "crm_error", "updated_at"])
             return retryable_failure("smart360_retryable", result.message, metadata)
+        lead.dispatch_status = LeadDraft.DispatchStatus.FAILED
+        lead.crm_error = result.message
+        lead.save(update_fields=["dispatch_status", "crm_error", "updated_at"])
         return permanent_failure("smart360_permanent", result.message, metadata)
 
     def _dispatch_webhooks(self, event, lead):
@@ -136,11 +144,19 @@ class HandoffCreatedHandler(BaseOutboxHandler):
         webhook_result = _classify_webhook_logs(webhook_logs)
         notification_meta = {"success": notification_result.success, "dry_run": notification_result.dry_run}
         if webhook_result.retryable:
+            handoff.dispatch_state = HandoffRequest.DispatchState.RETRYING
+            handoff.save(update_fields=["dispatch_state", "updated_at"])
             return retryable_failure("delivery_retryable", metadata={"notification": notification_meta, "webhooks": webhook_result.metadata})
         if webhook_result.status == "permanent_failure":
+            handoff.dispatch_state = HandoffRequest.DispatchState.FAILED
+            handoff.save(update_fields=["dispatch_state", "updated_at"])
             return permanent_failure("delivery_permanent", metadata={"notification": notification_meta, "webhooks": webhook_result.metadata})
         if notification_result.success or webhook_result.status == "succeeded":
+            handoff.dispatch_state = HandoffRequest.DispatchState.DRY_RUN if notification_result.dry_run and webhook_result.status != "succeeded" else HandoffRequest.DispatchState.DELIVERED
+            handoff.save(update_fields=["dispatch_state", "updated_at"])
             return succeeded("handoff_delivered", metadata={"notification": notification_meta, "webhooks": webhook_result.metadata})
+        handoff.dispatch_state = HandoffRequest.DispatchState.DRY_RUN
+        handoff.save(update_fields=["dispatch_state", "updated_at"])
         return skipped("handoff_skipped", metadata={"notification": notification_meta, "webhooks": webhook_result.metadata})
 
 

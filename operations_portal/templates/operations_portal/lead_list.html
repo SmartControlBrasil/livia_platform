@@ -31,7 +31,7 @@
       {% if page_obj.object_list %}
       <div class="table-responsive">
         <table class="table table-hover table-nowrap align-middle mb-0">
-          <thead><tr><th>ID</th><th>Tenant</th><th>Contato</th><th>Empresa</th><th>Status</th><th>CRM</th><th>Outbox</th><th>Tentativas</th><th>Falha</th><th>Criado</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th>Tenant</th><th>Contato</th><th>Empresa</th><th>Qualificação</th><th>Handoff</th><th>Dispatch</th><th>CRM</th><th>Outbox</th><th>Tentativas</th><th>Falha</th><th>Criado</th><th></th></tr></thead>
           <tbody>
             {% for lead in page_obj.object_list %}
             <tr>
@@ -39,7 +39,9 @@
               <td>{{ lead.tenant.slug }}</td>
               <td><span class="fw-medium text-dark">{{ lead.contact.name }}</span>{% if lead.contact.details %}<br><small class="text-muted">{{ lead.contact.details }}</small>{% endif %}</td>
               <td>{{ lead.company|default:"-" }}</td>
-              <td><span class="badge bg-{{ lead.status_tone }}-subtle text-{{ lead.status_tone }}">{{ lead.status_label }}</span></td>
+              <td><span class="badge bg-{{ lead.qualification_status_tone }}-subtle text-{{ lead.qualification_status_tone }}">{{ lead.qualification_status_label }}</span></td>
+              <td>{{ lead.handoff_status_label }}</td>
+              <td><span class="badge bg-{{ lead.dispatch_status_tone }}-subtle text-{{ lead.dispatch_status_tone }}">{{ lead.dispatch_status_label }}</span></td>
               <td><span class="badge bg-{{ lead.crm_state.tone }}-subtle text-{{ lead.crm_state.tone }}">{{ lead.crm_state.label }}</span></td>
               <td>
                 <span class="badge bg-{{ lead.outbox_status_tone }}-subtle text-{{ lead.outbox_status_tone }}">{{ lead.outbox_status_label }}</span>

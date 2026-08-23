@@ -25,6 +25,7 @@ from assistant_core.state import LeadState, next_state_after_message
 from conversations.models import Conversation
 
 from ..models import LeadDraft
+from .commercial import QualificationPolicy, QualificationService
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,9 @@ class LeadCaptureService:
         "desenvolver",
     )
 
+    def __init__(self, qualification_service: QualificationService | None = None):
+        self.qualification_service = qualification_service or QualificationService()
+
     def get_or_create_lead_draft(self, conversation: Conversation) -> LeadDraft:
         lead_draft, _ = LeadDraft.objects.get_or_create(
             conversation=conversation,
@@ -86,61 +90,34 @@ class LeadCaptureService:
         conversation: Conversation,
         message: str,
         history: Iterable[dict[str, str]] | None = None,
+        policy: QualificationPolicy | None = None,
     ) -> LeadCaptureResult:
-        lead_draft = self.get_or_create_lead_draft(conversation)
         corpus = self._build_corpus(history=history, message=message)
         snapshot = extract_contact_snapshot(corpus)
-        current_snapshot = extract_contact_snapshot(message)
-        invalid_fields: list[str] = []
+        outcome = self.qualification_service.qualify_from_message(
+            conversation=conversation,
+            message=message,
+            history=history,
+            policy=policy,
+        )
 
-        self._merge_validated(lead_draft, "name", snapshot.name, is_valid_name, invalid_fields)
-        self._merge_validated(lead_draft, "company", snapshot.company, is_valid_company, invalid_fields)
-        self._merge_validated(lead_draft, "email", snapshot.email, is_valid_email, invalid_fields)
-        self._merge_validated(lead_draft, "phone", snapshot.phone, is_valid_phone, invalid_fields)
-        self._merge_validated(lead_draft, "city", snapshot.city, is_valid_city, invalid_fields)
-
-        if current_snapshot.email and not is_valid_email(current_snapshot.email):
-            self._append_invalid(invalid_fields, "email")
-        elif looks_like_invalid_email(message):
-            self._append_invalid(invalid_fields, "email")
-
-        if current_snapshot.phone and not is_valid_phone(current_snapshot.phone):
-            self._append_invalid(invalid_fields, "phone")
-        elif looks_like_invalid_phone(message):
-            self._append_invalid(invalid_fields, "phone")
-
-        need_summary = self._extract_need_summary(history=history, message=message)
-        if need_summary:
-            lead_draft.need_summary = self._merge_text(lead_draft.need_summary, need_summary)
-        elif self._message_is_vague_need(message) and not is_valid_need_summary(lead_draft.need_summary):
-            self._append_invalid(invalid_fields, "need_summary")
-
-        previous_status = lead_draft.status
-        missing_fields = self.calculate_missing_fields(lead_draft)
-        if lead_draft.status not in {LeadDraft.Status.SENT_TO_CRM, LeadDraft.Status.FAILED}:
-            lead_draft.status = (
-                LeadDraft.Status.QUALIFIED
-                if minimum_lead_data_met(lead_draft)
-                else LeadDraft.Status.DRAFT
-            )
-        lead_draft.save()
-        if previous_status != lead_draft.status and lead_draft.status == LeadDraft.Status.QUALIFIED:
-            self._dispatch_webhook_lead_qualified(lead_draft)
+        if outcome.is_qualified:
+            self._dispatch_webhook_lead_qualified(outcome.lead_draft)
 
         state_snapshot = next_state_after_message(
             conversation,
-            lead_draft,
+            outcome.lead_draft,
             intent="",
             extracted_data=snapshot,
         )
-        self._sync_conversation(conversation, lead_draft, state_snapshot.state)
+        self._sync_conversation(conversation, outcome.lead_draft, state_snapshot.state)
 
         return LeadCaptureResult(
-            lead_draft=lead_draft,
-            missing_fields=missing_fields,
-            is_qualified=lead_draft.status == LeadDraft.Status.QUALIFIED,
+            lead_draft=outcome.lead_draft,
+            missing_fields=outcome.missing_fields,
+            is_qualified=outcome.is_qualified,
             extracted_snapshot=snapshot,
-            invalid_fields=invalid_fields,
+            invalid_fields=outcome.invalid_fields,
             state=state_snapshot.state,
         )
 
@@ -157,14 +134,7 @@ class LeadCaptureService:
         )
 
     def calculate_missing_fields(self, lead_draft: LeadDraft) -> list[str]:
-        missing: list[str] = []
-        if not self._has_need_summary(lead_draft):
-            missing.append("need_summary")
-        if not self._has_name_or_company(lead_draft):
-            missing.append("name_or_company")
-        if not self._has_phone_or_email(lead_draft):
-            missing.append("phone_or_email")
-        return missing
+        return self.qualification_service.missing_fields(lead_draft)
 
     def build_next_prompt(
         self,

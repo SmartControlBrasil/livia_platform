@@ -13,6 +13,10 @@ from leads.models import LeadDraft
 from .payloads import build_event_envelope, build_handoff_created_data, build_lead_qualified_data
 
 
+def _save_if_changed(obj, fields):
+    obj.save(update_fields=list(fields) + ["updated_at"])
+
+
 def enqueue_outbox_event(*, tenant, event_type: str, aggregate_type: str, aggregate_id, data: dict, deduplication_key: str | None = None, max_attempts: int | None = None) -> tuple[OutboxEvent, bool]:
     event_id = uuid.uuid4()
     dedupe = deduplication_key or f"{tenant.id}:{event_type}:{aggregate_type}:{aggregate_id}:v1"
@@ -38,13 +42,17 @@ def enqueue_outbox_event(*, tenant, event_type: str, aggregate_type: str, aggreg
 def enqueue_lead_qualified(lead_draft: LeadDraft) -> tuple[OutboxEvent, bool]:
     if lead_draft.tenant_id != getattr(lead_draft.conversation, "tenant_id", lead_draft.tenant_id):
         raise ValueError("LeadDraft tenant does not match its conversation tenant.")
-    return enqueue_outbox_event(
+    event, created = enqueue_outbox_event(
         tenant=lead_draft.tenant,
         event_type=OutboxEvent.EventType.LEAD_QUALIFIED,
         aggregate_type="LeadDraft",
         aggregate_id=lead_draft.pk,
         data=build_lead_qualified_data(lead_draft),
     )
+    if getattr(lead_draft, "dispatch_status", "") in {"", LeadDraft.DispatchStatus.NOT_QUEUED}:
+        lead_draft.dispatch_status = LeadDraft.DispatchStatus.PENDING
+        _save_if_changed(lead_draft, ["dispatch_status"])
+    return event, created
 
 
 def enqueue_handoff_created(handoff: HandoffRequest) -> tuple[OutboxEvent, bool]:
@@ -52,10 +60,14 @@ def enqueue_handoff_created(handoff: HandoffRequest) -> tuple[OutboxEvent, bool]
         raise ValueError("Handoff tenant does not match its conversation tenant.")
     if handoff.lead_draft_id and handoff.lead_draft.tenant_id != handoff.tenant_id:
         raise ValueError("Handoff lead tenant does not match handoff tenant.")
-    return enqueue_outbox_event(
+    event, created = enqueue_outbox_event(
         tenant=handoff.tenant,
         event_type=OutboxEvent.EventType.HANDOFF_CREATED,
         aggregate_type="HandoffRequest",
         aggregate_id=handoff.pk,
         data=build_handoff_created_data(handoff),
     )
+    if getattr(handoff, "dispatch_state", "") in {"", HandoffRequest.DispatchState.PENDING}:
+        handoff.dispatch_state = HandoffRequest.DispatchState.PENDING
+        _save_if_changed(handoff, ["dispatch_state"])
+    return event, created

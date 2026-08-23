@@ -31,17 +31,19 @@
       {% if page_obj.object_list %}
       <div class="table-responsive">
         <table class="table table-hover table-nowrap align-middle mb-0">
-          <thead><tr><th>Tenant</th><th>Domínio</th><th>Status</th><th>Assistente</th><th>Widget</th><th>Knowledge</th><th>Atualizado</th><th></th></tr></thead>
+          <thead><tr><th>Tenant</th><th>Domínio</th><th>Status</th><th>Operação</th><th>Site</th><th>Knowledge</th><th>Comercial</th><th>Integrações</th><th>Última atividade</th><th></th></tr></thead>
           <tbody>
             {% for tenant in page_obj.object_list %}
             <tr>
               <td><span class="fw-medium text-dark">{{ tenant.name }}</span><br><small class="text-muted">{{ tenant.slug }}</small></td>
               <td>{{ tenant.domain|default:"-" }}</td>
               <td>{% if tenant.is_active %}<span class="badge bg-success-subtle text-success">Ativo</span>{% else %}<span class="badge bg-secondary-subtle text-secondary">Inativo</span>{% endif %}</td>
-              <td>{% if tenant.assistant_profile %}{{ tenant.assistant_profile.name }}<br><small class="text-muted">{{ tenant.assistant_profile.business_domain|default:"sem domínio de negócio" }}</small>{% else %}<span class="text-muted">Sem perfil</span>{% endif %}</td>
-              <td>{% if tenant.assistant_profile and tenant.assistant_profile.is_widget_enabled %}<span class="badge bg-success-subtle text-success">Habilitado</span>{% else %}<span class="badge bg-warning-subtle text-warning">Desabilitado</span>{% endif %}</td>
-              <td>{{ tenant.knowledge_document_count }}</td>
-              <td>{{ tenant.updated_at|date:"d/m/Y H:i" }}</td>
+              <td><span class="badge bg-{{ tenant.operational_status.tone }}-subtle text-{{ tenant.operational_status.tone }}">{{ tenant.operational_status.status }}</span><br><small class="text-muted">{{ tenant.operational_status.warnings|length }} avisos</small></td>
+              <td><span class="badge bg-{{ tenant.operational_status.site.tone }}-subtle text-{{ tenant.operational_status.site.tone }}">{{ tenant.operational_status.site.status }}</span></td>
+              <td><span class="badge bg-{{ tenant.operational_status.knowledge.tone }}-subtle text-{{ tenant.operational_status.knowledge.tone }}">{{ tenant.operational_status.knowledge.status }}</span><br><small class="text-muted">{{ tenant.operational_status.knowledge.details.documents_indexed }}/{{ tenant.operational_status.knowledge.details.documents_enabled }} indexados</small></td>
+              <td><span class="badge bg-{{ tenant.operational_status.commercial.tone }}-subtle text-{{ tenant.operational_status.commercial.tone }}">{{ tenant.operational_status.commercial.status }}</span></td>
+              <td><span class="badge bg-{{ tenant.operational_status.integrations.tone }}-subtle text-{{ tenant.operational_status.integrations.tone }}">{{ tenant.operational_status.integrations.status }}</span></td>
+              <td>{% if tenant.operational_status.last_activity_at %}{{ tenant.operational_status.last_activity_at|date:"d/m/Y H:i" }}{% else %}<span class="text-muted">-</span>{% endif %}</td>
               <td><a class="btn btn-sm btn-primary" href="{% url 'operations_portal:tenant_detail' tenant.pk %}">Gerenciar</a></td>
             </tr>
             {% endfor %}

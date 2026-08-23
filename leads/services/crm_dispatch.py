@@ -43,8 +43,9 @@ class CRMDispatchService:
         if self._already_dispatched(lead_draft):
             if lead_draft.status != LeadDraft.Status.SENT_TO_CRM:
                 lead_draft.status = LeadDraft.Status.SENT_TO_CRM
+                lead_draft.dispatch_status = LeadDraft.DispatchStatus.DELIVERED
                 lead_draft.crm_error = ""
-                lead_draft.save(update_fields=["status", "crm_error", "updated_at"])
+                lead_draft.save(update_fields=["status", "dispatch_status", "crm_error", "updated_at"])
             self._log_event(
                 "crm_dispatch_ignored_already_sent",
                 lead_draft=lead_draft,
@@ -162,12 +163,14 @@ class CRMDispatchService:
         if response.success:
             external_id = response.external_id or self._build_mock_external_id(lead_draft)
             lead_draft.status = LeadDraft.Status.SENT_TO_CRM
+            lead_draft.dispatch_status = LeadDraft.DispatchStatus.DRY_RUN if response.dry_run else LeadDraft.DispatchStatus.DELIVERED
             lead_draft.crm_external_id = external_id
             lead_draft.crm_error = ""
             lead_draft.sent_to_crm_at = timezone.now()
             lead_draft.save(
                 update_fields=[
                     "status",
+                    "dispatch_status",
                     "crm_external_id",
                     "crm_error",
                     "sent_to_crm_at",
@@ -190,8 +193,9 @@ class CRMDispatchService:
             )
 
         lead_draft.status = LeadDraft.Status.FAILED
+        lead_draft.dispatch_status = LeadDraft.DispatchStatus.FAILED
         lead_draft.crm_error = response.message
-        lead_draft.save(update_fields=["status", "crm_error", "updated_at"])
+        lead_draft.save(update_fields=["status", "dispatch_status", "crm_error", "updated_at"])
         self._log_event(
             "crm_dispatch_failure_dry_run" if response.dry_run else "crm_dispatch_failure_real",
             lead_draft=lead_draft,

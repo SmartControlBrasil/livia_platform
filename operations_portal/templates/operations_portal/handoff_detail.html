@@ -26,7 +26,9 @@
     <div class="col-xl-4">
       <div class="card"><div class="card-header"><h5 class="card-title mb-0">Dados do handoff</h5></div><div class="card-body">
         <p><span class="text-muted">Tenant:</span> <strong>{{ handoff.tenant.slug }}</strong></p>
-        <p><span class="text-muted">Status:</span> <span class="badge bg-{{ handoff.status_tone }}-subtle text-{{ handoff.status_tone }}">{{ handoff.status_label }}</span></p>
+        <p><span class="text-muted">Status legado:</span> <span class="badge bg-{{ handoff.status_tone }}-subtle text-{{ handoff.status_tone }}">{{ handoff.status_label }}</span></p>
+        <p><span class="text-muted">Handoff:</span> {{ handoff.handoff_state_label }}</p>
+        <p><span class="text-muted">Dispatch:</span> {{ handoff.dispatch_state_label }}</p>
         <p><span class="text-muted">Prioridade:</span> <span class="badge bg-{{ handoff.priority_tone }}-subtle text-{{ handoff.priority_tone }}">{{ handoff.priority_label }}</span></p>
         <p><span class="text-muted">Motivo:</span> {{ handoff.reason_label }}</p>
         <p><span class="text-muted">Criado:</span> {{ handoff.created_at|date:"d/m/Y H:i" }}</p>

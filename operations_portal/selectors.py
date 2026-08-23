@@ -11,7 +11,10 @@ from django.shortcuts import get_object_or_404
 from conversations.models import Conversation, HandoffRequest, Message
 from integrations.models import OutboxEvent, TenantWebhookConfig
 from leads.models import LeadDraft
+from leads.services.commercial import CommercialReadinessService
 from tenants.models import Tenant
+
+from .operational_readiness import TenantOperationalReadinessService
 
 from .formatters import (
     can_retry_crm_dispatch,
@@ -24,8 +27,13 @@ from .formatters import (
     handoff_status_label,
     handoff_status_tone,
     lead_crm_state,
+    lead_dispatch_status_label,
+    lead_dispatch_status_tone,
+    lead_handoff_status_label,
     lead_status_label,
     lead_status_tone,
+    qualification_status_label,
+    qualification_status_tone,
     mask_email,
     mask_phone,
     short_text,
@@ -130,6 +138,8 @@ def get_dashboard_context(period_value=None, *, tenant=None, user=None):
         "recent_conversations": recent_conversations,
         "recent_leads": recent_leads,
         "integration_statuses": get_integration_statuses(tenant=tenant),
+        "commercial_readiness": CommercialReadinessService().readiness(tenant=tenant) if tenant is not None else None,
+        "operational_status": TenantOperationalReadinessService().for_tenant(tenant) if tenant is not None else None,
         "active_tenants": _active_tenant_queryset(tenant)[:8],
         "operational_work": _operational_work_dashboard(tenant=tenant, user=user),
     }
@@ -318,6 +328,11 @@ def decorate_conversation(conversation):
 def decorate_lead(lead):
     lead.status_label = lead_status_label(lead.status)
     lead.status_tone = lead_status_tone(lead.status)
+    lead.qualification_status_label = qualification_status_label(getattr(lead, "qualification_status", ""))
+    lead.qualification_status_tone = qualification_status_tone(getattr(lead, "qualification_status", ""))
+    lead.handoff_status_label = lead_handoff_status_label(getattr(lead, "handoff_status", ""))
+    lead.dispatch_status_label = lead_dispatch_status_label(getattr(lead, "dispatch_status", ""))
+    lead.dispatch_status_tone = lead_dispatch_status_tone(getattr(lead, "dispatch_status", ""))
     lead.crm_state = lead_crm_state(lead)
     lead.crm_external_id_compact = compact_external_id(lead.crm_external_id)
     lead.need_summary_short = short_text(lead.need_summary, limit=100)
@@ -326,6 +341,14 @@ def decorate_lead(lead):
     lead.masked_phone = mask_phone(lead.phone)
     lead.can_retry_crm_dispatch = can_retry_crm_dispatch(lead)
     lead.crm_error_sanitized = sanitize_error_message(lead.crm_error)
+    lead.collected_field_labels = sorted((lead.field_sources or {}).keys())
+    lead.missing_fields = []
+    try:
+        from leads.services.commercial import QualificationPolicy, QualificationService
+        policy = QualificationPolicy(slug=str(getattr(lead, "qualification_policy", "") or "default"))
+        lead.missing_fields = QualificationService(policy=policy).missing_fields(lead, policy=policy)
+    except Exception:
+        lead.missing_fields = []
     handoffs = list(getattr(lead, "prefetched_handoffs", []))
     lead.latest_handoff = handoffs[0] if handoffs else None
     if lead.latest_handoff is not None:
@@ -335,6 +358,8 @@ def decorate_lead(lead):
 
 def decorate_handoff(handoff, *, detail=False):
     handoff.status_label = handoff_status_label(handoff.status)
+    handoff.handoff_state_label = str(getattr(handoff, "handoff_state", "") or "-").replace("_", " ").title()
+    handoff.dispatch_state_label = str(getattr(handoff, "dispatch_state", "") or "-").replace("_", " ").title()
     handoff.status_tone = handoff_status_tone(handoff.status)
     handoff.priority_label = handoff_priority_label(handoff.priority)
     handoff.priority_tone = handoff_priority_tone(handoff.priority)

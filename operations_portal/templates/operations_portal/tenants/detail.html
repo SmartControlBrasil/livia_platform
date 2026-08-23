@@ -23,7 +23,9 @@
     <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-origins" role="tab">Origens</a></li>
     <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-knowledge" role="tab">Conhecimento</a></li>
     <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-install" role="tab">Instalação</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-rollout" role="tab">Rollout</a></li>
     <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-readiness" role="tab">Readiness</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-operation" role="tab">Operação</a></li>
   </ul>
 
   <div class="tab-content">
@@ -105,6 +107,49 @@
       </div></div>
     </div>
 
+
+
+    <div class="tab-pane" id="tab-rollout" role="tabpanel">
+      {% if rollout_result %}
+      <div class="row g-3">
+        <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Rollout</p><h5 class="mb-0"><span class="badge bg-{% if rollout_result.status == 'READY' or rollout_result.status == 'VALIDATED' %}success{% elif rollout_result.status == 'BLOCKED' or rollout_result.status == 'FAILED' %}danger{% else %}warning{% endif %}-subtle text-{% if rollout_result.status == 'READY' or rollout_result.status == 'VALIDATED' %}success{% elif rollout_result.status == 'BLOCKED' or rollout_result.status == 'FAILED' %}danger{% else %}warning{% endif %}">{{ rollout_result.status }}</span></h5></div></div></div>
+        <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Ambiente</p><h5 class="mb-0">{{ rollout_result.environment }}</h5></div></div></div>
+        <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Origin</p><h5 class="mb-0">{% if rollout_result.origin_valid %}VALID{% else %}INVALID{% endif %}</h5></div></div></div>
+        <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Side effects</p><h5 class="mb-0">{% if rollout_result.side_effects_safe %}SAFE{% else %}BLOCKED{% endif %}</h5></div></div></div>
+      </div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Planejar rollout</h5></div><div class="card-body">
+        <form method="post" class="row g-3 align-items-end">
+          {% csrf_token %}<input type="hidden" name="tenant" value="{{ tenant_obj.pk }}"><input type="hidden" name="action" value="plan_rollout">
+          <div class="col-md-5"><label class="form-label">Origin alvo</label><input class="form-control" name="rollout_origin" value="{{ rollout_result.target_origin }}" placeholder="https://www.cliente.com.br" {% if not can_manage_tenants %}readonly{% endif %}></div>
+          <div class="col-md-3"><label class="form-label">Ambiente</label><select class="form-select" name="rollout_environment" {% if not can_manage_tenants %}disabled{% endif %}><option value="staging" {% if rollout_result.environment == 'staging' %}selected{% endif %}>staging</option><option value="production" {% if rollout_result.environment == 'production' %}selected{% endif %}>production</option></select></div>
+          <div class="col-md-2"><div class="form-check"><input class="form-check-input" type="checkbox" name="allow_widget_disabled" id="allow-widget-disabled" {% if not can_manage_tenants %}disabled{% endif %}><label class="form-check-label" for="allow-widget-disabled">Widget off</label></div><div class="form-check"><input class="form-check-input" type="checkbox" name="allow_knowledge_warning" id="allow-knowledge-warning" {% if not can_manage_tenants %}disabled{% endif %}><label class="form-check-label" for="allow-knowledge-warning">Knowledge warning</label></div></div>
+          <div class="col-md-2">{% if can_manage_tenants %}<button class="btn btn-primary w-100" type="submit">Planejar</button>{% else %}<button class="btn btn-light border w-100" type="button" disabled>Somente leitura</button>{% endif %}</div>
+        </form>
+      </div></div>
+
+      <div class="row g-3">
+        <div class="col-xl-6"><div class="card"><div class="card-header"><h5 class="card-title mb-0">Install package</h5></div><div class="card-body">
+          <p class="mb-1">Tenant esperado: <code>{{ rollout_result.install_plan.expected_tenant }}</code></p>
+          <p class="mb-1">Config: <code>{{ rollout_result.install_plan.config_endpoint }}</code></p>
+          <p class="mb-1">Chat: <code>{{ rollout_result.install_plan.chat_endpoint }}</code></p>
+          <p class="mb-1">Posição: <code>{{ rollout_result.install_plan.widget_position }}</code></p>
+          <textarea class="form-control font-monospace" rows="5" readonly>{{ rollout_result.install_plan.snippet }}</textarea>
+        </div></div></div>
+        <div class="col-xl-6"><div class="card"><div class="card-header"><h5 class="card-title mb-0">Smoke checklist</h5></div><div class="card-body">
+          <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Método</th><th>Path</th><th>Esperado</th></tr></thead><tbody>{% for step in rollout_result.smoke_plan %}<tr><td>{{ step.method }}</td><td><code>{{ step.path }}</code></td><td>{{ step.expected }}</td></tr>{% endfor %}</tbody></table></div>
+        </div></div></div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-xl-6"><div class="card"><div class="card-header"><h5 class="card-title mb-0">Preflight</h5></div><div class="card-body"><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Check</th><th>Status</th><th>Detalhe</th></tr></thead><tbody>{% for check in rollout_result.checks %}<tr><td>{{ check.code }}</td><td><span class="badge bg-{% if check.status == 'PASS' %}success{% else %}danger{% endif %}-subtle text-{% if check.status == 'PASS' %}success{% else %}danger{% endif %}">{{ check.status }}</span></td><td>{{ check.detail }}</td></tr>{% endfor %}</tbody></table></div></div></div></div>
+        <div class="col-xl-6"><div class="card"><div class="card-header"><h5 class="card-title mb-0">Rollback</h5></div><div class="card-body">{% for step in rollout_result.rollback_plan %}<p class="mb-2"><span class="fw-medium">{{ step.code }}</span><br><small class="text-muted">{{ step.instruction }} {{ step.safety }}</small></p>{% endfor %}</div></div></div>
+      </div>
+      {% else %}
+      <div class="card"><div class="card-body text-center text-muted py-5">Cadastre uma origin ativa para gerar o plano de rollout.</div></div>
+      {% endif %}
+    </div>
+
     <div class="tab-pane" id="tab-install" role="tabpanel">
       <div class="card"><div class="card-header"><h5 class="card-title mb-0">Instalação</h5></div><div class="card-body">
         <div class="mb-3"><label class="form-label">Endpoint de config</label><input class="form-control" value="{{ config_endpoint }}" readonly></div>
@@ -112,6 +157,59 @@
         <textarea id="tenant-snippet" class="form-control font-monospace" rows="6" readonly>{{ install_package.snippet }}</textarea>
         <div class="d-flex gap-2 mt-3"><button class="btn btn-primary" type="button" data-copy-target="tenant-snippet">Copiar snippet</button><a class="btn btn-light border" href="/install/{{ tenant_obj.slug }}/" target="_blank" rel="noopener">Página de instalação</a></div>
       </div></div>
+    </div>
+
+
+
+    <div class="tab-pane" id="tab-operation" role="tabpanel">
+      <div class="row g-3">
+        <div class="col-md-4"><div class="card"><div class="card-body"><p class="text-muted mb-1">Status geral</p><h4 class="mb-1"><span class="badge bg-{{ operational_status.tone }}-subtle text-{{ operational_status.tone }}">{{ operational_status.status }}</span></h4><small>{% if operational_status.last_activity_at %}Última atividade: {{ operational_status.last_activity_at|date:"d/m/Y H:i" }}{% else %}Sem atividade operacional registrada{% endif %}</small></div></div></div>
+        <div class="col-md-4"><div class="card"><div class="card-body"><p class="text-muted mb-1">IA</p><h5 class="mb-1">{% if operational_status.integrations.details.ai_allowed %}Permitida{% else %}Bloqueada por política{% endif %}</h5><small>{{ operational_status.integrations.details.ai_status }}</small></div></div></div>
+        <div class="col-md-4"><div class="card"><div class="card-body"><p class="text-muted mb-1">Avisos e incidentes</p><h4 class="mb-0">{{ operational_status.warnings|length }}</h4><small>{{ operational_status.incidents|length }} sinais totais</small></div></div></div>
+      </div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Componentes</h5></div><div class="card-body">
+        <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Componente</th><th>Status</th><th>Resumo</th></tr></thead><tbody>
+          {% for component in operational_status.components %}
+          <tr><td class="text-capitalize">{{ component.name }}</td><td><span class="badge bg-{{ component.tone }}-subtle text-{{ component.tone }}">{{ component.status }}</span></td><td>{{ component.summary }}</td></tr>
+          {% endfor %}
+        </tbody></table></div>
+      </div></div>
+
+      <div class="row g-3">
+        <div class="col-xl-6"><div class="card"><div class="card-header"><h5 class="card-title mb-0">Outbox</h5></div><div class="card-body">
+          <p class="mb-2">{{ operational_status.outbox.summary }}</p>
+          <p class="text-muted mb-0 fs-13">Pending antigo: {{ operational_status.outbox.details.oldest_pending_age_seconds }}s</p>
+        </div></div></div>
+        <div class="col-xl-6"><div class="card"><div class="card-header"><h5 class="card-title mb-0">Commercial</h5></div><div class="card-body">
+          <p class="mb-1">Leads falhando: {{ operational_status.commercial.details.lead_dispatch_failed }}</p>
+          <p class="mb-1">Handoffs pendentes antigos: {{ operational_status.commercial.details.pending_handoffs_old }}</p>
+          <p class="mb-0">Leads qualificados sem handoff: {{ operational_status.commercial.details.qualified_without_handoff }}</p>
+        </div></div></div>
+      </div>
+
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Avisos e incidentes</h5></div><div class="card-body">
+        {% if operational_status.incidents %}
+        <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>Código</th><th>Área</th><th>Severidade</th><th>Qtd.</th><th>Mensagem</th></tr></thead><tbody>
+          {% for issue in operational_status.incidents %}
+          <tr><td>{{ issue.code }}</td><td>{{ issue.component }}</td><td>{{ issue.severity }}</td><td>{{ issue.count }}</td><td>{{ issue.message }}</td></tr>
+          {% endfor %}
+        </tbody></table></div>
+        {% else %}<div class="text-center text-muted py-4">Nenhum incidente operacional detectado.</div>{% endif %}
+      </div></div>
+
+      <div class="row g-3">
+        <div class="col-xl-6"><div class="card"><div class="card-header"><h5 class="card-title mb-0">Manutenção</h5></div><div class="card-body">
+          {% if operational_status.maintenance_windows %}
+            {% for window in operational_status.maintenance_windows %}<p class="mb-1"><span class="fw-medium">{{ window.title }}</span><br><small class="text-muted">{{ window.starts_at|date:"d/m/Y H:i" }} - {{ window.ends_at|date:"d/m/Y H:i" }}</small></p>{% endfor %}
+          {% else %}<p class="text-muted mb-0">Sem janela ativa.</p>{% endif %}
+        </div></div></div>
+        <div class="col-xl-6"><div class="card"><div class="card-header"><h5 class="card-title mb-0">Auditoria recente</h5></div><div class="card-body">
+          {% if operational_status.recent_audit_events %}
+            {% for event in operational_status.recent_audit_events %}<p class="mb-1"><span class="fw-medium">{{ event.action }}</span><br><small class="text-muted">{{ event.created_at|date:"d/m/Y H:i" }} · {{ event.object_type }}</small></p>{% endfor %}
+          {% else %}<p class="text-muted mb-0">Sem eventos recentes.</p>{% endif %}
+        </div></div></div>
+      </div>
     </div>
 
     <div class="tab-pane" id="tab-readiness" role="tabpanel">

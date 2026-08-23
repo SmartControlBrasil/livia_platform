@@ -22,7 +22,11 @@
       <div class="card"><div class="card-header"><h5 class="card-title mb-0">Dados do lead</h5></div><div class="card-body">
         <div class="row">
           <div class="col-md-6"><p><span class="text-muted">Tenant:</span> <strong>{{ lead.tenant.slug }}</strong></p></div>
-          <div class="col-md-6"><p><span class="text-muted">Status:</span> <span class="badge bg-{{ lead.status_tone }}-subtle text-{{ lead.status_tone }}">{{ lead.status_label }}</span></p></div>
+          <div class="col-md-6"><p><span class="text-muted">Status legado:</span> <span class="badge bg-{{ lead.status_tone }}-subtle text-{{ lead.status_tone }}">{{ lead.status_label }}</span></p></div>
+          <div class="col-md-6"><p><span class="text-muted">Qualificação:</span> <span class="badge bg-{{ lead.qualification_status_tone }}-subtle text-{{ lead.qualification_status_tone }}">{{ lead.qualification_status_label }}</span></p></div>
+          <div class="col-md-6"><p><span class="text-muted">Handoff:</span> {{ lead.handoff_status_label }}</p></div>
+          <div class="col-md-6"><p><span class="text-muted">Dispatch:</span> <span class="badge bg-{{ lead.dispatch_status_tone }}-subtle text-{{ lead.dispatch_status_tone }}">{{ lead.dispatch_status_label }}</span></p></div>
+          <div class="col-md-6"><p><span class="text-muted">Política:</span> {{ lead.qualification_policy|default:"-" }}</p></div>
           <div class="col-md-6"><p><span class="text-muted">Nome:</span> {{ lead.name|default:"-" }}</p></div>
           <div class="col-md-6"><p><span class="text-muted">Empresa:</span> {{ lead.company|default:"-" }}</p></div>
           <div class="col-md-6"><p><span class="text-muted">Cidade:</span> {{ lead.city|default:"-" }}</p></div>
@@ -34,6 +38,10 @@
         <p class="text-break" style="white-space: pre-wrap;">{{ lead.need_summary|default:"-" }}</p>
         <h6 class="text-dark">Resumo executivo</h6>
         <p class="text-muted">{{ lead.need_summary_short|default:"Sem resumo disponível." }}</p>
+        <h6 class="text-dark">Qualificação</h6>
+        <p><span class="text-muted">Dados coletados:</span> {% if lead.collected_field_labels %}{{ lead.collected_field_labels|join:", " }}{% else %}-{% endif %}</p>
+        <p><span class="text-muted">Dados faltantes:</span> {% if lead.missing_fields %}{{ lead.missing_fields|join:", " }}{% else %}-{% endif %}</p>
+        {% if lead.qualification_data %}<pre class="bg-light border rounded p-3 text-break mb-0" style="white-space: pre-wrap;">{{ lead.qualification_data }}</pre>{% endif %}
       </div></div>
     </div>
 

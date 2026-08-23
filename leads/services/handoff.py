@@ -4,14 +4,16 @@ import logging
 import re
 from dataclasses import dataclass
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from assistant_core.qualification import extract_contact_snapshot, normalize_text
+from audit.services import record_audit_event
 from assistant_core.summary import build_conversation_summary, format_conversation_summary_notes
 from conversations.models import HandoffRequest
 from leads.models import LeadDraft
 
+from .commercial import ACTION_HANDOFF_COMPLETED, ACTION_HANDOFF_REQUESTED
 from .handoff_notification import HandoffNotificationService
 
 logger = logging.getLogger(__name__)
@@ -116,7 +118,14 @@ class HandoffService:
         if not decision.should_create:
             return HandoffServiceResult(handoff=None)
 
-        handoff = conversation.handoff_requests.filter(status__in=self.active_statuses).order_by("-created_at").first()
+        handoff_queryset = HandoffRequest.objects.filter(
+            tenant=conversation.tenant,
+            conversation=conversation,
+            status__in=self.active_statuses,
+        ).order_by("-created_at")
+        if connection.features.has_select_for_update:
+            handoff_queryset = handoff_queryset.select_for_update()
+        handoff = handoff_queryset.first()
         created = handoff is None
         if created:
             handoff = HandoffRequest(tenant=conversation.tenant, conversation=conversation)
@@ -138,15 +147,20 @@ class HandoffService:
         handoff.visitor_email = self._first(getattr(lead_draft, "email", ""), snapshot.email, getattr(conversation, "visitor_email", ""))
         handoff.source_page = str(getattr(conversation, "source_page", "") or "")
         handoff.summary = self._build_summary(conversation, lead_draft, message=message)
+        handoff.handoff_state = HandoffRequest.HandoffState.REQUESTED
+        handoff.dispatch_state = getattr(handoff, "dispatch_state", "") or HandoffRequest.DispatchState.PENDING
         handoff.metadata = {
             **(handoff.metadata or {}),
-            "last_message": str(message or "")[:500],
+            "message_signal": self._message_signal(message),
             "service_area": getattr(discovery_result, "service_area", "unknown") if discovery_result is not None else "unknown",
             "intent": getattr(discovery_result, "intent", "unknown") if discovery_result is not None else "unknown",
         }
         handoff.save()
 
         notification_result = None
+        if lead_draft is not None and getattr(lead_draft, "tenant_id", None) == conversation.tenant_id:
+            lead_draft.handoff_status = LeadDraft.HandoffStatus.REQUESTED
+            lead_draft.save(update_fields=["handoff_status", "updated_at"])
         if created:
             from integrations.outbox.service import enqueue_handoff_created
 
@@ -158,17 +172,51 @@ class HandoffService:
                 event.event_id,
                 enqueued,
             )
+            record_audit_event(
+                action=ACTION_HANDOFF_REQUESTED,
+                tenant=handoff.tenant,
+                obj=handoff,
+                after_data={
+                    "handoff_state": handoff.handoff_state,
+                    "dispatch_state": handoff.dispatch_state,
+                    "reason": handoff.reason,
+                    "priority": handoff.priority,
+                },
+                metadata={"outbox_event_id": str(event.event_id), "outbox_created": enqueued},
+            )
         return HandoffServiceResult(handoff=handoff, created=created, notification_result=notification_result)
 
     def mark_sent(self, handoff):
         handoff.status = HandoffRequest.Status.SENT
-        handoff.save(update_fields=["status", "updated_at"])
+        if getattr(handoff, "dispatch_state", "") == HandoffRequest.DispatchState.PENDING:
+            handoff.dispatch_state = HandoffRequest.DispatchState.DELIVERED
+        handoff.save(update_fields=["status", "dispatch_state", "updated_at"])
         return handoff
 
     def mark_resolved(self, handoff):
         handoff.status = HandoffRequest.Status.RESOLVED
+        handoff.handoff_state = HandoffRequest.HandoffState.COMPLETED
         handoff.resolved_at = timezone.now()
-        handoff.save(update_fields=["status", "resolved_at", "updated_at"])
+        handoff.save(update_fields=["status", "handoff_state", "resolved_at", "updated_at"])
+        if handoff.lead_draft_id and handoff.lead_draft.tenant_id == handoff.tenant_id:
+            handoff.lead_draft.handoff_status = LeadDraft.HandoffStatus.COMPLETED
+            handoff.lead_draft.save(update_fields=["handoff_status", "updated_at"])
+        record_audit_event(
+            action=ACTION_HANDOFF_COMPLETED,
+            tenant=handoff.tenant,
+            obj=handoff,
+            after_data={"handoff_state": handoff.handoff_state, "status": handoff.status},
+            metadata={"source": "handoff_service"},
+        )
+        return handoff
+
+    def mark_cancelled(self, handoff):
+        handoff.status = HandoffRequest.Status.CANCELLED
+        handoff.handoff_state = HandoffRequest.HandoffState.CANCELLED
+        handoff.save(update_fields=["status", "handoff_state", "updated_at"])
+        if handoff.lead_draft_id and handoff.lead_draft.tenant_id == handoff.tenant_id:
+            handoff.lead_draft.handoff_status = LeadDraft.HandoffStatus.CANCELLED
+            handoff.lead_draft.save(update_fields=["handoff_status", "updated_at"])
         return handoff
 
     def _build_summary(self, conversation, lead_draft, message="") -> str:
@@ -177,6 +225,16 @@ class HandoffService:
         if current_message and current_message not in summary:
             summary = f"{summary}\n- Última mensagem: {current_message[:500]}"
         return summary
+
+    def _message_signal(self, message: str) -> str:
+        normalized = normalize_text(message)
+        if self._has_explicit_request(normalized):
+            return "explicit_handoff_request"
+        if self._is_urgent(normalized):
+            return "urgent"
+        if self._is_complex_technical(normalized):
+            return "technical_complexity"
+        return "business_rule"
 
     def _has_explicit_request(self, normalized: str) -> bool:
         return any(pattern in normalized for pattern in EXPLICIT_HANDOFF_PATTERNS)
