@@ -1,7 +1,6 @@
 from django.http import HttpResponse, JsonResponse
 
-from tenants.models import Tenant
-from tenants.origins import log_origin_block, validate_tenant_origin
+from tenants.origins import log_origin_block, resolve_public_tenant, validate_tenant_origin
 from tenants.services.widget_config import build_disabled_widget_config, build_widget_config_for_tenant
 
 
@@ -482,13 +481,13 @@ def widget_js(request):
     async function loadConfig() {
       try {
         const response = await fetch(configUrl, { method: "GET", headers: { "X-Livia-Tenant": tenant } });
-        if (!response.ok) {
-          console.error("[Lívia] Configuração do widget recusada:", response.status);
-          return;
-        }
         const data = await response.json().catch(function () {
           return {};
         });
+        if (!response.ok && data.is_widget_enabled !== false) {
+          console.error("[Lívia] Configuração do widget recusada:", response.status);
+          return;
+        }
         applyConfig(data);
       } catch (error) {
         console.error("[Lívia] Falha ao carregar configuração do widget.");
@@ -617,19 +616,25 @@ def widget_js(request):
 
 
 def widget_config(request):
-    tenant_slug = request.GET.get("tenant", "").strip()
-    tenant = Tenant.objects.filter(slug=tenant_slug).first()
-    if tenant is None:
-        return JsonResponse(build_disabled_widget_config(tenant_slug), status=404)
-    if not tenant.is_active:
-        return JsonResponse(build_disabled_widget_config(tenant_slug), status=403)
+    resolution = resolve_public_tenant(request)
+    tenant_slug = resolution.slug
+    if resolution.error == "tenant_required":
+        payload = build_disabled_widget_config(tenant_slug)
+        payload["error"] = "tenant_required"
+        return JsonResponse(payload, status=400)
+    if resolution.error == "tenant_mismatch":
+        return JsonResponse({"error": "tenant_mismatch"}, status=400)
+    if resolution.error == "tenant_unavailable":
+        payload = build_disabled_widget_config(tenant_slug)
+        payload["error"] = "tenant_unavailable"
+        return JsonResponse(payload, status=403 if resolution.tenant is not None else 404)
 
-    result = validate_tenant_origin(request, tenant)
+    result = validate_tenant_origin(request, resolution.tenant)
     if not result.allowed:
-        log_origin_block(tenant, result)
+        log_origin_block(resolution.tenant, result)
         return JsonResponse({"error": "origin_not_allowed"}, status=403)
     request.livia_validated_origin = result.origin
-    return JsonResponse(build_widget_config_for_tenant(tenant))
+    return JsonResponse(build_widget_config_for_tenant(resolution.tenant))
 
 
 def demo_page(request):

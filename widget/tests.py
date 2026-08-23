@@ -231,6 +231,8 @@ class WidgetConfigEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["tenant"], "smart-control-brasil")
+        self.assertEqual(data["api_contract_version"], "2026-08-23")
+        self.assertEqual(data["widget_version"], "1.0")
         self.assertEqual(data["assistant_name"], "Lívia")
         self.assertEqual(data["widget_title"], "Lívia Smart Control")
         self.assertEqual(data["launcher_label"], "Fale conosco")
@@ -283,6 +285,24 @@ class WidgetConfigEndpointTests(TestCase):
         self.assertNotIn("token", payload_text.lower())
         self.assertNotIn("551151968525", payload_text)
         self.assertNotIn("wa.me", payload_text)
+
+    def test_widget_config_disabled_profile_returns_safe_disabled_payload(self):
+        tenant = Tenant.objects.create(name="Disabled Widget", slug="disabled-widget")
+        TenantAllowedOrigin.objects.create(tenant=tenant, origin="https://disabled.example")
+        AssistantProfile.objects.create(tenant=tenant, is_widget_enabled=False)
+
+        response = self.client.get(
+            "/api/widget/config/?tenant=disabled-widget",
+            HTTP_ORIGIN="https://disabled.example",
+            HTTP_X_LIVIA_TENANT="disabled-widget",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertFalse(data["is_widget_enabled"])
+        self.assertEqual(data["api_contract_version"], "2026-08-23")
+        self.assertNotIn("secret", str(data).lower())
+        self.assertNotIn("token", str(data).lower())
 
 
 class WidgetCorsMiddlewareTests(TestCase):

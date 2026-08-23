@@ -1,8 +1,8 @@
 from django.http import HttpResponse
 
 from tenants.origins import (
-    get_tenant_from_public_request,
     log_origin_block,
+    resolve_public_tenant,
     patch_public_cors_headers,
     validate_tenant_origin,
 )
@@ -26,10 +26,15 @@ class LiviaWidgetCorsMiddleware:
         return response
 
     def _handle_preflight(self, request):
-        tenant = get_tenant_from_public_request(request)
-        result = validate_tenant_origin(request, tenant)
+        resolution = resolve_public_tenant(request)
+        if resolution.error == "tenant_mismatch":
+            return HttpResponse(status=400)
+        if resolution.error:
+            return HttpResponse(status=403)
+
+        result = validate_tenant_origin(request, resolution.tenant)
         if not result.allowed:
-            log_origin_block(tenant, result)
+            log_origin_block(resolution.tenant, result)
             return HttpResponse(status=403)
         request.livia_validated_origin = result.origin
         response = HttpResponse(status=204)

@@ -5,8 +5,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from tenants.models import Tenant
-from tenants.origins import log_origin_block, validate_tenant_origin
+from tenants.origins import log_origin_block, resolve_public_tenant, validate_tenant_origin
 
 from .security.ip import get_client_ip
 from .security.rate_limit import check_chat_rate_limit
@@ -59,24 +58,23 @@ def chat_api(request):
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON payload."}, status=400)
 
-    tenant_slug = payload.get("tenant") or payload.get("tenant_id")
-    header_tenant_slug = request.headers.get("X-Livia-Tenant", "").strip()
+    resolution = resolve_public_tenant(request, payload=payload)
+    tenant_slug = resolution.slug
     session_id = payload.get("session_key") or payload.get("session_id")
     user_message_raw = payload.get("message")
     source_page = payload.get("source_page", "")
 
-    if not tenant_slug:
-        return JsonResponse({"error": "tenant is required."}, status=400)
-    tenant_slug = str(tenant_slug).strip()
-    if header_tenant_slug and header_tenant_slug != tenant_slug:
-        return JsonResponse({"error": "tenant header mismatch."}, status=400)
+    if resolution.error == "tenant_required":
+        return JsonResponse({"error": "tenant_required"}, status=400)
+    if resolution.error == "tenant_mismatch":
+        logger.warning("livia_chat_tenant_mismatch tenant_slug=%s endpoint=%s status=400 code=tenant_mismatch", tenant_slug or "unknown", request.path)
+        return JsonResponse({"error": "tenant_mismatch"}, status=400)
+    if resolution.error == "tenant_unavailable":
+        status_code = 403 if resolution.tenant is not None else 404
+        logger.info("livia_chat_tenant_unavailable tenant_slug=%s endpoint=%s status=%s code=tenant_unavailable", tenant_slug or "unknown", request.path, status_code)
+        return _safe_reply_response(INACTIVE_TENANT_REPLY, status=status_code, code="tenant_unavailable")
 
-    tenant = Tenant.objects.filter(slug=tenant_slug).first()
-    if tenant is None:
-        return _safe_reply_response(INACTIVE_TENANT_REPLY, status=404, code="tenant_unavailable")
-    if not tenant.is_active:
-        logger.info("livia_chat_inactive_tenant tenant_slug=%s", tenant_slug)
-        return _safe_reply_response(INACTIVE_TENANT_REPLY, status=403, code="tenant_unavailable")
+    tenant = resolution.tenant
 
     origin_result = validate_tenant_origin(request, tenant)
     if not origin_result.allowed:

@@ -30,6 +30,17 @@ class OriginValidationResult:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class PublicTenantResolution:
+    tenant: object | None
+    slug: str = ""
+    error: str = ""
+
+    @property
+    def ok(self):
+        return not self.error and self.tenant is not None
+
+
 def normalize_origin(value):
     raw_value = str(value or "").strip()
     if not raw_value:
@@ -63,22 +74,46 @@ def get_request_origin(request):
     return request.headers.get("Origin", "").strip()
 
 
+def _payload_tenant_slug(payload=None):
+    if payload is None:
+        return ""
+    return str(payload.get("tenant") or payload.get("tenant_id") or "").strip()
+
+
 def get_public_tenant_slug(request, *, payload=None):
+    resolution = resolve_public_tenant(request, payload=payload)
+    return resolution.slug
+
+
+def resolve_public_tenant(request, *, payload=None):
+    from tenants.models import Tenant
+
     header_slug = request.headers.get(PUBLIC_TENANT_HEADER, "").strip()
     query_slug = request.GET.get("tenant", "").strip()
-    payload_slug = ""
-    if payload is not None:
-        payload_slug = str(payload.get("tenant") or payload.get("tenant_id") or "").strip()
-    return header_slug or payload_slug or query_slug
+    payload_slug = _payload_tenant_slug(payload)
+    explicit = [slug for slug in (header_slug, query_slug, payload_slug) if slug]
+    if len(set(explicit)) > 1:
+        logger.warning(
+            "livia_public_tenant_mismatch endpoint=%s header_present=%s query_present=%s payload_present=%s",
+            getattr(request, "path", ""),
+            bool(header_slug),
+            bool(query_slug),
+            bool(payload_slug),
+        )
+        return PublicTenantResolution(None, slug=header_slug or query_slug or payload_slug, error="tenant_mismatch")
+
+    tenant_slug = header_slug or query_slug or payload_slug
+    if not tenant_slug:
+        return PublicTenantResolution(None, error="tenant_required")
+
+    tenant = Tenant.objects.filter(slug=tenant_slug).first()
+    if tenant is None or not tenant.is_active:
+        return PublicTenantResolution(tenant, slug=tenant_slug, error="tenant_unavailable")
+    return PublicTenantResolution(tenant, slug=tenant_slug)
 
 
 def get_tenant_from_public_request(request, *, payload=None):
-    from tenants.models import Tenant
-
-    tenant_slug = get_public_tenant_slug(request, payload=payload)
-    if not tenant_slug:
-        return None
-    return Tenant.objects.filter(slug=tenant_slug).first()
+    return resolve_public_tenant(request, payload=payload).tenant
 
 
 def is_origin_allowed(tenant, origin):

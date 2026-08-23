@@ -16,7 +16,7 @@ from audit.models import (
 from conversations.models import Conversation, HandoffRequest, Message
 from leads.models import LeadDraft
 from tenants.models import AssistantProfile, Tenant, TenantAllowedOrigin
-from tenants.origins import is_origin_allowed, normalize_origin
+from tenants.origins import is_origin_allowed, normalize_origin, resolve_public_tenant
 from tenants.services.onboarding import TenantOnboardingService
 
 
@@ -186,6 +186,139 @@ class PublicEndpointOriginTests(TestCase):
             HTTP_X_LIVIA_TENANT="tenant",
         )
         self.assertEqual(response.status_code, 403)
+
+
+@override_settings(
+    DEBUG=False,
+    LIVIA_ALLOW_ORIGINLESS_PUBLIC_API=False,
+    LIVIA_AI_ENABLED=False,
+    SMART360_LEAD_DISPATCH_ENABLED=False,
+    SMART360_LEAD_DISPATCH_DRY_RUN=True,
+    SMART360_LEAD_DISPATCH_REAL_ENABLED=False,
+    LIVIA_WEBHOOKS_ENABLED=False,
+    LIVIA_WEBHOOKS_DRY_RUN=True,
+    LIVIA_WEBHOOKS_REAL_ENABLED=False,
+    LIVIA_GOOGLE_DRIVE_SYNC_REAL_ENABLED=False,
+    LIVIA_CHAT_RATE_LIMIT_ENABLED=False,
+)
+class PublicTenantContractTests(TestCase):
+    def setUp(self):
+        self.tenant_a = Tenant.objects.create(name="Tenant A", slug="tenant-a")
+        self.tenant_b = Tenant.objects.create(name="Tenant B", slug="tenant-b")
+        AssistantProfile.objects.create(tenant=self.tenant_a, name="Lívia A")
+        AssistantProfile.objects.create(tenant=self.tenant_b, name="Lívia B")
+        TenantAllowedOrigin.objects.create(tenant=self.tenant_a, origin="https://a.example")
+        TenantAllowedOrigin.objects.create(tenant=self.tenant_b, origin="https://b.example")
+
+    def test_public_tenant_resolution_order_and_mismatch(self):
+        request = self.client.request().wsgi_request
+        request.META["HTTP_X_LIVIA_TENANT"] = "tenant-a"
+        resolution = resolve_public_tenant(request, payload={"tenant": "tenant-a"})
+        self.assertTrue(resolution.ok)
+        self.assertEqual(resolution.tenant, self.tenant_a)
+
+        response = self.client.post(
+            "/api/chat/?tenant=tenant-b",
+            data=json.dumps({"tenant": "tenant-a", "session_id": "mismatch", "request_id": str(uuid.uuid4()), "message": "Olá"}),
+            content_type="application/json",
+            HTTP_ORIGIN="https://a.example",
+            HTTP_X_LIVIA_TENANT="tenant-a",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "tenant_mismatch")
+        self.assertFalse(Conversation.objects.filter(session_id="mismatch").exists())
+
+    def test_origin_is_authorized_against_tenant_pair(self):
+        allowed_a = self.client.get("/api/widget/config/?tenant=tenant-a", HTTP_ORIGIN="https://a.example", HTTP_X_LIVIA_TENANT="tenant-a")
+        denied_cross = self.client.get("/api/widget/config/?tenant=tenant-b", HTTP_ORIGIN="https://a.example", HTTP_X_LIVIA_TENANT="tenant-b")
+        allowed_b = self.client.get("/api/widget/config/?tenant=tenant-b", HTTP_ORIGIN="https://b.example", HTTP_X_LIVIA_TENANT="tenant-b")
+
+        self.assertEqual(allowed_a.status_code, 200)
+        self.assertEqual(allowed_a["Access-Control-Allow-Origin"], "https://a.example")
+        self.assertEqual(denied_cross.status_code, 403)
+        self.assertEqual(denied_cross.json()["error"], "origin_not_allowed")
+        self.assertNotIn("Access-Control-Allow-Origin", denied_cross)
+        self.assertEqual(allowed_b.status_code, 200)
+        self.assertEqual(allowed_b["Access-Control-Allow-Origin"], "https://b.example")
+
+    def test_root_and_www_origins_are_not_equivalent(self):
+        tenant = Tenant.objects.create(name="Cliente", slug="cliente")
+        AssistantProfile.objects.create(tenant=tenant)
+        TenantAllowedOrigin.objects.create(tenant=tenant, origin="https://cliente.com.br")
+
+        root = self.client.get("/api/widget/config/?tenant=cliente", HTTP_ORIGIN="https://cliente.com.br", HTTP_X_LIVIA_TENANT="cliente")
+        www = self.client.get("/api/widget/config/?tenant=cliente", HTTP_ORIGIN="https://www.cliente.com.br", HTTP_X_LIVIA_TENANT="cliente")
+
+        self.assertEqual(root.status_code, 200)
+        self.assertEqual(www.status_code, 403)
+        self.assertEqual(www.json()["error"], "origin_not_allowed")
+
+    def test_full_public_widget_flow_for_valid_site(self):
+        widget = self.client.get("/widget.js")
+        self.assertEqual(widget.status_code, 200)
+        self.assertIn("data-tenant", widget.content.decode("utf-8"))
+
+        config = self.client.get("/api/widget/config/?tenant=tenant-a", HTTP_ORIGIN="https://a.example", HTTP_X_LIVIA_TENANT="tenant-a")
+        self.assertEqual(config.status_code, 200)
+        self.assertEqual(config["Access-Control-Allow-Origin"], "https://a.example")
+        self.assertEqual(config.json()["api_contract_version"], "2026-08-23")
+        self.assertNotEqual(config["Access-Control-Allow-Origin"], "*")
+
+        options = self.client.options(
+            "/api/chat/?tenant=tenant-a",
+            HTTP_ORIGIN="https://a.example",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type,x-livia-tenant,x-livia-request-id",
+        )
+        self.assertEqual(options.status_code, 204)
+        self.assertEqual(options["Access-Control-Allow-Origin"], "https://a.example")
+        self.assertIn("GET", options["Access-Control-Allow-Methods"])
+        self.assertIn("POST", options["Access-Control-Allow-Methods"])
+        self.assertIn("OPTIONS", options["Access-Control-Allow-Methods"])
+        self.assertIn("Origin", options["Vary"])
+
+        request_id = str(uuid.uuid4())
+        chat = self.client.post(
+            "/api/chat/?tenant=tenant-a",
+            data=json.dumps({"session_id": "full-flow", "request_id": request_id, "message": "Olá"}),
+            content_type="application/json",
+            HTTP_ORIGIN="https://a.example",
+            HTTP_X_LIVIA_TENANT="tenant-a",
+            HTTP_X_LIVIA_REQUEST_ID=request_id,
+        )
+        self.assertEqual(chat.status_code, 200)
+        self.assertEqual(chat["Access-Control-Allow-Origin"], "https://a.example")
+        self.assertEqual(chat.json()["tenant"], "tenant-a")
+        self.assertTrue(Conversation.objects.filter(tenant=self.tenant_a, session_id="full-flow").exists())
+
+    def test_tenant_isolation_blocks_cross_origin_and_identity_reuse(self):
+        cross_origin = self.client.post(
+            "/api/chat/?tenant=tenant-a",
+            data=json.dumps({"tenant": "tenant-a", "session_id": "cross-origin", "request_id": str(uuid.uuid4()), "message": "Olá"}),
+            content_type="application/json",
+            HTTP_ORIGIN="https://b.example",
+            HTTP_X_LIVIA_TENANT="tenant-a",
+        )
+        self.assertEqual(cross_origin.status_code, 403)
+
+        ambiguous_config = self.client.get(
+            "/api/widget/config/?tenant=tenant-b",
+            HTTP_ORIGIN="https://b.example",
+            HTTP_X_LIVIA_TENANT="tenant-a",
+        )
+        self.assertEqual(ambiguous_config.status_code, 400)
+        self.assertEqual(ambiguous_config.json()["error"], "tenant_mismatch")
+
+        incompatible_identity = self.client.post(
+            "/api/chat/?tenant=tenant-b",
+            data=json.dumps({"tenant": "tenant-b", "session_id": "cross-identity", "request_id": str(uuid.uuid4()), "message": "Olá"}),
+            content_type="application/json",
+            HTTP_ORIGIN="https://b.example",
+            HTTP_X_LIVIA_TENANT="tenant-a",
+        )
+        self.assertEqual(incompatible_identity.status_code, 400)
+        self.assertEqual(incompatible_identity.json()["error"], "tenant_mismatch")
+        self.assertFalse(Conversation.objects.filter(session_id__in=["cross-origin", "cross-identity"]).exists())
 
 
 class WidgetAndOnboardingOriginTests(TestCase):

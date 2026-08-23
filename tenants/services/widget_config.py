@@ -12,6 +12,9 @@ from tenants.models import (
     Tenant,
 )
 
+PUBLIC_WIDGET_VERSION = "1.0"
+PUBLIC_API_CONTRACT_VERSION = "2026-08-23"
+
 
 def build_widget_config_for_tenant_slug(tenant_slug):
     tenant = Tenant.objects.filter(slug=tenant_slug).first()
@@ -34,6 +37,8 @@ def build_widget_config_payload(tenant, profile):
     enabled = bool(tenant.is_active and profile.is_active and profile.is_widget_enabled)
     payload = {
         "tenant": tenant.slug,
+        "widget_version": PUBLIC_WIDGET_VERSION,
+        "api_contract_version": PUBLIC_API_CONTRACT_VERSION,
         "assistant_name": profile.name,
         "widget_title": widget_title,
         "launcher_label": profile.launcher_label or DEFAULT_WIDGET_LAUNCHER_LABEL,
@@ -51,6 +56,8 @@ def build_widget_config_payload(tenant, profile):
 def build_disabled_widget_config(tenant_slug):
     payload = {
         "tenant": tenant_slug or "",
+        "widget_version": PUBLIC_WIDGET_VERSION,
+        "api_contract_version": PUBLIC_API_CONTRACT_VERSION,
         "assistant_name": "Lívia",
         "widget_title": "Lívia",
         "launcher_label": DEFAULT_WIDGET_LAUNCHER_LABEL,
