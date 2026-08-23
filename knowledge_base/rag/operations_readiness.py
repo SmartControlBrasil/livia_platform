@@ -124,22 +124,31 @@ def inspect_rag_operations_readiness(*, tenant: Tenant | None = None) -> list[Op
                     detail="tenant_without_rag_configuration",
                 )
             )
-        elif not configuration.approved_folder_id:
+        elif configuration.source_mode == TenantRagConfiguration.SOURCE_MANUAL and not configuration.sync_enabled:
             checks.append(
                 OperationsReadinessCheck(
                     code="tenant_source",
-                    ok=False,
-                    severity="warning",
-                    detail="approved_folder_missing",
+                    ok=True,
+                    severity="info",
+                    detail="manual_knowledge_configured",
                 )
             )
-        else:
+        elif configuration.uses_google_drive and configuration.approved_folder_id:
             checks.append(
                 OperationsReadinessCheck(
                     code="tenant_source",
                     ok=True,
                     severity="info",
                     detail="approved_folder_configured",
+                )
+            )
+        else:
+            checks.append(
+                OperationsReadinessCheck(
+                    code="tenant_source",
+                    ok=False,
+                    severity="warning",
+                    detail="google_drive_folder_missing",
                 )
             )
 

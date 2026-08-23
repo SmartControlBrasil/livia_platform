@@ -9,6 +9,13 @@ from knowledge_base.rag.vector_field import RagVectorField, configured_embedding
 
 
 class TenantRagConfiguration(models.Model):
+    SOURCE_MANUAL = "manual"
+    SOURCE_GOOGLE_DRIVE = "google_drive"
+
+    class SourceMode(models.TextChoices):
+        MANUAL = "manual", "Manual/local"
+        GOOGLE_DRIVE = "google_drive", "Google Drive"
+
     class InventoryStatus(models.TextChoices):
         IDLE = "idle", "Idle"
         RUNNING = "running", "Running"
@@ -21,7 +28,18 @@ class TenantRagConfiguration(models.Model):
         on_delete=models.CASCADE,
         related_name="rag_configuration",
     )
-    approved_folder_id = models.CharField(max_length=120)
+    source_mode = models.CharField(
+        max_length=30,
+        choices=SourceMode.choices,
+        default=SOURCE_MANUAL,
+        help_text="Origem operacional do conhecimento: manual/local ou Google Drive.",
+    )
+    approved_folder_id = models.CharField(
+        max_length=120,
+        blank=True,
+        default="",
+        help_text="ID da pasta aprovada no Google Drive. Opcional para conhecimento manual/local.",
+    )
     sync_enabled = models.BooleanField(default=False)
     retrieval_enabled = models.BooleanField(
         default=False,
@@ -79,16 +97,38 @@ class TenantRagConfiguration(models.Model):
         indexes = [
             models.Index(fields=["sync_enabled"]),
             models.Index(fields=["retrieval_enabled"]),
+            models.Index(fields=["source_mode"]),
             models.Index(fields=["operational_monitoring_enabled"]),
             models.Index(fields=["last_inventory_status"]),
             models.Index(fields=["last_index_status"]),
         ]
 
     def __str__(self):
-        return f"{self.tenant.slug} / {self.approved_folder_id}"
+        source = self.approved_folder_id or self.source_mode
+        return f"{self.tenant.slug} / {source}"
+
+    @property
+    def uses_google_drive(self) -> bool:
+        return self.source_mode == self.SOURCE_GOOGLE_DRIVE
+
+    @property
+    def requires_drive_folder(self) -> bool:
+        return self.uses_google_drive and self.sync_enabled
+
+    def _normalize_source_mode(self):
+        self.approved_folder_id = str(self.approved_folder_id or "").strip()
+        if self.source_mode not in {self.SOURCE_MANUAL, self.SOURCE_GOOGLE_DRIVE}:
+            self.source_mode = self.SOURCE_MANUAL
+        if self.source_mode == self.SOURCE_MANUAL and self.sync_enabled and self.approved_folder_id:
+            self.source_mode = self.SOURCE_GOOGLE_DRIVE
 
     def clean(self):
+        self._normalize_source_mode()
         errors = {}
+        if self.source_mode == self.SOURCE_GOOGLE_DRIVE and self.sync_enabled and not self.approved_folder_id:
+            errors["approved_folder_id"] = "Google Drive sync requires an approved folder ID."
+        if self.source_mode == self.SOURCE_MANUAL and self.sync_enabled:
+            errors["sync_enabled"] = "Manual/local knowledge does not use Google Drive sync."
         if self.min_similarity_score is not None:
             value = float(self.min_similarity_score)
             if not math.isfinite(value) or value < 0.0 or value > 1.0:
@@ -104,6 +144,11 @@ class TenantRagConfiguration(models.Model):
 
     def save(self, *args, **kwargs):
         self.full_clean()
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            fields = set(update_fields)
+            fields.update({"source_mode", "approved_folder_id"})
+            kwargs["update_fields"] = list(fields)
         super().save(*args, **kwargs)
 
 

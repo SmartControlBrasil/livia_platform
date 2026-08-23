@@ -326,13 +326,17 @@ def create_operation_request(
     if operation in {
         TenantRagOperationRequest.Operation.INVENTORY,
         TenantRagOperationRequest.Operation.SYNC_EXPORT,
-        TenantRagOperationRequest.Operation.BUILD_CHUNKS,
-        TenantRagOperationRequest.Operation.FULL_REINDEX,
-    } and not configuration.sync_enabled:
-        raise RagOperationsError(
-            "Sincronização deste tenant está desabilitada.",
-            code="sync_disabled",
-        )
+    }:
+        if not configuration.sync_enabled:
+            raise RagOperationsError(
+                "Sincronização Google Drive deste tenant está desabilitada.",
+                code="sync_disabled",
+            )
+        if not configuration.uses_google_drive or not configuration.approved_folder_id:
+            raise RagOperationsError(
+                "Sincronização Google Drive requer pasta aprovada configurada.",
+                code="drive_source_missing",
+            )
 
     duplicate_reason = None
     request = None
@@ -440,6 +444,11 @@ def _execute_sync_operation(
         outcome = run_chunk_build_for_tenant(configuration=configuration)
     else:
         manual_result = None
+        if not configuration.uses_google_drive or not configuration.approved_folder_id:
+            raise RagOperationsError(
+                "Sincronização Google Drive requer pasta aprovada configurada.",
+                code="drive_source_missing",
+            )
         _assert_google_drive_sync_real_allowed(tenant=tenant, run_id=run_id)
         service = build_google_drive_readonly_service()
         inventory = GoogleDriveInventoryService(service).inventory_approved_folder(configuration.approved_folder_id)

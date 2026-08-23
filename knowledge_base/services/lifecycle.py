@@ -24,6 +24,7 @@ from knowledge_base.services.manual_rag import (
     deactivate_manual_document_from_rag,
     manual_document_rag_state,
     manual_drive_file_id,
+    ensure_manual_rag_configuration,
     sync_manual_knowledge_document_to_rag,
 )
 
@@ -406,9 +407,7 @@ class KnowledgeLifecycleService:
             raise KnowledgeDocument.DoesNotExist("Knowledge document not found for tenant.")
         if document.status != KnowledgeDocument.Status.ACTIVE:
             return KnowledgeReindexResult(tenant=tenant, document=document, status=DOCUMENT_DISABLED, dry_run=dry_run)
-        configuration = TenantRagConfiguration.objects.filter(tenant=tenant).first()
-        if configuration is None:
-            return KnowledgeReindexResult(tenant=tenant, document=document, status=INDEX_FAILED, dry_run=dry_run, failed=1, error="configuration_missing")
+        configuration = ensure_manual_rag_configuration(tenant=tenant)
         drive_file_id = manual_drive_file_id(document)
         if dry_run:
             state = self.document_state(document=document)

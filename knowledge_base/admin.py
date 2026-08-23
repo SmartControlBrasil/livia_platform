@@ -91,6 +91,7 @@ class KnowledgeDocumentAdmin(admin.ModelAdmin):
 class TenantRagConfigurationAdmin(admin.ModelAdmin):
     list_display = [
         "tenant",
+        "source_mode",
         "sync_enabled",
         "retrieval_enabled",
         "min_similarity_score",
@@ -104,7 +105,7 @@ class TenantRagConfigurationAdmin(admin.ModelAdmin):
         "last_index_status",
         "last_index_at",
     ]
-    list_filter = ["sync_enabled", "retrieval_enabled", "last_inventory_status", "last_index_status"]
+    list_filter = ["source_mode", "sync_enabled", "retrieval_enabled", "last_inventory_status", "last_index_status"]
     search_fields = ["tenant__slug", "tenant__name", "approved_folder_id"]
     readonly_fields = [
         "created_at",
@@ -121,6 +122,7 @@ class TenantRagConfigurationAdmin(admin.ModelAdmin):
         "last_index_error",
     ]
     audit_fields = [
+        "source_mode",
         "approved_folder_id",
         "sync_enabled",
         "retrieval_enabled",

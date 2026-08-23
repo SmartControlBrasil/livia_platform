@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 
@@ -190,3 +191,116 @@ class KnowledgeLifecycleServiceTests(RagTestDimensionMixin, TestCase):
         )
 
         self.assertEqual(onboarded.knowledge_status, READINESS_STALE)
+
+    def test_manual_configuration_does_not_require_google_drive_folder(self):
+        tenant = Tenant.objects.create(name="Manual Only", slug="manual-only")
+        config = TenantRagConfiguration.objects.create(
+            tenant=tenant,
+            source_mode=TenantRagConfiguration.SOURCE_MANUAL,
+            sync_enabled=False,
+            retrieval_enabled=True,
+        )
+
+        self.assertEqual(config.approved_folder_id, "")
+        self.assertFalse(config.requires_drive_folder)
+
+    def test_import_creates_manual_rag_configuration_automatically(self):
+        tenant = Tenant.objects.create(name="Import Manual", slug="import-manual")
+        with TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "manual.md"
+            source.write_text("Conhecimento manual criado sem Drive.", encoding="utf-8")
+            result = import_tenant_knowledge_path(tenant=tenant, source=source, replace=True)
+
+        config = TenantRagConfiguration.objects.get(tenant=tenant)
+        self.assertEqual(result.created, 1)
+        self.assertEqual(config.source_mode, TenantRagConfiguration.SOURCE_MANUAL)
+        self.assertEqual(config.approved_folder_id, "")
+        self.assertFalse(config.sync_enabled)
+        self.assertTrue(config.retrieval_enabled)
+
+    def test_reindex_manual_document_without_prior_configuration(self):
+        tenant = Tenant.objects.create(name="Reindex Manual", slug="reindex-manual")
+        result = self.service.upsert_document(
+            tenant=tenant,
+            title="Manual Sem Config",
+            slug="manual-sem-config",
+            content="Documento manual indexavel sem pasta Google Drive.",
+            source_type="manual",
+        )
+
+        indexed = self.service.reindex_document(tenant=tenant, document_id=result.document.pk)
+        config = TenantRagConfiguration.objects.get(tenant=tenant)
+
+        self.assertEqual(indexed.status, INDEX_COMPLETED)
+        self.assertEqual(config.source_mode, TenantRagConfiguration.SOURCE_MANUAL)
+        self.assertEqual(config.approved_folder_id, "")
+        self.assertEqual(self.service.readiness(tenant=tenant).status, READINESS_READY)
+
+    def test_google_drive_configuration_requires_folder_when_sync_enabled(self):
+        tenant = Tenant.objects.create(name="Drive Missing", slug="drive-missing")
+        config = TenantRagConfiguration(
+            tenant=tenant,
+            source_mode=TenantRagConfiguration.SOURCE_GOOGLE_DRIVE,
+            sync_enabled=True,
+            retrieval_enabled=True,
+        )
+
+        with self.assertRaises(ValidationError):
+            config.full_clean()
+
+    def test_google_drive_configuration_with_folder_remains_supported(self):
+        tenant = Tenant.objects.create(name="Drive Valid", slug="drive-valid")
+        config = TenantRagConfiguration.objects.create(
+            tenant=tenant,
+            source_mode=TenantRagConfiguration.SOURCE_GOOGLE_DRIVE,
+            approved_folder_id="folder-valid",
+            sync_enabled=True,
+            retrieval_enabled=True,
+        )
+
+        self.assertTrue(config.requires_drive_folder)
+        self.assertEqual(config.approved_folder_id, "folder-valid")
+
+    def test_legacy_drive_configuration_infers_google_drive_source_mode(self):
+        tenant = Tenant.objects.create(name="Legacy Drive", slug="legacy-drive")
+        config = TenantRagConfiguration.objects.create(
+            tenant=tenant,
+            approved_folder_id="legacy-folder",
+            sync_enabled=True,
+        )
+
+        self.assertEqual(config.source_mode, TenantRagConfiguration.SOURCE_GOOGLE_DRIVE)
+
+    def test_configure_command_can_create_and_normalize_manual_configuration(self):
+        tenant = Tenant.objects.create(name="Command Manual", slug="command-manual")
+        out = StringIO()
+        call_command(
+            "configure_tenant_rag",
+            "--tenant",
+            tenant.slug,
+            "--source-mode",
+            "manual",
+            "--disable-sync",
+            "--enable-retrieval",
+            stdout=out,
+        )
+        config = TenantRagConfiguration.objects.get(tenant=tenant)
+
+        self.assertIn("source_mode=manual", out.getvalue())
+        self.assertEqual(config.approved_folder_id, "")
+        self.assertFalse(config.sync_enabled)
+        self.assertTrue(config.retrieval_enabled)
+
+    def test_onboarding_creates_manual_rag_configuration_for_seeded_knowledge(self):
+        onboarded = TenantOnboardingService().onboard(
+            slug="seeded-manual-config",
+            name="Seeded Manual Config",
+            domain="https://seeded-manual.example",
+            seed_knowledge=True,
+        )
+
+        config = TenantRagConfiguration.objects.get(tenant=onboarded.tenant)
+        self.assertEqual(config.source_mode, TenantRagConfiguration.SOURCE_MANUAL)
+        self.assertEqual(config.approved_folder_id, "")
+        self.assertFalse(config.sync_enabled)
+        self.assertTrue(config.retrieval_enabled)

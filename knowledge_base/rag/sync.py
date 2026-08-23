@@ -91,8 +91,10 @@ def acquire_tenant_sync_lock(*, tenant: Tenant, mode: str) -> TenantRagConfigura
         )
         if configuration is None:
             raise TenantRagSyncError("Tenant RAG configuration not found. Run configure_tenant_rag first.")
-        if not configuration.sync_enabled:
+        if mode != "build_chunks" and not configuration.sync_enabled:
             raise TenantRagSyncError("Tenant RAG sync is disabled. Re-run configure_tenant_rag with --enable-sync.")
+        if mode != "build_chunks" and (not configuration.uses_google_drive or not configuration.approved_folder_id):
+            raise TenantRagSyncError("Google Drive sync requires source_mode=google_drive and approved_folder_id.")
         if (
             configuration.last_inventory_status == TenantRagConfiguration.InventoryStatus.RUNNING
             and configuration.last_inventory_started_at

@@ -26,6 +26,31 @@ class ManualRagSyncResult:
     missing_configuration: bool = False
 
 
+def ensure_manual_rag_configuration(*, tenant, retrieval_enabled: bool = True) -> TenantRagConfiguration:
+    configuration, created = TenantRagConfiguration.objects.get_or_create(
+        tenant=tenant,
+        defaults={
+            "source_mode": TenantRagConfiguration.SOURCE_MANUAL,
+            "approved_folder_id": "",
+            "sync_enabled": False,
+            "retrieval_enabled": bool(retrieval_enabled),
+        },
+    )
+    if created:
+        return configuration
+    changed_fields = []
+    if configuration.source_mode == TenantRagConfiguration.SOURCE_MANUAL:
+        if configuration.approved_folder_id:
+            configuration.approved_folder_id = ""
+            changed_fields.append("approved_folder_id")
+        if configuration.sync_enabled:
+            configuration.sync_enabled = False
+            changed_fields.append("sync_enabled")
+    if changed_fields:
+        configuration.save(update_fields=[*changed_fields, "updated_at"])
+    return configuration
+
+
 def manual_drive_file_id(document: KnowledgeDocument) -> str:
     return f"{MANUAL_SOURCE_PREFIX}-{document.pk}"
 
@@ -47,9 +72,7 @@ def build_manual_document_text(document: KnowledgeDocument) -> str:
 
 
 def sync_manual_knowledge_document_to_rag(*, document: KnowledgeDocument) -> ManualRagSyncResult:
-    configuration = TenantRagConfiguration.objects.filter(tenant=document.tenant).first()
-    if configuration is None:
-        return ManualRagSyncResult(missing_configuration=True)
+    configuration = ensure_manual_rag_configuration(tenant=document.tenant)
 
     if document.status != KnowledgeDocument.Status.ACTIVE:
         deactivated = deactivate_manual_document_from_rag(document=document, configuration=configuration)
@@ -167,9 +190,7 @@ def deactivate_manual_document_from_rag(*, document: KnowledgeDocument, configur
 
 
 def sync_manual_knowledge_documents_for_tenant(*, tenant) -> ManualRagSyncResult:
-    configuration = TenantRagConfiguration.objects.filter(tenant=tenant).first()
-    if configuration is None:
-        return ManualRagSyncResult(missing_configuration=True)
+    configuration = ensure_manual_rag_configuration(tenant=tenant)
     synced = 0
     deactivated = 0
     documents = KnowledgeDocument.objects.filter(tenant=tenant).order_by("id")

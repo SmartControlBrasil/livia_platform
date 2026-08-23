@@ -26,6 +26,7 @@ from knowledge_base.rag.conversation_retrieval import (
 )
 from knowledge_base.rag.embeddings import EmbeddingConfig, FakeEmbeddingProvider, load_embedding_config
 from leads.models import LeadDraft
+from knowledge_base.services.lifecycle import INDEX_COMPLETED, KnowledgeLifecycleService
 from knowledge_base.testing.rag_dimensions import RagTestDimensionMixin
 from tenants.models import Tenant
 
@@ -168,6 +169,46 @@ class ConversationSemanticRagTests(RagTestDimensionMixin, TestCase):
         )
         self.assertEqual(result.status, "skipped")
         self.assertEqual(result.reason, "configuration_missing")
+
+    def test_manual_knowledge_retrieval_without_google_drive_folder_is_tenant_scoped(self):
+        manual_tenant = Tenant.objects.create(name="Manual RAG", slug="manual-rag")
+        other_tenant = Tenant.objects.create(name="Manual Outro", slug="manual-outro")
+        service = KnowledgeLifecycleService()
+        own = service.upsert_document(
+            tenant=manual_tenant,
+            title="Quartzo Branco",
+            slug="quartzo-branco",
+            content="Quartzo branco Zeus para bancada de cozinha com acabamento polido.",
+            source_type="manual",
+        )
+        other = service.upsert_document(
+            tenant=other_tenant,
+            title="Granito Preto",
+            slug="granito-preto",
+            content="Granito preto absoluto exclusivo do outro tenant.",
+            source_type="manual",
+        )
+
+        self.assertEqual(service.reindex_document(tenant=manual_tenant, document_id=own.document.pk).status, INDEX_COMPLETED)
+        self.assertEqual(service.reindex_document(tenant=other_tenant, document_id=other.document.pk).status, INDEX_COMPLETED)
+
+        own_config = TenantRagConfiguration.objects.get(tenant=manual_tenant)
+        other_config = TenantRagConfiguration.objects.get(tenant=other_tenant)
+        self.assertEqual(own_config.source_mode, TenantRagConfiguration.SOURCE_MANUAL)
+        self.assertEqual(own_config.approved_folder_id, "")
+        self.assertNotEqual(own_config.pk, other_config.pk)
+
+        result = retrieve_context(
+            tenant=manual_tenant,
+            query="quartzo branco bancada cozinha",
+            provider=self.provider,
+            config=self.embedding_config,
+        )
+        texts = "\n".join(chunk.text for chunk in result.chunks).lower()
+
+        self.assertEqual(result.status, "completed")
+        self.assertIn("quartzo branco", texts)
+        self.assertNotIn("granito preto absoluto", texts)
 
     @override_settings(LIVIA_RAG_MAX_CONTEXT_CHARS=80)
     def test_retrieve_respects_context_char_limit(self):

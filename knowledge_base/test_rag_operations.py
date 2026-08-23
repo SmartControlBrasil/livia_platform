@@ -51,6 +51,37 @@ class RagOperationsServiceTests(TestCase):
             )
         self.assertEqual(ctx.exception.code, "sync_disabled")
 
+    def test_manual_configuration_allows_local_build_chunks_without_drive_sync(self):
+        self.configuration.source_mode = TenantRagConfiguration.SOURCE_MANUAL
+        self.configuration.approved_folder_id = ""
+        self.configuration.sync_enabled = False
+        self.configuration.save(update_fields=["source_mode", "approved_folder_id", "sync_enabled", "updated_at"])
+
+        request_obj = create_operation_request(
+            tenant=self.tenant,
+            operation=TenantRagOperationRequest.Operation.BUILD_CHUNKS,
+            requested_by=self.user,
+        )
+
+        self.assertEqual(request_obj.operation, TenantRagOperationRequest.Operation.BUILD_CHUNKS)
+
+    def test_drive_sync_without_folder_fails_closed(self):
+        TenantRagConfiguration.objects.filter(pk=self.configuration.pk).update(
+            source_mode=TenantRagConfiguration.SOURCE_GOOGLE_DRIVE,
+            approved_folder_id="",
+            sync_enabled=True,
+        )
+        self.configuration.refresh_from_db()
+
+        with self.assertRaises(RagOperationsError) as ctx:
+            create_operation_request(
+                tenant=self.tenant,
+                operation=TenantRagOperationRequest.Operation.INVENTORY,
+                requested_by=self.user,
+            )
+
+        self.assertEqual(ctx.exception.code, "drive_source_missing")
+
     @patch("knowledge_base.rag.operations.build_google_drive_readonly_service")
     def test_dry_run_inventory_never_calls_drive(self, mock_drive):
         request_obj = create_operation_request(

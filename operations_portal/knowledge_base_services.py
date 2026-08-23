@@ -357,6 +357,7 @@ def build_operations_dashboard(*, tenant, configuration: TenantRagConfiguration 
     return {
         "gate": gate,
         "configuration": configuration,
+        "source_mode": getattr(configuration, "source_mode", "") if configuration else "",
         "sync_enabled": bool(configuration and configuration.sync_enabled),
         "approved_folder_id": getattr(configuration, "approved_folder_id", "") if configuration else "",
         "last_inventory_status": getattr(configuration, "last_inventory_status", "") if configuration else "",
