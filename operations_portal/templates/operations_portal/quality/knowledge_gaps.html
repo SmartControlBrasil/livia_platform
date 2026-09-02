@@ -1,0 +1,66 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Lacunas de conhecimento{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-3">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Lacunas de conhecimento</h4>
+      <p class="text-muted mb-0">{{ tenant_scope_note }} · {{ period.label }} · {{ total }} item(ns)</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'operations_portal:quality_dashboard' %}?period={{ period.key }}">Dashboard</a>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-4">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Clusters recorrentes</h5></div><div class="card-body">
+        {% for cluster in clusters %}
+        <div class="border-bottom py-2">
+          <strong>{{ cluster.count }} perguntas</strong>
+          <div class="fs-13 text-muted">{{ cluster.tenants|join:", " }}</div>
+          {% for sample in cluster.samples %}
+          <div class="fs-13">• {{ sample }}</div>
+          {% endfor %}
+        </div>
+        {% empty %}
+        <p class="text-muted mb-0">Sem clusters ainda.</p>
+        {% endfor %}
+      </div></div>
+    </div>
+    <div class="col-xl-8">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Fila</h5></div><div class="card-body table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>Tenant</th>
+              <th>Pergunta</th>
+              <th>Data</th>
+              <th>Retrieval</th>
+              <th>Score</th>
+              <th>Origem</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in page_obj %}
+            <tr>
+              <td>{{ row.tenant }}</td>
+              <td style="max-width:280px"><div class="text-truncate" title="{{ row.question }}">{{ row.question|default:"—" }}</div><div class="fs-13 text-muted text-truncate" title="{{ row.reply }}">{{ row.reply|truncatechars:80 }}</div></td>
+              <td class="fs-13">{{ row.date|date:"d/m/Y H:i" }}</td>
+              <td><span class="badge bg-secondary-subtle text-secondary">{{ row.retrieval_status }}</span></td>
+              <td>{{ row.max_score|default:"—" }}</td>
+              <td class="fs-13">{{ row.source_page|default:"—"|truncatechars:40 }}</td>
+              <td>{% if row.conversation_id %}<a href="{% url 'operations_portal:quality_conversation_transcript' row.conversation_id %}">Abrir</a>{% endif %}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="7" class="text-muted">Nenhuma lacuna no período.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% include 'operations_portal/partials/pagination.html' %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
