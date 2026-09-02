@@ -153,6 +153,15 @@ NEED_CONTEXT_KEYWORDS = (
     "bike",
     "academia",
     "site",
+    "loja",
+    "virtual",
+    "ecommerce",
+    "e-commerce",
+    "catalogo",
+    "catálogo",
+    "produtos",
+    "portal",
+    "aplicativo",
     "dashboard",
     "crm",
     "agente",
@@ -243,7 +252,7 @@ def is_valid_need_summary(value) -> bool:
     has_context = any(keyword in normalized for keyword in context_keywords) or bool(re.search(r"\bia\b", normalized))
     if not has_context:
         return False
-    if len(cleaned) < 18 and not re.search(r"\b(?:site|clp|ihm|robo|robô|ia)\b", normalized):
+    if len(cleaned) < 18 and not re.search(r"\b(?:site|loja|clp|ihm|robo|robô|ia)\b", normalized):
         return False
     return True
 

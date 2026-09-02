@@ -7,6 +7,13 @@ from typing import Callable
 from django.db import connection, transaction
 from django.utils import timezone
 
+from assistant_core.conversation_turns import (
+    is_direct_question,
+    is_name_deferred,
+    is_need_enrichment,
+    mark_name_deferred,
+    merge_need_summaries,
+)
 from assistant_core.qualification import (
     extract_contact_snapshot,
     is_valid_city,
@@ -165,12 +172,15 @@ class QualificationService:
         snapshot = extract_contact_snapshot(corpus)
         current_snapshot = extract_contact_snapshot(message)
 
+        if is_name_deferred(message):
+            mark_name_deferred(lead)
+
         changed |= self._merge_common(lead, "name", snapshot.name, normalize_name, is_valid_name, invalid_fields)
         changed |= self._merge_common(lead, "company", snapshot.company, normalize_name, is_valid_company, invalid_fields)
         changed |= self._merge_common(lead, "email", snapshot.email, normalize_email, is_valid_email, invalid_fields)
         changed |= self._merge_common(lead, "phone", snapshot.phone, normalize_phone, is_valid_phone, invalid_fields)
         changed |= self._merge_common(lead, "city", snapshot.city, normalize_city, is_valid_city, invalid_fields)
-        need_summary = self._extract_need_summary(history=history, message=message)
+        need_summary = self._extract_need_summary(history=history, message=message, existing=lead.need_summary)
         if need_summary:
             changed |= merge_field_value(lead, "need_summary", need_summary[:500], source=FIELD_SOURCE_EXPLICIT)
         elif self._message_is_vague_need(message) and not is_valid_need_summary(lead.need_summary):
@@ -306,16 +316,24 @@ class QualificationService:
         parts.append(str(message or ""))
         return " ".join(part for part in parts if part.strip())
 
-    def _extract_need_summary(self, *, history, message: str) -> str:
-        for candidate in [str(message or "").strip()] + [
-            str(item.get("content") or "").strip()
-            for item in reversed(list(history or []))
+    def _extract_need_summary(self, *, history, message: str, existing: str = "") -> str:
+        current = self._strip_contact_noise(message)
+        preserved = str(existing or "").strip()
+        history_need = ""
+        for candidate in [
+            self._strip_contact_noise(item.get("content") or "")
+            for item in (history or [])
             if item.get("role") == "user"
         ]:
-            text = self._strip_contact_noise(candidate)
+            text = str(candidate or "").strip()
             if is_valid_need_summary(text):
-                return text[:500].strip()
-        return ""
+                history_need = merge_need_summaries(history_need, text)
+        base = merge_need_summaries(preserved, history_need)
+        if is_name_deferred(current) or is_direct_question(current):
+            return base[:500]
+        if is_need_enrichment(current) or is_valid_need_summary(current):
+            return merge_need_summaries(base, current)
+        return base[:500]
 
     def _strip_contact_noise(self, text: str) -> str:
         cleaned = str(text or "").strip()

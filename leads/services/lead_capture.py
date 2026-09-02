@@ -8,6 +8,10 @@ import logging
 
 from django.db import transaction
 
+from assistant_core.conversation_turns import (
+    build_enrichment_reply,
+    skip_name_prompt_fields,
+)
 from assistant_core.qualification import (
     ContactSnapshot,
     extract_contact_snapshot,
@@ -144,6 +148,7 @@ class LeadCaptureService:
         invalid_fields: list[str] | None = None,
     ) -> str:
         invalid_fields = invalid_fields or []
+        missing_fields = skip_name_prompt_fields(missing_fields, lead_draft)
         if "name" in invalid_fields:
             return "Para eu registrar certinho, me passa seu nome real, por favor."
         if "company" in invalid_fields:
@@ -156,6 +161,12 @@ class LeadCaptureService:
             return "Claro. Me conta rapidinho do que você precisa e em qual contexto para eu direcionar melhor."
 
         if not missing_fields:
+            has_name_or_company = bool(
+                (str(lead_draft.name or "").strip() and is_valid_name(lead_draft.name))
+                or (str(lead_draft.company or "").strip() and is_valid_company(lead_draft.company))
+            )
+            if not has_name_or_company:
+                return build_enrichment_reply(lead_draft)
             return "Perfeito. Já tenho os dados essenciais para seguir com o atendimento."
         if intent == "budget" and "need_summary" in missing_fields:
             return "Perfeito. Antes do contato, me conta em uma frase qual é a sua necessidade principal."

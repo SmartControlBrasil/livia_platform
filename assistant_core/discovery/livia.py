@@ -71,6 +71,9 @@ COMMERCIAL_PATTERNS = (
     "preciso contratar",
     "preciso de uma solucao",
     "quero uma solucao",
+    "loja virtual",
+    "e-commerce",
+    "ecommerce",
 )
 
 NEED_ACTION_PATTERNS = (
@@ -318,7 +321,9 @@ def _has_substantive_context(normalized_text: str) -> bool:
 def _has_need_action(normalized_text: str) -> bool:
     if normalized_text in GENERIC_NEED_TEXTS:
         return True
-    return any(normalized_text.startswith(pattern) for pattern in NEED_ACTION_PATTERNS)
+    if any(normalized_text.startswith(pattern) for pattern in NEED_ACTION_PATTERNS):
+        return True
+    return bool(re.search(r"\b(?:vendo|trabalho com|trabalhamos com|minha loja vende)\b", normalized_text))
 
 
 def _has_visit_or_budget_marker(normalized_text: str) -> bool:
@@ -326,7 +331,7 @@ def _has_visit_or_budget_marker(normalized_text: str) -> bool:
 
 
 def _looks_informational(normalized_text: str) -> bool:
-    prefixes = ("como ", "qual ", "quais ", "quando ", "onde ", "posso ", "tem ", "voces tem ", "voces trabalham", "trabalham com")
+    prefixes = ("como ", "qual ", "quais ", "quando ", "onde ", "posso ", "tem ", "voces tem ", "voces trabalham", "trabalham com", "quanto tempo", "da para", "da pra")
     return normalized_text.endswith("?") or normalized_text.startswith(prefixes)
 
 
@@ -339,6 +344,10 @@ def _matches_any(normalized_text: str, patterns: tuple[str, ...]) -> bool:
 
 
 def _looks_like_contact(normalized_text: str) -> bool:
+    from assistant_core.conversation_turns import is_name_deferred
+
+    if is_name_deferred(normalized_text):
+        return False
     if "@" in normalized_text:
         return True
     digits = re.sub(r"\D", "", normalized_text)

@@ -6,6 +6,14 @@ from typing import Iterable
 
 from django.conf import settings
 
+from assistant_core.conversation_turns import (
+    TurnKind,
+    build_direct_question_reply,
+    build_enrichment_reply,
+    build_name_deferred_reply,
+    classify_conversation_turn,
+    mark_name_deferred,
+)
 from assistant_core.discovery import analyze_message
 from assistant_core.discovery.contextual import resolve_discovery_question, should_ask_profile_discovery
 from assistant_core.services.decision_outcome import has_semantic_knowledge_block, should_combine_kb_with_discovery, is_informational_knowledge_query
@@ -102,6 +110,26 @@ class LiviaDecisionService:
         has_quote_request = bool(discovery.has_quote_request)
         has_support_request = bool(discovery.has_support_request)
         has_technical_question = bool(discovery.has_technical_question)
+        if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
+            decision = self._locked_lead_reply(intent if intent not in {"unknown", "greeting"} else "commercial_interest")
+            return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+        turn = classify_conversation_turn(
+            current_message=current_message,
+            history=history,
+            conversation=conversation,
+            discovery=discovery,
+        )
+        if conversation is not None and turn.kind != TurnKind.OTHER:
+            return self._handle_contextual_turn(
+                turn=turn,
+                intent=discovery.intent if discovery.intent not in {"unknown", "greeting", "contact_data"} else "commercial_interest",
+                history=history,
+                current_message=current_message,
+                conversation=conversation,
+                discovery=discovery,
+                assistant_profile=assistant_profile,
+                knowledge_context=knowledge_context,
+            )
 
         if intent == "greeting":
             decision = LiviaReply(intent=intent, reply=profile_context.initial_message)
@@ -242,6 +270,46 @@ class LiviaDecisionService:
         decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
         return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
 
+
+    def _handle_contextual_turn(
+        self,
+        *,
+        turn,
+        intent: str,
+        history,
+        current_message: str,
+        conversation,
+        discovery,
+        assistant_profile,
+        knowledge_context: str,
+    ) -> LiviaReply:
+        result = None
+        if conversation is not None:
+            result = self.lead_capture_service.capture_from_message(
+                conversation=conversation,
+                message=current_message,
+                history=history,
+            )
+            if turn.kind == TurnKind.NAME_DEFERRED:
+                mark_name_deferred(result.lead_draft)
+        lead_draft = None if result is None else result.lead_draft
+        if turn.kind == TurnKind.NAME_DEFERRED:
+            reply = build_name_deferred_reply(lead_draft)
+        elif turn.kind == TurnKind.DIRECT_QUESTION:
+            reply = build_direct_question_reply(
+                lead_draft,
+                question_type=turn.question_type,
+                current_message=current_message,
+            )
+        else:
+            reply = build_enrichment_reply(
+                lead_draft,
+                snippet=turn.enrichment_snippet,
+                current_message=current_message,
+            )
+        decision = LiviaReply(intent=intent, reply=self._with_knowledge(reply, knowledge_context))
+        decision = self._finalize_handoff(decision, conversation, lead_draft, discovery, current_message)
+        return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
 
     def _finalize_ai_response(
         self,
