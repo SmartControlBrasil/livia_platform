@@ -238,25 +238,37 @@ def decide_collection(*, current_message: str, conversation=None, lead_draft=Non
 
 def build_conceptual_price_reply(lead_draft=None) -> str:
     need = str(getattr(lead_draft, "need_summary", "") or "").strip()
-    normalized = normalize_text(need)
+    data = dict(getattr(lead_draft, "qualification_data", None) or {}) if lead_draft is not None else {}
+    active_domain = str(data.get("active_domain") or "")
+    active_entity = str(data.get("active_entity") or "")
+    normalized = normalize_text(" ".join([need, active_domain, active_entity]))
     stone_context = any(
         marker in normalized
         for marker in (
             "cozinha", "bancada", "pia", "cooktop", "banheiro", "lavabo", "escada",
-            "gourmet", "granito", "marmore", "mármore", "nicho", "cuba", "churrasqueira",
+            "gourmet", "granito", "marmore", "mármore", "nicho", "cuba", "churrasqueira", "materials",
         )
     )
-    if stone_context:
+    robotics_context = any(
+        marker in normalized
+        for marker in ("robo", "robô", "robotics", "duno", "dune", "hygibot", "limpeza", "xyron", "mitsubishi")
+    )
+    if stone_context and not robotics_context:
         base = (
             "O investimento varia conforme material, medidas, acabamentos e complexidade do projeto. "
             "Ainda não tenho um valor fechado para informar aqui."
         )
+    elif robotics_context:
+        base = (
+            "O investimento varia conforme o modelo, a aplicação, o ambiente e a complexidade da implantação. "
+            "Ainda não tenho um valor fechado confirmado na base atual para informar aqui."
+        )
     else:
         base = (
-            "O investimento varia conforme o escopo, volume de itens, integrações e conteúdo. "
+            "O investimento varia conforme o escopo do projeto e os requisitos envolvidos. "
             "Ainda não tenho um valor fechado para informar aqui."
         )
-    if need:
+    if need or active_entity:
         return f"{base} Se quiser, posso levantar os pontos do seu projeto para preparar um orçamento."
     return f"{base} Se quiser um orçamento, me diga e eu sigo com os dados necessários."
 

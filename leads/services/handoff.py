@@ -54,7 +54,10 @@ URGENT_PATTERNS = (
     "queimado",
     "cheiro de queimado",
     "vazamento",
-    "agora",
+    "agora mesmo",
+    "preciso agora",
+    "resolver agora",
+    "atender agora",
 )
 COMPLEX_TECHNICAL_PATTERNS = (
     "sem comunicacao",
@@ -90,6 +93,15 @@ class HandoffService:
         normalized = normalize_text(message)
         service_area = getattr(discovery_result, "service_area", "unknown") if discovery_result is not None else "unknown"
         intent = getattr(discovery_result, "intent", "unknown") if discovery_result is not None else "unknown"
+
+        # Recusa de contato / "tire minhas dúvidas" não é gatilho de handoff.
+        try:
+            from assistant_core.dialogue_memory import is_contact_deferred, wants_consultative_continue
+
+            if is_contact_deferred(message) or wants_consultative_continue(message):
+                return HandoffDecision(False)
+        except Exception:
+            pass
 
         if self._has_explicit_request(normalized):
             priority = HandoffRequest.Priority.HIGH if self._is_urgent(normalized) else HandoffRequest.Priority.NORMAL

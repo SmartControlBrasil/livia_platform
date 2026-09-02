@@ -504,6 +504,10 @@ class LiviaDecisionService:
 
 
     def _finalize_handoff(self, decision: LiviaReply, conversation, lead_draft, discovery, current_message: str) -> LiviaReply:
+        from assistant_core.dialogue_memory import is_contact_deferred, wants_consultative_continue
+
+        if is_contact_deferred(current_message) or wants_consultative_continue(current_message):
+            return decision
         result = self.handoff_service.create_or_update_handoff(
             conversation,
             lead_draft=lead_draft,
