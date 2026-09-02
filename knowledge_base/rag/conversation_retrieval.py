@@ -78,14 +78,18 @@ def build_retrieval_query(
     current_message: str,
     conversation_summary: str | None = None,
     discovery_state=None,
+    *,
+    contextual_query: str | None = None,
 ) -> str:
     """
     Monta a query de retrieval.
 
-    Nesta fase usa somente a mensagem atual. Assinatura preparada para
-    summary/discovery futuros sem acoplar complexidade agora.
+    Preferência: query contextual (entity/domain/histórico curto) quando fornecida.
     """
     _ = conversation_summary, discovery_state
+    contextual = str(contextual_query or "").strip()
+    if contextual:
+        return contextual
     return str(current_message or "").strip()
 
 
@@ -243,7 +247,11 @@ def _dedupe_and_limit(
     max_chunks: int,
     max_chars: int,
     per_manifest: int,
-) -> tuple[list[RagRetrievedChunk], _SelectionStats]:
+    active_domain: str = "",
+    active_entity: str = "",
+) -> tuple[list[RagRetrievedChunk], _SelectionStats, dict]:
+    from knowledge_base.rag.content_classification import classify_rag_source, domains_compatible
+
     selected: list[RagRetrievedChunk] = []
     seen_chunk_ids: set[int] = set()
     seen_hashes: set[str] = set()
@@ -251,13 +259,24 @@ def _dedupe_and_limit(
     used_chars = 0
     selected_raw_chars = 0
     chunks_discarded_by_budget = 0
+    policy_filtered = 0
+    coherence_filtered = 0
+    entity_match_count = 0
+    domain_match_count = 0
 
-    chunk_ids = [embedding.chunk_id for embedding, score in scored if score >= threshold]
+    # Re-rank: entity/title boost before threshold walk.
+    boosted: list[tuple[TenantRagChunkEmbedding, float, float]] = []
+    for embedding, score in scored:
+        boost = 0.0
+        # Lightweight name hints from related objects when available later.
+        boosted.append((embedding, score, boost))
+
+    chunk_ids = [embedding.chunk_id for embedding, score, _boost in boosted if score >= threshold]
     chunks_by_id = {
         chunk.id: chunk
         for chunk in TenantRagDocumentChunk.objects.filter(
             id__in=chunk_ids,
-            tenant_id__in={embedding.tenant_id for embedding, _score in scored},
+            tenant_id__in={embedding.tenant_id for embedding, _score, _b in boosted},
             is_active=True,
             status=TenantRagDocumentChunk.Status.ACTIVE,
             manifest__is_active=True,
@@ -266,7 +285,32 @@ def _dedupe_and_limit(
         ).select_related("manifest")
     }
 
-    for embedding, score in scored:
+    ranked: list[tuple[TenantRagChunkEmbedding, float]] = []
+    entity_n = (active_entity or "").strip().lower()
+    for embedding, score, _ in boosted:
+        chunk = chunks_by_id.get(embedding.chunk_id)
+        if chunk is None:
+            ranked.append((embedding, score))
+            continue
+        manifest = chunk.manifest
+        source_name = str(getattr(manifest, "name", "") or "")
+        source_reference = str(getattr(manifest, "relative_path", "") or "")
+        text = str(chunk.chunk_text or "")
+        classification = classify_rag_source(source_name=source_name, source_reference=source_reference, text=text)
+        adjusted = float(score)
+        blob = f"{source_name} {source_reference} {text[:240]}".lower()
+        if entity_n and entity_n in blob:
+            adjusted += 0.35
+        if entity_n == "duno" and any(token in blob for token in ("dune", "hygibot", "limpeza")):
+            adjusted += 0.25
+        if active_domain and classification.domain == active_domain:
+            adjusted += 0.12
+        if classification.product and entity_n and classification.product.lower() == entity_n:
+            adjusted += 0.2
+        ranked.append((embedding, adjusted))
+    ranked.sort(key=lambda item: item[1], reverse=True)
+
+    for embedding, score in ranked:
         if score < threshold:
             continue
         if embedding.chunk_id in seen_chunk_ids:
@@ -284,6 +328,25 @@ def _dedupe_and_limit(
         if not text:
             continue
 
+        manifest = chunk.manifest
+        source_name = str(getattr(manifest, "name", "") or "").strip() or f"document:{chunk.manifest_id}"
+        source_reference = str(getattr(manifest, "relative_path", "") or "").strip() or str(
+            getattr(manifest, "drive_file_id", "") or ""
+        )
+        classification = classify_rag_source(source_name=source_name, source_reference=source_reference, text=text)
+        if not classification.is_answerable:
+            policy_filtered += 1
+            continue
+        if active_domain and not domains_compatible(active_domain, classification.domain):
+            # Se entity explícita bate, ainda permite.
+            if not (entity_n and entity_n in f"{source_name} {source_reference} {text[:200]}".lower()):
+                coherence_filtered += 1
+                continue
+        if classification.domain == active_domain:
+            domain_match_count += 1
+        if entity_n and entity_n in f"{source_name} {text[:200]}".lower():
+            entity_match_count += 1
+
         remaining = max_chars - used_chars
         if remaining <= 0:
             chunks_discarded_by_budget += 1
@@ -294,12 +357,6 @@ def _dedupe_and_limit(
             if len(text) < 40:
                 chunks_discarded_by_budget += 1
                 break
-
-        manifest = chunk.manifest
-        source_name = str(getattr(manifest, "name", "") or "").strip() or f"document:{chunk.manifest_id}"
-        source_reference = str(getattr(manifest, "relative_path", "") or "").strip() or str(
-            getattr(manifest, "drive_file_id", "") or ""
-        )
 
         selected.append(
             RagRetrievedChunk(
@@ -322,12 +379,19 @@ def _dedupe_and_limit(
         if len(selected) >= max_chunks:
             break
 
-    return selected, _SelectionStats(
+    stats = _SelectionStats(
         retrieved_chars=sum(len(c.chunk_text or "") for c in chunks_by_id.values()),
         selected_raw_chars=selected_raw_chars,
         selected_chars=used_chars,
         chunks_discarded_by_budget=chunks_discarded_by_budget,
     )
+    meta = {
+        "policy_chunks_filtered": policy_filtered,
+        "coherence_filtered_count": coherence_filtered,
+        "entity_match_count": entity_match_count,
+        "domain_match_count": domain_match_count,
+    }
+    return selected, stats, meta
 
 
 def _emit_metric(*, tenant, conversation, result: RagRetrievalResult) -> None:
@@ -362,6 +426,9 @@ def retrieve_context(
     provider: EmbeddingProvider | None = None,
     config: EmbeddingConfig | None = None,
     vector_backend=None,
+    contextual_query: str | None = None,
+    active_domain: str = "",
+    active_entity: str = "",
 ) -> RagRetrievalResult:
     started = time.monotonic()
     conversation_id = getattr(conversation, "id", None)
@@ -453,7 +520,7 @@ def retrieve_context(
         _emit_metric(tenant=tenant, conversation=conversation, result=result)
         return result
 
-    retrieval_query = build_retrieval_query(query)
+    retrieval_query = build_retrieval_query(query, contextual_query=contextual_query)
     if not retrieval_query:
         logger.info(
             "rag.retrieval.skipped tenant_id=%s conversation_id=%s reason=empty_query",
@@ -628,13 +695,26 @@ def retrieve_context(
         vector_search_ms = int((time.monotonic() - vector_started) * 1000)
         postprocess_started = time.monotonic()
         scored = [(hit.embedding, hit.score) for hit in hits]
-        selected, selection_stats = _dedupe_and_limit(
+        selected, selection_stats, selection_meta = _dedupe_and_limit(
             scored=scored,
             threshold=threshold,
             max_chunks=max_chunks,
             max_chars=max_chars,
             per_manifest=per_manifest,
+            active_domain=active_domain,
+            active_entity=active_entity,
         )
+        # Retry controlado: entity explícita sem match → reprocessa com threshold um pouco menor.
+        if active_entity and selection_meta.get("entity_match_count", 0) == 0:
+            selected, selection_stats, selection_meta = _dedupe_and_limit(
+                scored=scored,
+                threshold=max(0.0, float(threshold) - 0.05),
+                max_chunks=max_chunks,
+                max_chars=max_chars,
+                per_manifest=per_manifest,
+                active_domain=active_domain,
+                active_entity=active_entity,
+            )
         postprocess_ms = int((time.monotonic() - postprocess_started) * 1000)
         max_score = selected[0].score if selected else (scored[0][1] if scored else 0.0)
         duration_ms = int((time.monotonic() - started) * 1000)
