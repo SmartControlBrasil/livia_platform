@@ -63,11 +63,55 @@ ENTITY_REGISTRY: tuple[dict, ...] = (
 )
 
 DOMAIN_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("materials", ("bancada", "granito", "marmore", "mármore", "cooktop", "pia", "ilha", "nicho", "cuba", "escada", "gourmet", "cozinha", "banheiro", "lavabo")),
-    ("robotics", ("robo", "robô", "robotica", "robótica", "limpeza", "xyron", "hygibot", "duno", "dune", "liro", "neobot")),
-    ("automation", ("automacao", "automação", "mitsubishi", "clp", "ihm", "manutencao", "manutenção")),
-    ("software_web", ("python", "sistema web", "loja virtual", "ecommerce", "e-commerce", "site ", " website", "portal")),
-    ("maintenance", ("manutencao tecnica", "manutenção técnica", "pecas", "peças", "suporte tecnico", "suporte técnico")),
+    ("software_web", ("python", "sistema web", "sistemas web", "loja virtual", "ecommerce", "e-commerce", "website", "portal", "django", "site")),
+    ("automation", ("automacao", "automação", "mitsubishi", "clp", "ihm")),
+    ("maintenance", ("manutencao tecnica", "manutenção técnica", "tpm", "pecas", "peças", "suporte tecnico", "suporte técnico")),
+    ("materials", ("bancada", "granito", "marmore", "mármore", "quartzito", "cooktop", "pia", "ilha", "nicho", "cuba", "escada", "gourmet", "cozinha", "banheiro", "lavabo", "medicao", "medição")),
+    ("robotics", ("robo", "robô", "robotica", "robótica", "limpeza", "xyron", "hygibot", "duno", "dune", "liro", "neobot", "escola", "educacional")),
+)
+
+TOPIC_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("stairs", ("escada", "escadas")),
+    ("gourmet", ("gourmet", "churrasqueira")),
+    ("bathroom", ("banheiro", "lavabo", "nicho")),
+    ("kitchen", ("cozinha", "bancada", "cooktop", "pia", "ilha")),
+    ("quote_process", ("medicao", "medição", "medida", "fotos", "planta", "orcamento", "orçamento")),
+    ("educational_robot", ("escola", "educacional", "professor", "aluno", "liro")),
+    ("cleaning_robot", ("limpeza", "duno", "dune", "hygibot")),
+    ("websites", ("site", "website", "loja virtual", "ecommerce", "django", "python")),
+    ("robot_lineup", ("quais robos", "quais robôs", "quais modelos", "que robos", "que robôs", "linha xyron")),
+)
+
+LINEUP_QUESTION_MARKERS = (
+    "quais robos",
+    "quais robôs",
+    "quais modelos",
+    "que robos voces",
+    "que robôs vocês",
+    "lista de robos",
+    "lista de robôs",
+)
+
+STRONG_SWITCH_TOKENS = (
+    "agora",
+    "sobre sistemas",
+    "python",
+    "django",
+    "mitsubishi",
+    "site",
+    "website",
+    "loja virtual",
+    "ecommerce",
+    "bancada",
+    "escada",
+    "escadas",
+    "gourmet",
+    "banheiro",
+    "medicao",
+    "medição",
+    "escola",
+    "quais robos",
+    "quais robôs",
 )
 
 PRONOUN_MARKERS = (
@@ -229,14 +273,38 @@ def detect_entity_mention(text: str) -> dict | None:
     return best
 
 
+def _marker_in_text(normalized: str, marker: str) -> bool:
+    marker_n = normalize_text(marker)
+    if not marker_n:
+        return False
+    if " " in marker_n:
+        return marker_n in normalized
+    return re.search(rf"(?<!\w){re.escape(marker_n)}(?!\w)", normalized) is not None
+
+
 def infer_domain(text: str, *, fallback: str = "") -> str:
     normalized = normalize_text(text)
     if not normalized:
         return fallback
     for domain, markers in DOMAIN_MARKERS:
-        if any(marker in normalized for marker in markers):
+        if any(_marker_in_text(normalized, marker) for marker in markers):
             return domain
     return fallback
+
+
+def infer_topic(text: str, *, fallback: str = "") -> str:
+    normalized = normalize_text(text)
+    if not normalized:
+        return fallback
+    for topic, markers in TOPIC_MARKERS:
+        if any(_marker_in_text(normalized, marker) for marker in markers):
+            return topic
+    return fallback
+
+
+def is_lineup_question(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(marker in normalized for marker in LINEUP_QUESTION_MARKERS)
 
 
 def update_dialogue_memory_from_turn(
@@ -264,26 +332,41 @@ def update_dialogue_memory_from_turn(
         memory.entity_match = True
     elif message_has_pronoun_reference(message) and memory.active_entity:
         memory.entity_match = True
+    elif is_lineup_question(message):
+        memory.active_entity = ""
+        memory.active_domain = "robotics"
+        memory.active_topic = "robot_lineup"
     else:
-        # Troca explícita de assunto sem entidade.
         switched = infer_domain(message)
-        if switched and switched != memory.active_domain and not message_has_pronoun_reference(message):
-            # Só troca domínio se a mensagem trouxer sinais claros e não for só pronome.
-            if any(len(normalize_text(m)) >= 4 for m in [message]):
-                if switched in {"software_web", "automation", "materials", "maintenance", "robotics"}:
-                    # Evita resetar entity em mensagens curtas de continuidade.
-                    strong_switch = any(
-                        token in normalized
-                        for token in ("agora", "sobre sistemas", "python", "mitsubishi", "site", "loja virtual", "bancada")
+        topic = infer_topic(message)
+        strong_switch = any(_marker_in_text(normalized, token) for token in STRONG_SWITCH_TOKENS)
+        previous_domain = memory.active_domain
+        previous_topic = memory.active_topic
+
+        if switched and (switched != previous_domain or strong_switch) and not message_has_pronoun_reference(message):
+            memory.active_domain = switched
+            if strong_switch or switched != previous_domain:
+                if switched in {"software_web", "automation", "materials", "maintenance"} or strong_switch:
+                    memory.active_entity = ""
+            if topic:
+                memory.active_topic = topic
+
+        if topic and topic != previous_topic and not message_has_pronoun_reference(message):
+            memory.active_topic = topic
+            # Troca de tópico material/aplicação: não arrastar entity de outro contexto.
+            if topic in {"stairs", "gourmet", "bathroom", "kitchen", "quote_process", "websites", "educational_robot"}:
+                if memory.active_entity and topic != "cleaning_robot":
+                    entity_topic = next(
+                        (entry["topic"] for entry in ENTITY_REGISTRY if entry["canonical"] == memory.active_entity),
+                        "",
                     )
-                    if strong_switch or not memory.active_entity:
-                        memory.active_domain = switched
-                        if strong_switch and switched != "robotics":
-                            memory.active_entity = ""
-                            memory.active_topic = ""
+                    if entity_topic and entity_topic != topic:
+                        memory.active_entity = ""
 
     if not memory.active_domain:
-        memory.active_domain = infer_domain(context_blob) or infer_domain(message)
+        memory.active_domain = infer_domain(message) or infer_domain(context_blob)
+    if not memory.active_topic:
+        memory.active_topic = infer_topic(message) or infer_topic(context_blob)
 
     if need_summary:
         memory.active_need = str(need_summary).strip()[:240]
@@ -313,47 +396,56 @@ def build_contextual_retrieval_query(
     original = str(current_message or "").strip()
     memory = memory or DialogueMemory()
     parts: list[str] = []
+    original_n = normalize_text(original)
+    lineup = is_lineup_question(original)
 
-    if memory.active_entity:
+    if memory.active_entity and not lineup and memory.active_topic != "robot_lineup":
         parts.append(memory.active_entity)
-        # Inclui alias canônico útil para corpus (Duno → HygiBot/Dune).
         entity = next((e for e in ENTITY_REGISTRY if e["canonical"] == memory.active_entity), None)
         if entity:
-            if memory.active_entity.lower() in {"duno", "dune"} or normalize_text(memory.active_entity) == "duno":
+            if normalize_text(memory.active_entity) == "duno":
                 parts.extend(["HygiBot", "Dune", "robô de limpeza"])
             parts.extend(list(entity.get("keywords") or [])[:3])
 
-    if memory.active_topic == "cleaning_robot" or "limpeza" in normalize_text(memory.active_need or original):
-        parts.append("robô de limpeza")
+    topic_query = {
+        "cleaning_robot": "robô de limpeza HygiBot Dune",
+        "educational_robot": "LIRO Little Bot robótica educacional escola",
+        "robot_lineup": "Xyron robótica de serviço LIRO HygiBot NeoBot Orbit Buddy",
+        "websites": "sistemas web sites lojas virtuais Python Django integrações",
+        "stairs": "escadas sob medida pedras naturais",
+        "gourmet": "áreas gourmet bancadas churrasqueira",
+        "bathroom": "banheiros lavabos nichos cubas",
+        "kitchen": "bancadas de cozinha cooktop pia",
+        "quote_process": "orçamento medidas fotos planta medição técnica",
+    }.get(memory.active_topic or "", "")
+    if topic_query:
+        parts.append(topic_query)
 
-    if memory.active_domain == "robotics" and "limpeza" in normalize_text(" ".join([memory.active_need, original])):
-        parts.append("limpeza grandes áreas")
-
-    if memory.active_domain == "materials":
-        parts.append(memory.active_need or "bancada pedras naturais")
-
-    if memory.active_domain == "software_web":
-        parts.append("sistemas web")
-
+    if memory.active_domain == "software_web" or any(_marker_in_text(original_n, m) for m in ("site", "loja virtual", "website", "django")):
+        parts.append("sistemas web sites lojas virtuais Python")
     if memory.active_domain == "automation":
-        parts.append("automação industrial")
+        parts.append("automação industrial Mitsubishi")
+    if memory.active_domain == "materials" and not topic_query:
+        parts.append(memory.active_need or "bancada pedras naturais")
+    if "melhor" in original_n and any(_marker_in_text(original_n, m) for m in ("material", "pedra", "granito", "marmore")):
+        parts.append("qual é a melhor pedra materiais granito mármore quartzito")
 
-    # Últimos turnos user relevantes (não concatena tudo).
-    recent_user = [
-        str(item.get("content") or "").strip()
-        for item in (history or [])[-6:]
-        if item.get("role") == "user" and str(item.get("content") or "").strip()
-    ]
-    for turn in recent_user[-2:]:
-        if message_has_pronoun_reference(turn):
-            continue
-        if len(turn.split()) <= 12:
-            parts.append(turn)
+    # Últimos turnos user relevantes (não concatena tudo; evita sticky de tópico antigo).
+    if not lineup and memory.active_topic not in {"stairs", "gourmet", "websites", "quote_process", "robot_lineup"}:
+        recent_user = [
+            str(item.get("content") or "").strip()
+            for item in (history or [])[-6:]
+            if item.get("role") == "user" and str(item.get("content") or "").strip()
+        ]
+        for turn in recent_user[-2:]:
+            if message_has_pronoun_reference(turn):
+                continue
+            if len(turn.split()) <= 12:
+                parts.append(turn)
 
-    if need_summary:
+    if need_summary and memory.active_topic not in {"websites", "stairs", "robot_lineup"}:
         parts.append(str(need_summary)[:80])
 
-    # Se a mensagem atual não for só pronome, inclui.
     if original and not (message_has_pronoun_reference(original) and len(original.split()) <= 6):
         parts.append(original)
     elif original:
@@ -361,14 +453,14 @@ def build_contextual_retrieval_query(
 
     # Dedup preservando ordem.
     seen: set[str] = set()
-    cleaned: list[str] = []
+    ordered: list[str] = []
     for part in parts:
         key = normalize_text(part)
         if not key or key in seen:
             continue
         seen.add(key)
-        cleaned.append(part.strip())
-    contextual = " ".join(cleaned).strip() or original
+        ordered.append(part.strip())
+    contextual = " ".join(ordered).strip() or original
     return original, contextual
 
 

@@ -108,14 +108,33 @@ def synthesize_deterministic_reply(
 ) -> str:
     hints = _extract_safe_bits(knowledge_context)
     synthesized = _sentences_from_bits(hints, max_sentences=max_sentences, max_chars=max_chars)
+    synthesized = _strip_site_meta_phrasing(synthesized)
     base = str(base_reply or "").strip()
     if not synthesized:
         return base
     if not base or is_generic_fallback_reply(base):
         return synthesized
+    # Preço conceitual / policy comercial: resposta de preço prevalece (não inventar ficha + preço).
+    base_n = normalize_text(base)
+    if any(token in base_n for token in ("investimento varia", "valor fechado", "nao tenho um valor", "não tenho um valor")):
+        return base
     if normalize_text(synthesized) in normalize_text(base):
         return base
     return f"{synthesized}\n\n{base}"
+
+
+def _strip_site_meta_phrasing(text: str) -> str:
+    cleaned = str(text or "")
+    replacements = (
+        (r"(?i)\bO site cita\b", "Há referências a"),
+        (r"(?i)\bO site informa\b", "Em geral,"),
+        (r"(?i)\bO site orienta que\b", ""),
+        (r"(?i)\bO site descreve\b", ""),
+        (r"(?i)\bFonte: página oficial[^.]*\.\s*", ""),
+    )
+    for pattern, repl in replacements:
+        cleaned = re.sub(pattern, repl, cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
 def consultative_followup_for_context(need_or_message: str) -> str:

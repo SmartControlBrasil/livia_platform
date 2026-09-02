@@ -18,6 +18,9 @@
         {% for cluster in clusters %}
         <div class="border-bottom py-2">
           <strong>{{ cluster.count }} perguntas</strong>
+          {% if cluster.curation_status %}
+          <span class="badge bg-light text-dark ms-1">{{ cluster.curation_status }}</span>
+          {% endif %}
           <div class="fs-13 text-muted">{{ cluster.tenants|join:", " }}</div>
           {% for sample in cluster.samples %}
           <div class="fs-13">• {{ sample }}</div>

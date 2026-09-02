@@ -262,7 +262,9 @@ class LiviaDecisionService:
                 decision = LiviaReply(
                     intent=intent,
                     reply=self._with_knowledge(
-                        build_conceptual_price_reply() if is_conceptual_price_question(current_message) else "",
+                        build_conceptual_price_reply(current_message=current_message)
+                        if is_conceptual_price_question(current_message)
+                        else "",
                         knowledge_context,
                     ) or prefer_contextual_reply_over_fallback(
                         knowledge_context=knowledge_context or "",
@@ -630,7 +632,7 @@ class LiviaDecisionService:
             lead_draft = result.lead_draft
             set_state(conversation, LeadState.DISCOVERY)
         if is_conceptual_price_question(current_message):
-            reply = build_conceptual_price_reply(lead_draft)
+            reply = build_conceptual_price_reply(lead_draft, current_message=current_message)
         elif self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
             # Com RAG, prioriza grounding + pergunta leve de contexto — sem
             # desviar para discovery genérico de "automatizar processo".

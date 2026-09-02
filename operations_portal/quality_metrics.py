@@ -1332,10 +1332,39 @@ def _cluster_knowledge_gaps(items: list[dict]) -> list[dict]:
                 "count": len(rows),
                 "samples": samples[:5],
                 "tenants": sorted({r["tenant"] for r in rows}),
+                "curation_status": _curation_status_for_fingerprint(fp, samples),
             }
         )
     clusters.sort(key=lambda c: c["count"], reverse=True)
     return clusters
+
+
+# Status leve (sem workflow/DB): marca clusters já tratados em código.
+_CURATION_STATUS_BY_MARKER: tuple[tuple[str, str], ...] = (
+    ("site", "RESOLVED"),
+    ("loja virtual", "RESOLVED"),
+    ("escola", "RESOLVED"),
+    ("quais rob", "RESOLVED"),
+    ("quanto custa", "IGNORED_POLICY"),
+    ("preco", "IGNORED_POLICY"),
+    ("preço", "IGNORED_POLICY"),
+    ("escada", "RESOLVED"),
+    ("gourmet", "RESOLVED"),
+    ("material", "RESOLVED"),
+    ("medicao", "RESOLVED"),
+    ("medição", "RESOLVED"),
+    ("foto", "RESOLVED"),
+)
+
+
+def _curation_status_for_fingerprint(fingerprint: str, samples: list[str]) -> str:
+    blob = " ".join([fingerprint, *samples]).lower()
+    for marker, status in _CURATION_STATUS_BY_MARKER:
+        if marker in blob:
+            return status
+    if any(len((s or "").split()) <= 2 for s in samples):
+        return "AMBIGUOUS"
+    return "OPEN"
 
 
 def build_documents_without_embedding(*, tenant=None, page: int = 1, page_size: int = PAGE_SIZE) -> dict:

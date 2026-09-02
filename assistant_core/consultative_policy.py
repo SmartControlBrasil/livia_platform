@@ -236,12 +236,19 @@ def decide_collection(*, current_message: str, conversation=None, lead_draft=Non
     return CollectionDecision(False, reason="consultative_mode")
 
 
-def build_conceptual_price_reply(lead_draft=None) -> str:
+def build_conceptual_price_reply(lead_draft=None, *, current_message: str = "") -> str:
     need = str(getattr(lead_draft, "need_summary", "") or "").strip()
     data = dict(getattr(lead_draft, "qualification_data", None) or {}) if lead_draft is not None else {}
     active_domain = str(data.get("active_domain") or "")
     active_entity = str(data.get("active_entity") or "")
-    normalized = normalize_text(" ".join([need, active_domain, active_entity]))
+    if not active_entity and current_message:
+        from assistant_core.dialogue_memory import detect_entity_mention
+
+        detected = detect_entity_mention(current_message)
+        if detected:
+            active_entity = str(detected.get("canonical") or "")
+            active_domain = active_domain or str(detected.get("domain") or "")
+    normalized = normalize_text(" ".join([need, active_domain, active_entity, current_message]))
     stone_context = any(
         marker in normalized
         for marker in (
@@ -251,7 +258,11 @@ def build_conceptual_price_reply(lead_draft=None) -> str:
     )
     robotics_context = any(
         marker in normalized
-        for marker in ("robo", "robô", "robotics", "duno", "dune", "hygibot", "limpeza", "xyron", "mitsubishi")
+        for marker in ("robo", "robô", "robotics", "duno", "dune", "hygibot", "limpeza", "xyron", "mitsubishi", "liro")
+    )
+    software_context = any(
+        marker in normalized
+        for marker in ("site", "loja virtual", "software_web", "python", "django", "ecommerce")
     )
     if stone_context and not robotics_context:
         base = (
@@ -259,9 +270,15 @@ def build_conceptual_price_reply(lead_draft=None) -> str:
             "Ainda não tenho um valor fechado para informar aqui."
         )
     elif robotics_context:
+        subject = f" do {active_entity}" if active_entity else ""
         base = (
-            "O investimento varia conforme o modelo, a aplicação, o ambiente e a complexidade da implantação. "
+            f"O investimento{subject} varia conforme o modelo, a aplicação, o ambiente e a complexidade da implantação. "
             "Ainda não tenho um valor fechado confirmado na base atual para informar aqui."
+        )
+    elif software_context:
+        base = (
+            "O investimento de um site ou sistema varia conforme escopo, integrações e conteúdo. "
+            "Ainda não tenho um valor fechado para informar aqui."
         )
     else:
         base = (
@@ -277,7 +294,7 @@ def build_consultative_commercial_reply(*, lead_draft=None, current_message: str
     need = str(getattr(lead_draft, "need_summary", "") or "").strip()
     message = str(current_message or "").strip()
     if is_conceptual_price_question(message):
-        return build_conceptual_price_reply(lead_draft)
+        return build_conceptual_price_reply(lead_draft, current_message=message)
     if is_direct_question(message):
         from assistant_core.conversation_turns import build_direct_question_reply, detect_question_type
 

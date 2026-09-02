@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 
 from django.conf import settings
 
+from assistant_core.conversation_turns import normalize_text
 from knowledge_base.models import (
     TenantRagChunkEmbedding,
     TenantRagConfiguration,
@@ -249,6 +250,8 @@ def _dedupe_and_limit(
     per_manifest: int,
     active_domain: str = "",
     active_entity: str = "",
+    query: str = "",
+    contextual_query: str = "",
 ) -> tuple[list[RagRetrievedChunk], _SelectionStats, dict]:
     from knowledge_base.rag.content_classification import classify_rag_source, domains_compatible
 
@@ -287,6 +290,15 @@ def _dedupe_and_limit(
 
     ranked: list[tuple[TenantRagChunkEmbedding, float]] = []
     entity_n = (active_entity or "").strip().lower()
+    query_n = normalize_text(str(query or contextual_query or ""))
+    wants_software = any(token in query_n for token in ("site", "website", "loja virtual", "ecommerce", "django", "python", "sistema web"))
+    wants_school = any(token in query_n for token in ("escola", "educacional", "professor", "aluno", "liro"))
+    wants_stairs = "escada" in query_n
+    wants_gourmet = "gourmet" in query_n
+    wants_material_best = "melhor" in query_n and any(token in query_n for token in ("material", "pedra", "granito", "marmore"))
+    wants_measurement = any(token in query_n for token in ("medicao", "medição", "medida", "fotos", "planta"))
+    wants_lineup = any(token in query_n for token in ("quais robos", "quais robôs", "quais modelos", "linha xyron"))
+
     for embedding, score, _ in boosted:
         chunk = chunks_by_id.get(embedding.chunk_id)
         if chunk is None:
@@ -299,6 +311,7 @@ def _dedupe_and_limit(
         classification = classify_rag_source(source_name=source_name, source_reference=source_reference, text=text)
         adjusted = float(score)
         blob = f"{source_name} {source_reference} {text[:240]}".lower()
+        blob_n = normalize_text(blob)
         if entity_n and entity_n in blob:
             adjusted += 0.35
         if entity_n == "duno" and any(token in blob for token in ("dune", "hygibot", "limpeza")):
@@ -307,6 +320,25 @@ def _dedupe_and_limit(
             adjusted += 0.12
         if classification.product and entity_n and classification.product.lower() == entity_n:
             adjusted += 0.2
+        if wants_software:
+            if any(token in blob_n for token in ("sistemas_python", "sistemas web", "loja virtual", "python", "django", "website")):
+                adjusted += 0.45
+            if any(token in blob_n for token in ("hostbot", "recepcao", "recepção", "xyron")) and "web" not in blob_n:
+                adjusted -= 0.35
+        if wants_school and any(token in blob_n for token in ("liro", "littlebot", "little bot", "educacional", "escola")):
+            adjusted += 0.4
+        if wants_stairs and "escada" in blob_n:
+            adjusted += 0.4
+        if wants_gourmet and "gourmet" in blob_n:
+            adjusted += 0.4
+        if wants_material_best and any(token in blob_n for token in ("melhor pedra", "perguntas frequentes", "materiais", "granito", "marmore", "quartzito")):
+            adjusted += 0.35
+        if wants_measurement and any(token in blob_n for token in ("orcamento", "orçamento", "medidas", "fotos", "planta", "medicao", "medição")):
+            adjusted += 0.4
+        if wants_lineup and any(token in blob_n for token in ("visao geral", "visão geral", "produtos oficiais", "xyron", "liro", "hygibot")):
+            adjusted += 0.4
+        if wants_lineup and entity_n and entity_n in blob_n and "visao geral" not in blob_n and "visão geral" not in blob_n:
+            adjusted -= 0.15
         ranked.append((embedding, adjusted))
     ranked.sort(key=lambda item: item[1], reverse=True)
 
@@ -703,6 +735,8 @@ def retrieve_context(
             per_manifest=per_manifest,
             active_domain=active_domain,
             active_entity=active_entity,
+            query=query,
+            contextual_query=retrieval_query,
         )
         # Retry controlado: entity explícita sem match → reprocessa com threshold um pouco menor.
         if active_entity and selection_meta.get("entity_match_count", 0) == 0:
@@ -714,6 +748,8 @@ def retrieve_context(
                 per_manifest=per_manifest,
                 active_domain=active_domain,
                 active_entity=active_entity,
+                query=query,
+                contextual_query=retrieval_query,
             )
         postprocess_ms = int((time.monotonic() - postprocess_started) * 1000)
         max_score = selected[0].score if selected else (scored[0][1] if scored else 0.0)
