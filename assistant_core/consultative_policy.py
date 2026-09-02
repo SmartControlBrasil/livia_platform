@@ -114,9 +114,26 @@ def _has_explicit_actionable_budget(normalized: str) -> bool:
         return True
     if any(term in normalized for term in HIRE_TRIGGERS):
         return True
+    if _looks_like_quote_process_question(normalized):
+        return False
     if any(term in normalized for term in BUDGET_TRIGGERS):
         return True
-    return bool(re.search(r"\b(quero|preciso|gostaria|pode)\b.{0,40}\b(orcamento|cotacao|proposta)\b", normalized))
+    return bool(
+        re.search(r"\b(quero|preciso|gostaria)\s+(?:de\s+)?(?:um\s+)?(orcamento|cotacao|proposta)\b", normalized)
+        or re.search(r"\bpode\s+(mandar|enviar)\s+(?:um\s+)?(orcamento|cotacao|proposta)\b", normalized)
+    )
+
+
+def _looks_like_quote_process_question(normalized: str) -> bool:
+    """Pergunta sobre processo (medida/foto/planta), não pedido explícito de orçamento."""
+    if "orcamento" not in normalized and "cotacao" not in normalized and "proposta" not in normalized:
+        return False
+    process_markers = (
+        "medida", "medicao", "medição", "foto", "planta", "como funciona",
+        "mandar", "enviar foto", "vao medir", "vão medir", "preciso de medida",
+        "preciso mandar", "posso mandar",
+    )
+    return any(marker in normalized for marker in process_markers)
 
 
 def detect_collection_trigger(text: str) -> CollectionTrigger:
@@ -136,7 +153,11 @@ def detect_collection_trigger(text: str) -> CollectionTrigger:
         return CollectionTrigger.HIRE
     if any(term in normalized for term in BUDGET_TRIGGERS):
         return CollectionTrigger.BUDGET
-    if re.search(r"\b(quero|preciso|gostaria|pode)\b.{0,40}\b(orcamento|cotacao|proposta)\b", normalized):
+    if _looks_like_quote_process_question(normalized):
+        return CollectionTrigger.NONE
+    if re.search(r"\b(quero|preciso|gostaria)\s+(?:de\s+)?(?:um\s+)?(orcamento|cotacao|proposta)\b", normalized):
+        return CollectionTrigger.BUDGET
+    if re.search(r"\bpode\s+(mandar|enviar)\s+(?:um\s+)?(orcamento|cotacao|proposta)\b", normalized):
         return CollectionTrigger.BUDGET
     return CollectionTrigger.NONE
 

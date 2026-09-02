@@ -140,6 +140,11 @@ def _strip_site_meta_phrasing(text: str) -> str:
 def consultative_followup_for_context(need_or_message: str) -> str:
     normalized = normalize_text(need_or_message)
     # Domínios específicos ANTES de heurísticas genéricas de "produto/site".
+    # Escada antes de bancada/cozinha para não herdar follow-up sticky.
+    if any(token in normalized for token in ("escada", "escadas")):
+        return "Você já tem medidas, fotos ou planta da escada?"
+    if any(token in normalized for token in ("gourmet", "churrasqueira")):
+        return "A área gourmet já tem projeto ou medidas aproximadas?"
     if any(token in normalized for token in ("cozinha", "bancada", "cooktop", "pia", "ilha", "granito", "marmore", "mármore")):
         return "Você já tem medidas aproximadas ou fotos da bancada?"
     if any(token in normalized for token in ("banheiro", "nicho", "lavabo", "cuba")):
@@ -153,7 +158,7 @@ def consultative_followup_for_context(need_or_message: str) -> str:
     # E-commerce só com sinais claros de loja/site — nunca só "produto".
     if any(token in normalized for token in ("loja virtual", "ecommerce", "e-commerce", "loja online")):
         return "Você pretende começar com poucos produtos ou já tem um catálogo maior?"
-    if any(token in normalized for token in ("site institucional", "landing page", "pagina web", "página web")):
+    if any(token in normalized for token in ("site institucional", "landing page", "pagina web", "página web")) or re.search(r"\bsite\b", normalized):
         return "O foco é divulgação, captura de contatos ou outro objetivo do site?"
     return "Qual detalhe é mais importante agora para eu te orientar melhor?"
 

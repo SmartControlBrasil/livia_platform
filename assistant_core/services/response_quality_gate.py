@@ -73,7 +73,10 @@ def apply_response_quality_gate(
     text = cleaned or text
 
     # C) Entity mentioned but missing from reply → try re-synthesize from KB
-    if memory.active_entity and memory.active_entity.lower() not in normalize_text(text):
+    # Não sobrescrever resposta de preço conceitual / policy comercial.
+    if _is_commercial_policy_reply(text):
+        diagnostics["regrounded"] = False
+    elif memory.active_entity and memory.active_entity.lower() not in normalize_text(text):
         if detect_entity_in_message(current_message) or "fale sobre" in normalize_text(current_message):
             regenerated = synthesize_deterministic_reply(knowledge_context, base_reply="")
             if regenerated and not is_policy_leak_text(regenerated):
@@ -95,7 +98,7 @@ def apply_response_quality_gate(
         text = _strip_known_bad_followups(text)
     elif append_followup is True:
         follow = consultative_followup_for_context(
-            " ".join([memory.active_domain, memory.active_entity, need_summary, current_message])
+            " ".join([current_message, memory.active_topic, memory.active_domain, memory.active_entity, need_summary])
         )
         if follow and follow.lower() not in text.lower():
             # Nunca anexar follow-up de ecommerce em robotics.
@@ -120,6 +123,19 @@ def detect_entity_in_message(message: str) -> bool:
     from assistant_core.dialogue_memory import detect_entity_mention
 
     return detect_entity_mention(message) is not None
+
+
+def _is_commercial_policy_reply(text: str) -> bool:
+    normalized = normalize_text(text)
+    return any(
+        token in normalized
+        for token in (
+            "investimento varia",
+            "valor fechado",
+            "nao tenho um valor",
+            "ainda nao tenho um valor",
+        )
+    )
 
 
 def _looks_like_cleaning_robot(text: str) -> bool:

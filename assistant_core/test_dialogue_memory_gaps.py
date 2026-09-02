@@ -50,3 +50,15 @@ class DialogueMemoryGapCuradoriaTests(SimpleTestCase):
         self.assertIn("duno", reply.lower())
         self.assertNotRegex(reply, r"R\$\s*\d")
         self.assertIn("orçamento", reply.lower())
+
+    def test_quote_process_question_is_not_collection(self):
+        from assistant_core.consultative_policy import detect_collection_trigger, CollectionTrigger
+
+        self.assertEqual(
+            detect_collection_trigger("preciso mandar medida e foto para orçamento?"),
+            CollectionTrigger.NONE,
+        )
+        self.assertEqual(
+            detect_collection_trigger("quero um orçamento para a bancada"),
+            CollectionTrigger.BUDGET,
+        )

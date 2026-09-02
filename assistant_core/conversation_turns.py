@@ -313,6 +313,10 @@ def build_enrichment_reply(lead_draft=None, *, snippet: str = "", current_messag
 
 
 def build_direct_question_reply(lead_draft=None, *, question_type: str, current_message: str = "") -> str:
+    if question_type == "price":
+        from assistant_core.consultative_policy import build_conceptual_price_reply
+
+        return build_conceptual_price_reply(lead_draft, current_message=current_message)
     need = str(getattr(lead_draft, "need_summary", "") or "").strip()
     answer = _grounded_question_answer(question_type, need)
     follow_up = _follow_up_after_question(question_type, need)
