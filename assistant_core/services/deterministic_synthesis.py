@@ -281,6 +281,11 @@ def prefer_contextual_reply_over_fallback(
             " ".join(str(item.get("content") or "") for item in (history or []) if item.get("role") == "user"),
         ]
     ).strip()
+    def _safe_fallback() -> str:
+        if active_entity:
+            return f"Posso te orientar sobre {active_entity}."
+        return DEFAULT_REPLY
+
     if synthesized:
         if skip_followup:
             return synthesized
@@ -295,11 +300,11 @@ def prefer_contextual_reply_over_fallback(
             return f"{synthesized} {follow}".strip()
         return synthesized
     if skip_followup:
-        return DEFAULT_REPLY if not context_blob else (
-            f"Posso te orientar sobre {active_entity}." if active_entity else DEFAULT_REPLY
-        )
+        return _safe_fallback()
     if context_blob:
-        return consultative_followup_for_context(context_blob)
+        follow = str(consultative_followup_for_context(context_blob) or "").strip()
+        # Fail-closed: mensagem sem domínio conhecido não pode virar reply vazia.
+        return follow or _safe_fallback()
     return DEFAULT_REPLY
 
 

@@ -10,6 +10,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError, connection, transaction
 
 from assistant_core.discovery import analyze_message
+from assistant_core.prompts.livia import DEFAULT_REPLY
 from assistant_core.services.ai_feature_gates import is_grounded_synthesis_allowed
 from assistant_core.services.deterministic_synthesis import is_generic_fallback_reply
 from conversations.models import Conversation, HandoffRequest, Message
@@ -149,7 +150,7 @@ def _persist_chat_processing_state(
             content=user_message,
         )
 
-        assistant_reply = decision.reply
+        assistant_reply = str(decision.reply or "").strip()
         human_handoff_payload = None
         if decision.handoff_request_id and decision.handoff_reason == HandoffRequest.Reason.EXPLICIT_REQUEST:
             handoff = HandoffRequest.objects.filter(
@@ -184,6 +185,16 @@ def _persist_chat_processing_state(
                 )
             if lead is not None:
                 persist_dialogue_memory(lead, dialogue_memory)
+
+        assistant_reply = str(assistant_reply or "").strip()
+        if not assistant_reply:
+            # Fail-closed: sucesso HTTP nunca devolve reply vazia.
+            assistant_reply = DEFAULT_REPLY
+            logger.warning(
+                "livia_empty_reply_replaced tenant_slug=%s session_id=%s",
+                getattr(tenant, "slug", ""),
+                session_id,
+            )
 
         assistant_message = Message.objects.create(
             conversation=conversation,
