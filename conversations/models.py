@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from tenants.models import Tenant
@@ -185,6 +186,15 @@ class HandoffRequest(models.Model):
     summary = models.TextField(blank=True)
     source_page = models.URLField(blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_handoffs",
+    )
+    assigned_at = models.DateTimeField(null=True, blank=True)
+    first_human_action_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     resolved_at = models.DateTimeField(null=True, blank=True)

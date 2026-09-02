@@ -1,0 +1,66 @@
+{% extends 'operations_portal/base.html' %}
+{% block title %}Comercial{% endblock %}
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Comercial</h4>
+      <p class="text-muted mb-0">{{ tenant_scope_note }} · últimos {{ period_days }} dias</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{% url 'operations_portal:commercial_lead_list' %}">Leads</a>
+      <a class="btn btn-outline-secondary btn-sm" href="{% url 'operations_portal:commercial_handoff_list' %}">Handoffs</a>
+      <a class="btn btn-primary btn-sm" href="{% url 'operations_portal:commercial_attendances' %}">Atendimentos</a>
+    </div>
+  </div>
+  <div class="row g-3 mb-3">
+    <div class="col-md-2"><div class="card"><div class="card-body"><div class="text-muted fs-13">Novos</div><div class="fs-22 fw-semibold">{{ cards.new }}</div></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body"><div class="text-muted fs-13">Em atendimento</div><div class="fs-22 fw-semibold">{{ cards.in_progress }}</div></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body"><div class="text-muted fs-13">Qualificados</div><div class="fs-22 fw-semibold">{{ cards.qualified }}</div></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body"><div class="text-muted fs-13">Ganhos</div><div class="fs-22 fw-semibold">{{ cards.won }}</div></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body"><div class="text-muted fs-13">Perdidos</div><div class="fs-22 fw-semibold">{{ cards.lost }}</div></div></div></div>
+    <div class="col-md-2"><div class="card"><div class="card-body"><div class="text-muted fs-13">Handoffs pendentes</div><div class="fs-22 fw-semibold">{{ cards.handoffs_pending }}</div></div></div></div>
+  </div>
+  <div class="row">
+    <div class="col-xl-7">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Últimos leads</h5></div><div class="card-body table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Data</th><th>Tenant</th><th>Contato</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+          {% for lead in recent_leads %}
+            <tr>
+              <td class="fs-13">{{ lead.created_at|date:"d/m H:i" }}</td>
+              <td>{{ lead.tenant.slug }}</td>
+              <td>{{ lead.name|default:lead.company|default:lead.display_email|default:"—" }}</td>
+              <td><span class="badge bg-secondary-subtle text-secondary">{{ lead.commercial_status_label }}</span></td>
+              <td><a href="{% url 'operations_portal:commercial_lead_detail' lead.pk %}">Abrir</a></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5" class="text-muted">Sem leads no período.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+    <div class="col-xl-5">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Handoffs pendentes</h5></div><div class="card-body table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Data</th><th>Prioridade</th><th>Contato</th><th></th></tr></thead>
+          <tbody>
+          {% for h in pending_handoffs %}
+            <tr>
+              <td class="fs-13">{{ h.created_at|date:"d/m H:i" }}</td>
+              <td>{{ h.priority }}</td>
+              <td>{{ h.visitor_name|default:h.visitor_email|default:"—" }}</td>
+              <td><a href="{% url 'operations_portal:commercial_handoff_detail' h.pk %}">Abrir</a></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="text-muted">Sem handoffs pendentes.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

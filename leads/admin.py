@@ -5,7 +5,7 @@ from audit.models import ACTION_LEAD_CRM_DISPATCH_RETRIED
 from audit.services import audit_model_snapshot, record_audit_event
 from integrations.outbox.service import enqueue_lead_qualified
 
-from .models import LeadDraft
+from .models import CommercialNote, LeadDraft
 
 
 class LeadServiceAreaFilter(admin.SimpleListFilter):
@@ -93,6 +93,8 @@ class LeadDraftAdmin(admin.ModelAdmin):
         "email",
         "status",
         "qualification_status",
+        "commercial_status",
+        "assigned_to",
         "handoff_status",
         "dispatch_status",
         "service_area",
@@ -104,7 +106,17 @@ class LeadDraftAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
     ]
-    list_filter = ["tenant", "status", "qualification_status", "handoff_status", "dispatch_status", LeadServiceAreaFilter, "sent_to_crm_at", "created_at"]
+    list_filter = [
+        "tenant",
+        "status",
+        "qualification_status",
+        "commercial_status",
+        "handoff_status",
+        "dispatch_status",
+        LeadServiceAreaFilter,
+        "sent_to_crm_at",
+        "created_at",
+    ]
     search_fields = [
         "name",
         "company",
@@ -137,3 +149,11 @@ class LeadDraftAdmin(admin.ModelAdmin):
     @admin.display(description="CRM dispatch")
     def crm_dispatch_state(self, obj):
         return getattr(obj, "dispatch_status", "") or "pending"
+
+
+@admin.register(CommercialNote)
+class CommercialNoteAdmin(admin.ModelAdmin):
+    list_display = ["tenant", "lead_draft", "handoff", "author", "created_at"]
+    list_filter = ["tenant", "created_at"]
+    search_fields = ["body", "lead_draft__name", "handoff__visitor_name"]
+    readonly_fields = ["created_at"]

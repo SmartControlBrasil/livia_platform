@@ -1,0 +1,66 @@
+{% extends 'operations_portal/base.html' %}
+{% block title %}Leads comerciais{% endblock %}
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Leads comerciais</h4>
+      <p class="text-muted mb-0">{{ tenant_scope_note }}</p>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="{% url 'operations_portal:commercial_dashboard' %}">Dashboard</a>
+  </div>
+  <div class="card mb-3"><div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3"><label class="form-label">Busca</label><input class="form-control" name="q" value="{{ filters.q }}" placeholder="nome, e-mail, telefone, necessidade"></div>
+      <div class="col-md-2"><label class="form-label">Status</label>
+        <select class="form-select" name="status">
+          <option value="">Todos</option>
+          {% for value,label in status_choices %}<option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2"><label class="form-label">Responsável</label>
+        <select class="form-select" name="assigned_to">
+          <option value="">Todos</option>
+          <option value="me" {% if filters.assigned_to == 'me' %}selected{% endif %}>Eu</option>
+          <option value="unassigned" {% if filters.assigned_to == 'unassigned' %}selected{% endif %}>Sem responsável</option>
+          {% for u in assignees %}<option value="{{ u.pk }}" {% if filters.assigned_to == u.pk|stringformat:'s' %}selected{% endif %}>{{ u.username }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2"><label class="form-label">Origem</label><input class="form-control" name="origin" value="{{ filters.origin }}"></div>
+      {% if tenants %}<div class="col-md-2"><label class="form-label">Tenant</label><input class="form-control" name="tenant" value="{{ filters.tenant }}" placeholder="slug"></div>{% endif %}
+      <div class="col-md-1"><button class="btn btn-primary w-100" type="submit">Filtrar</button></div>
+    </form>
+  </div></div>
+  <div class="card"><div class="card-body table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>Data</th><th>Tenant</th><th>Nome</th><th>Empresa</th><th>Telefone</th><th>E-mail</th>
+          <th>Necessidade</th><th>Origem</th><th>Status</th><th>Responsável</th><th>Notif.</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for lead in page_obj %}
+        <tr>
+          <td class="fs-13">{{ lead.updated_at|date:"d/m/Y H:i" }}</td>
+          <td>{{ lead.tenant.slug }}</td>
+          <td>{{ lead.name|default:"—" }}</td>
+          <td>{{ lead.company|default:"—" }}</td>
+          <td>{{ lead.display_phone|default:"—" }}</td>
+          <td>{{ lead.display_email|default:"—" }}</td>
+          <td style="max-width:220px" class="text-truncate" title="{{ lead.need_summary }}">{{ lead.need_summary|default:"—"|truncatechars:80 }}</td>
+          <td class="fs-13" style="max-width:140px" class="text-truncate">{{ lead.source_page|default:"—"|truncatechars:40 }}</td>
+          <td><span class="badge bg-secondary-subtle text-secondary">{{ lead.commercial_status_label }}</span></td>
+          <td>{{ lead.assignee_label }}</td>
+          <td>{{ lead.notification_label }}</td>
+          <td><a href="{% url 'operations_portal:commercial_lead_detail' lead.pk %}">Abrir</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="12" class="text-muted">Nenhum lead encontrado.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% include 'operations_portal/partials/pagination.html' %}
+  </div></div>
+</div>
+{% endblock %}

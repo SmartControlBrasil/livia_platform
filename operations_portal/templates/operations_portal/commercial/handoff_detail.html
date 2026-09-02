@@ -1,0 +1,71 @@
+{% extends 'operations_portal/base.html' %}
+{% block title %}Handoff #{{ handoff.pk }}{% endblock %}
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Handoff #{{ handoff.pk }}</h4>
+      <ol class="breadcrumb m-0 mt-1 py-0">
+        <li class="breadcrumb-item"><a href="{% url 'operations_portal:commercial_dashboard' %}">Comercial</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'operations_portal:commercial_handoff_list' %}">Handoffs</a></li>
+        <li class="breadcrumb-item active">#{{ handoff.pk }}</li>
+      </ol>
+    </div>
+    <div class="d-flex gap-2">
+      {% if wa_link %}<a class="btn btn-success btn-sm" href="{{ wa_link }}" target="_blank" rel="noopener">WhatsApp</a>{% endif %}
+      {% if mailto_link %}<a class="btn btn-outline-secondary btn-sm" href="{{ mailto_link }}">E-mail</a>{% endif %}
+      {% if handoff.lead_draft_id %}<a class="btn btn-outline-primary btn-sm" href="{% url 'operations_portal:commercial_lead_detail' handoff.lead_draft_id %}">Lead</a>{% endif %}
+    </div>
+  </div>
+  <div class="row">
+    <div class="col-xl-8">
+      <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Dados</h5></div><div class="card-body row">
+        <div class="col-md-6"><p><span class="text-muted">Tenant:</span> {{ handoff.tenant.slug }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Status:</span> {{ handoff.status }} / {{ handoff.handoff_state }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Prioridade:</span> {{ handoff.priority }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Motivo:</span> {{ handoff.reason }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Nome:</span> {{ handoff.visitor_name|default:"—" }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Empresa:</span> {{ handoff.visitor_company|default:"—" }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Telefone:</span> {{ handoff.display_phone|default:"—" }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">E-mail:</span> {{ handoff.display_email|default:"—" }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Notificação:</span> {{ handoff.notification_label }}</p></div>
+        <div class="col-12"><p><span class="text-muted">Resumo:</span></p><p style="white-space:pre-wrap">{{ handoff.summary|default:"—" }}</p></div>
+      </div></div>
+      <div class="card"><div class="card-header"><h5 class="mb-0">Transcript</h5></div><div class="card-body">
+        {% for msg in transcript %}
+          <div class="mb-2"><strong>{% if msg.role == 'user' %}Cliente{% else %}Lívia{% endif %}:</strong>
+            <div style="white-space:pre-wrap">{{ msg.content }}</div>
+          </div>
+        {% empty %}<p class="text-muted mb-0">Sem mensagens.</p>{% endfor %}
+      </div></div>
+    </div>
+    <div class="col-xl-4">
+      {% if can_manage %}
+      <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Ações</h5></div><div class="card-body">
+        <form method="post" action="{% url 'operations_portal:commercial_handoff_assign' handoff.pk %}" class="mb-3">
+          {% csrf_token %}
+          <select class="form-select mb-2" name="assigned_to">
+            <option value="{{ request.user.pk }}">Eu ({{ request.user.username }})</option>
+            {% for u in assignees %}<option value="{{ u.pk }}">{{ u.username }}</option>{% endfor %}
+          </select>
+          <button class="btn btn-primary w-100" type="submit">Assumir</button>
+        </form>
+        <form method="post" action="{% url 'operations_portal:commercial_handoff_note' handoff.pk %}">
+          {% csrf_token %}
+          <textarea class="form-control mb-2" name="body" rows="3" required placeholder="Nota interna"></textarea>
+          <button class="btn btn-secondary w-100" type="submit">Salvar nota</button>
+        </form>
+      </div></div>
+      {% endif %}
+      <div class="card"><div class="card-header"><h5 class="mb-0">Notas</h5></div><div class="card-body">
+        {% for note in notes %}
+          <div class="border-bottom py-2">
+            <div class="fs-13 text-muted">{{ note.created_at|date:"d/m/Y H:i" }} · {{ note.author.username|default:"sistema" }}</div>
+            <div style="white-space:pre-wrap">{{ note.body }}</div>
+          </div>
+        {% empty %}<p class="text-muted mb-0">Sem notas.</p>{% endfor %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

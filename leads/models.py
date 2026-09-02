@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from conversations.models import Conversation
@@ -31,6 +32,15 @@ class LeadDraft(models.Model):
         DELIVERED = "delivered", "Delivered"
         FAILED = "failed", "Failed"
         RETRYING = "retrying", "Retrying"
+
+    class CommercialStatus(models.TextChoices):
+        NEW = "new", "Novo"
+        CONTACT_PENDING = "contact_pending", "Contato pendente"
+        IN_PROGRESS = "in_progress", "Em atendimento"
+        QUALIFIED = "qualified", "Qualificado"
+        WON = "won", "Ganho"
+        LOST = "lost", "Perdido"
+        CLOSED = "closed", "Encerrado"
 
     tenant = models.ForeignKey(
         Tenant,
@@ -75,6 +85,23 @@ class LeadDraft(models.Model):
         choices=Status.choices,
         default=Status.DRAFT,
     )
+    commercial_status = models.CharField(
+        max_length=30,
+        choices=CommercialStatus.choices,
+        default=CommercialStatus.NEW,
+        db_index=True,
+    )
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_leads",
+    )
+    assigned_at = models.DateTimeField(null=True, blank=True)
+    first_human_action_at = models.DateTimeField(null=True, blank=True)
+    lost_reason = models.CharField(max_length=120, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
 
     crm_external_id = models.CharField(max_length=120, blank=True)
     crm_error = models.TextField(blank=True)
@@ -85,7 +112,47 @@ class LeadDraft(models.Model):
 
     class Meta:
         ordering = ["-updated_at"]
+        indexes = [
+            models.Index(fields=["tenant", "commercial_status", "-updated_at"]),
+            models.Index(fields=["tenant", "assigned_to", "-updated_at"]),
+        ]
 
     def __str__(self):
         label = self.name or self.company or self.email or "Lead sem identificação"
         return f"{label} / {self.tenant.slug}"
+
+
+class CommercialNote(models.Model):
+    """Nota interna de atendimento — nunca exposta ao visitante."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="commercial_notes")
+    lead_draft = models.ForeignKey(
+        LeadDraft,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="commercial_notes",
+    )
+    handoff = models.ForeignKey(
+        "conversations.HandoffRequest",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="commercial_notes",
+    )
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="commercial_notes",
+    )
+    body = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        target = f"lead:{self.lead_draft_id}" if self.lead_draft_id else f"handoff:{self.handoff_id}"
+        return f"Nota {target} @ {self.created_at:%Y-%m-%d %H:%M}"

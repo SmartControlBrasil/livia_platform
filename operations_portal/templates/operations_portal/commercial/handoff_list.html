@@ -1,0 +1,48 @@
+{% extends 'operations_portal/base.html' %}
+{% block title %}Handoffs comerciais{% endblock %}
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Handoffs comerciais</h4>
+      <p class="text-muted mb-0">{{ tenant_scope_note }}</p>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="{% url 'operations_portal:commercial_dashboard' %}">Dashboard</a>
+  </div>
+  <div class="card mb-3"><div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-4"><input class="form-control" name="q" value="{{ filters.q }}" placeholder="nome, e-mail, telefone, resumo"></div>
+      <div class="col-md-3">
+        <select class="form-select" name="status">
+          <option value="">Status</option>
+          {% for value,label in status_choices %}<option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2"><button class="btn btn-primary" type="submit">Filtrar</button></div>
+    </form>
+  </div></div>
+  <div class="card"><div class="card-body table-responsive">
+    <table class="table table-sm align-middle">
+      <thead><tr><th>Data</th><th>Tenant</th><th>Contato</th><th>Motivo</th><th>Status</th><th>Prioridade</th><th>Responsável</th><th>Notif.</th><th></th></tr></thead>
+      <tbody>
+      {% for h in page_obj %}
+        <tr>
+          <td class="fs-13">{{ h.created_at|date:"d/m/Y H:i" }}</td>
+          <td>{{ h.tenant.slug }}</td>
+          <td>{{ h.visitor_name|default:"—" }}<div class="fs-12 text-muted">{{ h.display_phone }} · {{ h.display_email }}</div></td>
+          <td>{{ h.reason }}</td>
+          <td>{{ h.status }}</td>
+          <td>{{ h.priority }}</td>
+          <td>{{ h.assignee_label }}</td>
+          <td>{{ h.notification_label }}</td>
+          <td><a href="{% url 'operations_portal:commercial_handoff_detail' h.pk %}">Abrir</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="9" class="text-muted">Nenhum handoff.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% include 'operations_portal/partials/pagination.html' %}
+  </div></div>
+</div>
+{% endblock %}

@@ -63,6 +63,11 @@ ACTION_OPERATIONAL_NOTIFICATION_SUPPRESSED = "operational_notification.suppresse
 ACTION_OPERATIONAL_NOTIFICATION_RETRY_SCHEDULED = "operational_notification.retry_scheduled"
 ACTION_NOTIFICATION_PREFERENCES_UPDATED = "notification_preferences.updated"
 ACTION_OPERATIONAL_ANALYTICS_EXPORTED = "operational_analytics.exported"
+ACTION_LEAD_ASSIGNED = "lead.assigned"
+ACTION_LEAD_COMMERCIAL_STATUS_CHANGED = "lead.commercial_status_changed"
+ACTION_LEAD_NOTE_ADDED = "lead.note_added"
+ACTION_HANDOFF_ASSIGNED = "handoff.assigned"
+ACTION_HANDOFF_NOTE_ADDED = "handoff.note_added"
 
 
 class AuditEvent(models.Model):
@@ -170,6 +175,14 @@ class AuditEvent(models.Model):
             ACTION_OPERATIONAL_ANALYTICS_EXPORTED,
             "Operational analytics exported",
         )
+        LEAD_ASSIGNED = ACTION_LEAD_ASSIGNED, "Lead assigned"
+        LEAD_COMMERCIAL_STATUS_CHANGED = (
+            ACTION_LEAD_COMMERCIAL_STATUS_CHANGED,
+            "Lead commercial status changed",
+        )
+        LEAD_NOTE_ADDED = ACTION_LEAD_NOTE_ADDED, "Lead note added"
+        HANDOFF_ASSIGNED = ACTION_HANDOFF_ASSIGNED, "Handoff assigned"
+        HANDOFF_NOTE_ADDED = ACTION_HANDOFF_NOTE_ADDED, "Handoff note added"
 
     tenant = models.ForeignKey(
         "tenants.Tenant",

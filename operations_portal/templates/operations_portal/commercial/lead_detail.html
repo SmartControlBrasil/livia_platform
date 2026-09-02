@@ -1,0 +1,117 @@
+{% extends 'operations_portal/base.html' %}
+{% block title %}Lead comercial #{{ lead.pk }}{% endblock %}
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Lead #{{ lead.pk }}</h4>
+      <ol class="breadcrumb m-0 mt-1 py-0">
+        <li class="breadcrumb-item"><a href="{% url 'operations_portal:commercial_dashboard' %}">Comercial</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'operations_portal:commercial_lead_list' %}">Leads</a></li>
+        <li class="breadcrumb-item active">#{{ lead.pk }}</li>
+      </ol>
+    </div>
+    <div class="d-flex gap-2">
+      {% if lead.wa_link %}<a class="btn btn-success btn-sm" href="{{ lead.wa_link }}" target="_blank" rel="noopener">WhatsApp</a>{% endif %}
+      {% if lead.mailto_link %}<a class="btn btn-outline-secondary btn-sm" href="{{ lead.mailto_link }}">E-mail</a>{% endif %}
+      {% if lead.conversation_id %}<a class="btn btn-outline-secondary btn-sm" href="{% url 'operations_portal:quality_conversation_transcript' lead.conversation_id %}">Qualidade/RAG</a>{% endif %}
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-8">
+      <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Dados</h5></div><div class="card-body row">
+        <div class="col-md-6"><p><span class="text-muted">Tenant:</span> <strong>{{ lead.tenant.slug }}</strong></p></div>
+        <div class="col-md-6"><p><span class="text-muted">Status comercial:</span> <span class="badge bg-primary-subtle text-primary">{{ lead.commercial_status_label }}</span></p></div>
+        <div class="col-md-6"><p><span class="text-muted">Nome:</span> {{ lead.name|default:"—" }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Empresa:</span> {{ lead.company|default:"—" }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Telefone:</span> {% if full_pii %}{{ lead.phone|default:"—" }}{% else %}{{ lead.display_phone }}{% endif %}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">E-mail:</span> {% if full_pii %}{{ lead.email|default:"—" }}{% else %}{{ lead.display_email }}{% endif %}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Origem:</span> {{ lead.source_page|default:"—" }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Criado:</span> {{ lead.created_at|date:"d/m/Y H:i" }}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Notificação:</span> {{ lead.notification_label }}{% if notification_email %} → {{ notification_email }}{% endif %}</p></div>
+        <div class="col-md-6"><p><span class="text-muted">Responsável:</span> {{ lead.assignee_label }}</p></div>
+        {% if lead.time_to_assign %}<div class="col-md-6"><p><span class="text-muted">Tempo até assumir:</span> {{ lead.time_to_assign }}</p></div>{% endif %}
+        {% if lead.time_to_first_action %}<div class="col-md-6"><p><span class="text-muted">Tempo até 1ª ação:</span> {{ lead.time_to_first_action }}</p></div>{% endif %}
+      </div></div>
+
+      <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Necessidade</h5></div><div class="card-body">
+        <p class="mb-0" style="white-space:pre-wrap">{{ lead.need_summary|default:"—" }}</p>
+      </div></div>
+
+      <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Transcript</h5></div><div class="card-body">
+        {% for msg in transcript %}
+          <div class="mb-2"><strong>{% if msg.role == 'user' %}Cliente{% elif msg.role == 'assistant' %}Lívia{% else %}{{ msg.role }}{% endif %}:</strong>
+            <div class="text-break" style="white-space:pre-wrap">{{ msg.content }}</div>
+            <div class="fs-12 text-muted">{{ msg.created_at|date:"d/m/Y H:i:s" }}</div>
+          </div>
+        {% empty %}
+          <p class="text-muted mb-0">Sem mensagens.</p>
+        {% endfor %}
+      </div></div>
+    </div>
+
+    <div class="col-xl-4">
+      {% if can_manage %}
+      <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Ações</h5></div><div class="card-body">
+        <form method="post" action="{% url 'operations_portal:commercial_lead_assign' lead.pk %}" class="mb-3">
+          {% csrf_token %}
+          <label class="form-label">Atribuir responsável</label>
+          <div class="input-group">
+            <select class="form-select" name="assigned_to">
+              <option value="{{ request.user.pk }}">Eu ({{ request.user.username }})</option>
+              {% for u in assignees %}<option value="{{ u.pk }}">{{ u.username }}</option>{% endfor %}
+            </select>
+            <button class="btn btn-primary" type="submit">Assumir</button>
+          </div>
+        </form>
+        <form method="post" action="{% url 'operations_portal:commercial_lead_status' lead.pk %}" class="mb-3">
+          {% csrf_token %}
+          <label class="form-label">Status comercial</label>
+          <select class="form-select mb-2" name="commercial_status">
+            {% for value,label in status_choices %}<option value="{{ value }}" {% if lead.commercial_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          <label class="form-label">Motivo (se perdido)</label>
+          <select class="form-select mb-2" name="lost_reason">
+            <option value="">—</option>
+            {% for value,label in lost_reasons %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          </select>
+          <textarea class="form-control mb-2" name="note" rows="2" placeholder="Nota opcional"></textarea>
+          <button class="btn btn-outline-primary w-100" type="submit">Atualizar status</button>
+        </form>
+        <form method="post" action="{% url 'operations_portal:commercial_lead_note' lead.pk %}">
+          {% csrf_token %}
+          <label class="form-label">Nova nota interna</label>
+          <textarea class="form-control mb-2" name="body" rows="3" required></textarea>
+          <button class="btn btn-secondary w-100" type="submit">Salvar nota</button>
+        </form>
+      </div></div>
+      {% endif %}
+
+      <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Notas</h5></div><div class="card-body">
+        {% for note in notes %}
+          <div class="border-bottom py-2">
+            <div class="fs-13 text-muted">{{ note.created_at|date:"d/m/Y H:i" }} · {{ note.author.username|default:"sistema" }}</div>
+            <div style="white-space:pre-wrap">{{ note.body }}</div>
+          </div>
+        {% empty %}<p class="text-muted mb-0">Sem notas.</p>{% endfor %}
+      </div></div>
+
+      <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Handoffs</h5></div><div class="card-body">
+        {% for h in handoffs %}
+          <div class="mb-2"><a href="{% url 'operations_portal:commercial_handoff_detail' h.pk %}">#{{ h.pk }}</a> · {{ h.status }} · {{ h.priority }}</div>
+        {% empty %}<p class="text-muted mb-0">Sem handoff.</p>{% endfor %}
+      </div></div>
+
+      <div class="card"><div class="card-header"><h5 class="mb-0">Histórico operacional</h5></div><div class="card-body">
+        {% for ev in audits %}
+          <div class="border-bottom py-2 fs-13">
+            <div><strong>{{ ev.action }}</strong></div>
+            <div class="text-muted">{{ ev.created_at|date:"d/m/Y H:i" }} · {{ ev.actor.username|default:"sistema" }}</div>
+          </div>
+        {% empty %}<p class="text-muted mb-0">Sem auditoria comercial ainda.</p>{% endfor %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
