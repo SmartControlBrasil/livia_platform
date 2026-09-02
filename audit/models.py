@@ -68,6 +68,11 @@ ACTION_LEAD_COMMERCIAL_STATUS_CHANGED = "lead.commercial_status_changed"
 ACTION_LEAD_NOTE_ADDED = "lead.note_added"
 ACTION_HANDOFF_ASSIGNED = "handoff.assigned"
 ACTION_HANDOFF_NOTE_ADDED = "handoff.note_added"
+ACTION_TENANT_SETTING_CHANGED = "tenant.setting_changed"
+ACTION_TENANT_ORIGIN_ADDED = "tenant.origin_added"
+ACTION_TENANT_ORIGIN_REMOVED = "tenant.origin_removed"
+ACTION_RAG_DOCUMENT_ENABLED = "rag.document_enabled"
+ACTION_RAG_DOCUMENT_DISABLED = "rag.document_disabled"
 
 
 class AuditEvent(models.Model):
@@ -183,6 +188,11 @@ class AuditEvent(models.Model):
         LEAD_NOTE_ADDED = ACTION_LEAD_NOTE_ADDED, "Lead note added"
         HANDOFF_ASSIGNED = ACTION_HANDOFF_ASSIGNED, "Handoff assigned"
         HANDOFF_NOTE_ADDED = ACTION_HANDOFF_NOTE_ADDED, "Handoff note added"
+        TENANT_SETTING_CHANGED = ACTION_TENANT_SETTING_CHANGED, "Tenant setting changed"
+        TENANT_ORIGIN_ADDED = ACTION_TENANT_ORIGIN_ADDED, "Tenant origin added"
+        TENANT_ORIGIN_REMOVED = ACTION_TENANT_ORIGIN_REMOVED, "Tenant origin removed"
+        RAG_DOCUMENT_ENABLED = ACTION_RAG_DOCUMENT_ENABLED, "RAG document enabled"
+        RAG_DOCUMENT_DISABLED = ACTION_RAG_DOCUMENT_DISABLED, "RAG document disabled"
 
     tenant = models.ForeignKey(
         "tenants.Tenant",

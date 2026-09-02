@@ -1,0 +1,44 @@
+{% extends 'operations_portal/base.html' %}
+{% block title %}Configuração · Tenants{% endblock %}
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Tenants</h4>
+      <p class="text-muted mb-0">{{ tenant_scope_note }}</p>
+    </div>
+    <form method="get" class="d-flex gap-2">
+      <input class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="Buscar nome/slug">
+      <button class="btn btn-outline-secondary btn-sm">Filtrar</button>
+    </form>
+  </div>
+  <div class="card"><div class="card-body table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr>
+        <th>Nome</th><th>Slug</th><th>Ativo</th><th>Assistente</th><th>Origins</th>
+        <th>Notificação</th><th>RAG</th><th>Sync</th><th>Handoff</th><th>Readiness</th><th>Docs</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.tenant.name }}</td>
+          <td><code>{{ row.tenant.slug }}</code></td>
+          <td>{% if row.tenant.is_active %}sim{% else %}não{% endif %}</td>
+          <td>{{ row.assistant_name }}</td>
+          <td class="fs-12">{% for o in row.origins %}{{ o }}{% if not forloop.last %}<br>{% endif %}{% empty %}—{% endfor %}</td>
+          <td class="fs-12">{{ row.notification_email }}</td>
+          <td>{% if row.rag_enabled %}on{% else %}off{% endif %} / {{ row.source_mode }}</td>
+          <td>{% if row.sync_enabled %}on{% else %}off{% endif %}</td>
+          <td>{% if row.handoff_enabled %}on{% else %}off{% endif %}</td>
+          <td><span class="badge bg-secondary-subtle text-secondary">{{ row.readiness }}</span></td>
+          <td>{{ row.documents }}/{{ row.chunks }}</td>
+          <td><a href="{% url 'operations_portal:tenant_config_detail' row.tenant.slug %}">Abrir</a></td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="12" class="text-muted">Nenhum tenant.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div></div>
+</div>
+{% endblock %}

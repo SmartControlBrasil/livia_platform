@@ -532,3 +532,69 @@ class KnowledgeBaseOperationRequestForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.fields["operation"].widget.attrs["class"] = "form-select"
         self.fields["confirm_reindex"].widget.attrs["class"] = "form-check-input"
+
+
+class TenantOperationalSettingsForm(forms.ModelForm):
+    """Campos operacionais seguros do assistente (sem secrets)."""
+
+    class Meta:
+        model = AssistantProfile
+        fields = [
+            "name",
+            "notification_email",
+            "human_handoff_enabled",
+            "is_widget_enabled",
+            "tone",
+            "primary_goal",
+            "business_name",
+            "business_domain",
+            "short_description",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            else:
+                field.widget.attrs["class"] = "form-control"
+        self.fields["notification_email"].required = False
+        self.fields["notification_email"].help_text = "Destinatário comercial de leads/handoffs. Não dispara e-mail ao salvar."
+
+    def clean_notification_email(self):
+        value = str(self.cleaned_data.get("notification_email") or "").strip()
+        if not value:
+            return ""
+        field = forms.EmailField()
+        return field.clean(value)
+
+
+class TenantRagSafeSettingsForm(forms.ModelForm):
+    """RAG toggles seguros. folder_id permanece read-only na view."""
+
+    class Meta:
+        from knowledge_base.models import TenantRagConfiguration
+
+        model = TenantRagConfiguration
+        fields = ["retrieval_enabled", "sync_enabled", "min_similarity_score", "max_retrieved_chunks"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs["class"] = "form-check-input"
+            else:
+                field.widget.attrs["class"] = "form-control"
+        self.fields["min_similarity_score"].required = False
+        self.fields["max_retrieved_chunks"].required = False
+
+
+class TenantOriginAddForm(forms.Form):
+    origin = forms.CharField(max_length=255, label="Origin")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["origin"].widget.attrs.update({"class": "form-control", "placeholder": "https://www.exemplo.com.br"})
+
+    def clean_origin(self):
+        return normalize_origin(self.cleaned_data.get("origin"))

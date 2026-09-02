@@ -73,9 +73,16 @@
         </li>
 
         <li class="menu-title mt-2">Gestão</li>
+        {% if portal_caps.tenant_view or portal_caps.memberships_view %}
+        <li class="{% if active_section == 'configuracao_tenants' %}menuitem-active{% endif %}">
+          <a href="{% url 'operations_portal:tenant_config_list' %}" class="tp-link {% if active_section == 'configuracao_tenants' %}active{% endif %}">
+            <i data-feather="settings"></i><span> Configuração · Tenants </span>
+          </a>
+        </li>
+        {% endif %}
         <li class="{% if active_section == 'tenants' %}menuitem-active{% endif %}">
           <a href="{% url 'operations_portal:tenant_list' %}" class="tp-link {% if active_section == 'tenants' %}active{% endif %}">
-            <i data-feather="layers"></i><span> Tenants </span>
+            <i data-feather="layers"></i><span> Tenants (legado) </span>
           </a>
         </li>
         <li class="{% if active_section == 'base-de-conhecimento' %}menuitem-active{% endif %}">
