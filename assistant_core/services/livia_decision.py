@@ -607,8 +607,14 @@ class LiviaDecisionService:
 
         safe_bits = []
         for item in contents[:2]:
-            clipped = " ".join(str(item or "").split())[:280].strip()
-            if not clipped:
+            clipped = " ".join(str(item or "").split()).strip()
+            clipped = clipped.lstrip("#").strip()
+            clipped = clipped.replace("Tags: smart-control, curated", "").replace("Tags: smart-control", "")
+            clipped = " ".join(clipped.split()).strip()
+            if clipped.lower().startswith("tags:"):
+                continue
+            clipped = clipped[:280].strip(" -•#")
+            if len(clipped) < 40:
                 continue
             lowered = clipped.lower()
             if any(
@@ -622,6 +628,11 @@ class LiviaDecisionService:
                     "crie lead",
                     "score:",
                     "fonte:",
+                    "curadoria anhembi",
+                    "submetido em",
+                    "centro universitário",
+                    "arquivo 1 -",
+                    "status: sete unidades",
                 )
             ):
                 continue
