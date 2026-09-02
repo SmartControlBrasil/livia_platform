@@ -52,6 +52,10 @@ class WidgetTests(TestCase):
         self.assertIn("aria-label", content)
         self.assertIn("está respondendo", content)
         self.assertIn("for (let index = 0; index < 3; index += 1)", content)
+        self.assertIn("function createTypingIndicator(assistantLabel)", content)
+        self.assertIn("createTypingIndicator(assistantName)", content)
+        self.assertIn("ensureTyping();", content)
+        self.assertNotIn('assistantName + " está respondendo"', content)
         self.assertNotIn("Digitando...", content)
 
     def test_widget_runtime_renders_success_and_clears_loading_on_success_and_error(self):
@@ -198,6 +202,251 @@ class WidgetTests(TestCase):
           if (!failureMessages.includes("Houve um problema ao conectar")) throw new Error("network fallback was not rendered");
           if (failure.input.disabled || failure.send.disabled || failure.send.textContent !== "Enviar") throw new Error("loading was not cleared on error");
           if (failure.document.getElementById("livia-typing")) throw new Error("typing indicator remained after error");
+        })().catch((error) => { console.error(error && error.stack || error); process.exit(1); });
+        """.replace("WIDGET_SOURCE", json.dumps(source))
+        completed = subprocess.run(["node", "-e", runner], text=True, capture_output=True, timeout=5)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_widget_runtime_typing_indicator_does_not_block_chat_send(self):
+        source = self.client.get("/widget.js").content.decode("utf-8")
+        runner = r"""
+        const vm = require("vm");
+        const source = WIDGET_SOURCE;
+
+        class Element {
+          constructor(tag, documentRef) {
+            this.tagName = tag.toUpperCase();
+            this.ownerDocument = documentRef;
+            this.children = [];
+            this.parentNode = null;
+            this.attributes = {};
+            this.listeners = {};
+            this.style = {};
+            this.disabled = false;
+            this.value = "";
+            this.textContent = "";
+            this.innerHTML = "";
+            this.className = "";
+            this.type = "";
+            this.id = "";
+            this.scrollTop = 0;
+            this.scrollHeight = 0;
+            this.classList = {
+              add: (...names) => {
+                const current = new Set(String(this.className || "").split(/\s+/).filter(Boolean));
+                names.forEach((name) => current.add(name));
+                this.className = Array.from(current).join(" ");
+              },
+              remove: (...names) => {
+                const remove = new Set(names);
+                this.className = String(this.className || "").split(/\s+/).filter((name) => name && !remove.has(name)).join(" ");
+              },
+              contains: (name) => String(this.className || "").split(/\s+/).includes(name)
+            };
+          }
+          appendChild(child) {
+            child.parentNode = this;
+            this.children.push(child);
+            if (child.id) this.ownerDocument.byId[child.id] = child;
+            return child;
+          }
+          removeChild(child) {
+            this.children = this.children.filter((item) => item !== child);
+            if (child.id) delete this.ownerDocument.byId[child.id];
+            child.parentNode = null;
+            return child;
+          }
+          setAttribute(name, value) { this.attributes[name] = String(value); }
+          getAttribute(name) { return this.attributes[name] || null; }
+          addEventListener(name, callback) { this.listeners[name] = callback; }
+          dispatchEvent(name, event) { this.listeners[name] && this.listeners[name](event || { preventDefault() {} }); }
+          focus() {}
+          querySelector(selector) {
+            const stack = [...this.children];
+            while (stack.length) {
+              const item = stack.shift();
+              if (selector === ".livia-message.assistant" && String(item.className || "").includes("livia-message") && String(item.className || "").includes("assistant")) {
+                return item;
+              }
+              stack.push(...item.children);
+            }
+            return null;
+          }
+        }
+
+        function makeStorage() {
+          const values = new Map();
+          return { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, String(value)), removeItem: (key) => values.delete(key) };
+        }
+
+        function makeDocument() {
+          const documentRef = { byId: {}, readyState: "complete" };
+          documentRef.createElement = (tag) => new Element(tag, documentRef);
+          documentRef.getElementById = (id) => documentRef.byId[id] || null;
+          documentRef.addEventListener = () => {};
+          documentRef.head = new Element("head", documentRef);
+          documentRef.body = new Element("body", documentRef);
+          documentRef.documentElement = { style: { setProperty() {} } };
+          const script = new Element("script", documentRef);
+          script.src = "https://livia.smartcontrolbrasil.com.br/widget.js";
+          script.setAttribute("data-tenant", "smart-control-brasil");
+          script.setAttribute("data-api-url", "https://livia.smartcontrolbrasil.com.br/api/chat/");
+          documentRef.currentScript = script;
+          return documentRef;
+        }
+
+        function response(status, payload) {
+          return { status, ok: status >= 200 && status < 300, json: async () => payload };
+        }
+
+        (async () => {
+          const document = makeDocument();
+          let chatFetches = 0;
+          const fetchImpl = async (url) => {
+            if (String(url).includes("/api/widget/config/")) return response(200, {});
+            chatFetches += 1;
+            return response(200, { reply: "Claro. Pode me contar um pouco mais?" });
+          };
+          const windowRef = {
+            document,
+            location: { href: "https://www.smartcontrolbrasil.com.br/" },
+            localStorage: makeStorage(),
+            sessionStorage: makeStorage(),
+            crypto: { randomUUID: () => "22222222-2222-4222-8222-222222222222" },
+            setTimeout: (callback, _ms) => setTimeout(callback, 0),
+            clearTimeout,
+            AbortController,
+            fetch: fetchImpl,
+            console: { error() {}, log() {} }
+          };
+          vm.runInNewContext(source, { window: windowRef, document, fetch: fetchImpl, AbortController, URL, Promise, Error, String, Math, Date, setTimeout, clearTimeout, console: windowRef.console });
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          const input = document.getElementById("livia-input");
+          const send = document.getElementById("livia-send");
+          input.value = "gostaria de um site";
+          document.getElementById("livia-footer").dispatchEvent("submit", { preventDefault() {} });
+          await new Promise((resolve) => setTimeout(resolve, 35));
+          const messages = document.getElementById("livia-messages").children.map((item) => item.textContent).join("\\n");
+          if (chatFetches !== 1) throw new Error("expected exactly one chat fetch, got " + chatFetches);
+          if (!messages.includes("gostaria de um site")) throw new Error("user message was not rendered");
+          if (!messages.includes("Claro. Pode me contar um pouco mais?")) throw new Error("assistant reply was not rendered");
+          if (input.disabled || send.disabled || send.textContent !== "Enviar") throw new Error("loading remained after success");
+          if (document.getElementById("livia-typing")) throw new Error("typing indicator remained after success");
+        })().catch((error) => { console.error(error && error.stack || error); process.exit(1); });
+        """.replace("WIDGET_SOURCE", json.dumps(source))
+        completed = subprocess.run(["node", "-e", runner], text=True, capture_output=True, timeout=5)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_widget_runtime_clears_loading_if_typing_indicator_throws(self):
+        source = self.client.get("/widget.js").content.decode("utf-8")
+        runner = r"""
+        const vm = require("vm");
+        const source = WIDGET_SOURCE;
+
+        class Element {
+          constructor(tag, documentRef) {
+            this.tagName = tag.toUpperCase();
+            this.ownerDocument = documentRef;
+            this.children = [];
+            this.parentNode = null;
+            this.attributes = {};
+            this.listeners = {};
+            this.style = {};
+            this.disabled = false;
+            this.value = "";
+            this.textContent = "";
+            this.innerHTML = "";
+            this.className = "";
+            this.type = "";
+            this.id = "";
+            this.scrollTop = 0;
+            this.scrollHeight = 0;
+            this.classList = {
+              add: (...names) => {
+                const current = new Set(String(this.className || "").split(/\s+/).filter(Boolean));
+                names.forEach((name) => current.add(name));
+                this.className = Array.from(current).join(" ");
+              },
+              remove: (...names) => {
+                const remove = new Set(names);
+                this.className = String(this.className || "").split(/\s+/).filter((name) => name && !remove.has(name)).join(" ");
+              },
+              contains: (name) => String(this.className || "").split(/\s+/).includes(name)
+            };
+          }
+          appendChild(child) {
+            child.parentNode = this;
+            this.children.push(child);
+            if (child.id) this.ownerDocument.byId[child.id] = child;
+            return child;
+          }
+          removeChild(child) {
+            this.children = this.children.filter((item) => item !== child);
+            if (child.id) delete this.ownerDocument.byId[child.id];
+            child.parentNode = null;
+            return child;
+          }
+          setAttribute(name, value) {
+            if (this.id === "livia-typing" && name === "aria-label") {
+              throw new Error("unexpected typing failure");
+            }
+            this.attributes[name] = String(value);
+          }
+          getAttribute(name) { return this.attributes[name] || null; }
+          addEventListener(name, callback) { this.listeners[name] = callback; }
+          dispatchEvent(name, event) { this.listeners[name] && this.listeners[name](event || { preventDefault() {} }); }
+          focus() {}
+          querySelector() { return null; }
+        }
+
+        function makeStorage() {
+          const values = new Map();
+          return { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, String(value)), removeItem: (key) => values.delete(key) };
+        }
+
+        (async () => {
+          const documentRef = { byId: {}, readyState: "complete" };
+          documentRef.createElement = (tag) => new Element(tag, documentRef);
+          documentRef.getElementById = (id) => documentRef.byId[id] || null;
+          documentRef.addEventListener = () => {};
+          documentRef.head = new Element("head", documentRef);
+          documentRef.body = new Element("body", documentRef);
+          documentRef.documentElement = { style: { setProperty() {} } };
+          const script = new Element("script", documentRef);
+          script.src = "https://livia.smartcontrolbrasil.com.br/widget.js";
+          script.setAttribute("data-tenant", "smart-control-brasil");
+          script.setAttribute("data-api-url", "https://livia.smartcontrolbrasil.com.br/api/chat/");
+          documentRef.currentScript = script;
+          let chatFetches = 0;
+          const fetchImpl = async (url) => {
+            if (String(url).includes("/api/widget/config/")) return { status: 200, ok: true, json: async () => ({}) };
+            chatFetches += 1;
+            return { status: 200, ok: true, json: async () => ({ reply: "nao deveria chegar" }) };
+          };
+          const windowRef = {
+            document: documentRef,
+            location: { href: "https://www.smartcontrolbrasil.com.br/" },
+            localStorage: makeStorage(),
+            sessionStorage: makeStorage(),
+            crypto: { randomUUID: () => "33333333-3333-4333-8333-333333333333" },
+            setTimeout: (callback, _ms) => setTimeout(callback, 0),
+            clearTimeout,
+            AbortController,
+            fetch: fetchImpl,
+            console: { error() {}, log() {} }
+          };
+          vm.runInNewContext(source, { window: windowRef, document: documentRef, fetch: fetchImpl, AbortController, URL, Promise, Error, String, Math, Date, setTimeout, clearTimeout, console: windowRef.console });
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          const input = documentRef.getElementById("livia-input");
+          const send = documentRef.getElementById("livia-send");
+          input.value = "gostaria de um site";
+          documentRef.getElementById("livia-footer").dispatchEvent("submit", { preventDefault() {} });
+          await new Promise((resolve) => setTimeout(resolve, 35));
+          const messages = documentRef.getElementById("livia-messages").children.map((item) => item.textContent).join("\\n");
+          if (chatFetches !== 0) throw new Error("chat fetch should not run after typing failure");
+          if (!messages.includes("Houve um problema ao conectar com a Lívia")) throw new Error("fallback was not rendered after typing failure");
+          if (input.disabled || send.disabled || send.textContent !== "Enviar") throw new Error("loading remained after typing failure");
+          if (send.textContent === "...") throw new Error("widget stayed stuck in loading");
         })().catch((error) => { console.error(error && error.stack || error); process.exit(1); });
         """.replace("WIDGET_SOURCE", json.dumps(source))
         completed = subprocess.run(["node", "-e", runner], text=True, capture_output=True, timeout=5)

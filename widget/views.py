@@ -525,9 +525,9 @@ def widget_js(request):
       appendMessage(messages, "user", message);
       input.value = "";
       setLoading(input, sendButton, true);
-      ensureTyping();
 
       try {
+        ensureTyping();
         let response = null;
         let data = {};
         for (let attempt = 1; attempt <= maxSendAttempts; attempt += 1) {
