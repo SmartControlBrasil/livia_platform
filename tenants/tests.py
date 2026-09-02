@@ -231,6 +231,40 @@ class TenantOnboardingServiceTests(TestCase):
         self.assertIn("logística e transporte", document.content)
         self.assertIn("Qualifica fretes", document.content)
 
+    def test_assistant_profile_notification_email_overrides_global_fallback(self):
+        from leads.models import LeadDraft
+        from leads.services.lead_notification import LeadNotificationService
+        from conversations.models import Conversation
+        from django.test import override_settings
+        from django.core import mail
+
+        tenant = Tenant.objects.create(slug="notify-tenant", name="Notify Tenant", domain="notify.example")
+        profile = AssistantProfile.objects.create(
+            tenant=tenant,
+            name="Lívia",
+            notification_email="comercial@smartcontrolbrasil.com.br",
+        )
+        conversation = Conversation.objects.create(tenant=tenant, session_id="notify-session")
+        lead = LeadDraft.objects.create(
+            tenant=tenant,
+            conversation=conversation,
+            name="Maria",
+            phone="11999998888",
+            need_summary="Preciso de automação industrial Mitsubishi.",
+            status=LeadDraft.Status.QUALIFIED,
+        )
+        with override_settings(
+            LIVIA_LEAD_NOTIFICATIONS_ENABLED=True,
+            LIVIA_LEAD_NOTIFICATIONS_DRY_RUN=False,
+            LIVIA_LEAD_NOTIFICATION_EMAIL="contato@smartcontrolbrasil.com.br",
+            EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        ):
+            result = LeadNotificationService().notify(lead)
+        self.assertTrue(result.success)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["comercial@smartcontrolbrasil.com.br"])
+        self.assertNotEqual(profile.notification_email, "contato@smartcontrolbrasil.com.br")
+
     def test_onboard_updates_existing_assistant_profile_without_duplicate(self):
         tenant = Tenant.objects.create(slug="profile-existing", name="Profile Existing", domain="https://old.example")
         AssistantProfile.objects.create(tenant=tenant, name="Assistente antiga", primary_goal="antigo")

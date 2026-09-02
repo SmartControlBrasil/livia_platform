@@ -32,7 +32,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--tenant", required=True, help="Slug do tenant.")
         parser.add_argument("--inventory-only", action="store_true", help="Inventaria metadados sem exportacao de texto.")
-        parser.add_argument("--export-text", action="store_true", help="Inventaria e exporta texto somente de Google Docs.")
+        parser.add_argument("--export-text", action="store_true", help="Inventaria e exporta texto de Google Docs, PDF, DOCX e texto.")
         parser.add_argument("--build-chunks", action="store_true", help="Constroi chunks locais a partir do staging do tenant.")
 
     def handle(self, *args, **options):

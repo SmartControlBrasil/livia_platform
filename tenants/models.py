@@ -81,6 +81,11 @@ class AssistantProfile(models.Model):
     business_name = models.CharField(max_length=160, blank=True, default="")
     business_domain = models.CharField(max_length=220, blank=True, default="")
     short_description = models.TextField(blank=True, default="")
+    notification_email = models.EmailField(
+        blank=True,
+        default="",
+        help_text="Destinatário comercial de leads/notificações deste tenant. Vazio usa o fallback global.",
+    )
     use_ai = models.BooleanField(default=False)
     grounded_synthesis_enabled = models.BooleanField(default=False)
     widget_title = models.CharField(max_length=80, blank=True)

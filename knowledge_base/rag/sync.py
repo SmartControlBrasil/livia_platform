@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_EXPORT_MIME_TYPES = {
     "application/vnd.google-apps.document",
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+    "text/markdown",
 }
 
 
@@ -379,7 +383,7 @@ def _process_inventory_item(
 
     existing_sha = previous_sha
     try:
-        exported_payload = drive_service.export_google_doc_text(file_record.file_id)
+        exported_payload = drive_service.export_file_text(file_record.file_id, file_record.mime_type)
         if len(exported_payload) > max_export_bytes:
             raise GoogleDriveApiError("Exported document exceeded maximum allowed bytes.")
         decoded = decode_google_text_payload(exported_payload)

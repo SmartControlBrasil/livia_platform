@@ -122,6 +122,7 @@ class AssistantProfileAdmin(admin.ModelAdmin):
                     "business_name",
                     "business_domain",
                     "short_description",
+                    "notification_email",
                     "grounded_synthesis_enabled",
                 )
             },
@@ -175,6 +176,7 @@ class AssistantProfileAdmin(admin.ModelAdmin):
             "business_name",
             "business_domain",
             "short_description",
+            "notification_email",
             "grounded_synthesis_enabled",
             "use_ai",
             "widget_title",

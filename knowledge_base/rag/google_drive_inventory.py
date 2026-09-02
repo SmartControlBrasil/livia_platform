@@ -221,23 +221,50 @@ class GoogleDriveInventoryService:
         return records
 
     def export_google_doc_text(self, file_id: str) -> bytes:
-        try:
-            payload = (
-                self.service.files()
-                .export(
-                    fileId=file_id,
-                    mimeType="text/plain",
+        return self.export_file_text(file_id, "application/vnd.google-apps.document")
+
+    def export_file_text(self, file_id: str, mime_type: str) -> bytes:
+        mime = str(mime_type or "").strip()
+        if mime == "application/vnd.google-apps.document":
+            try:
+                payload = (
+                    self.service.files()
+                    .export(
+                        fileId=file_id,
+                        mimeType="text/plain",
+                    )
+                    .execute()
                 )
-                .execute()
-            )
+            except Exception as exc:
+                self._raise_api_error(exc, fallback_message="Could not export Google Docs file.")
+                raise
+            if isinstance(payload, bytes):
+                return payload
+            if isinstance(payload, str):
+                return payload.encode("utf-8", errors="ignore")
+            raise GoogleDriveApiError("Could not export Google Docs file.")
+
+        try:
+            request = self.service.files().get_media(fileId=file_id, supportsAllDrives=True)
+            payload = request.execute()
         except Exception as exc:
-            self._raise_api_error(exc, fallback_message="Could not export Google Docs file.")
+            self._raise_api_error(exc, fallback_message="Could not download Drive file for text extraction.")
             raise
-        if isinstance(payload, bytes):
-            return payload
-        if isinstance(payload, str):
-            return payload.encode("utf-8", errors="ignore")
-        raise GoogleDriveApiError("Could not export Google Docs file.")
+        if not isinstance(payload, (bytes, bytearray)):
+            raise GoogleDriveApiError("Downloaded Drive payload is invalid.")
+        raw = bytes(payload)
+        if mime in {
+            "application/pdf",
+        }:
+            return _extract_pdf_text_bytes(raw)
+        if mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            return _extract_docx_text_bytes(raw)
+        if mime in {"text/plain", "text/markdown"}:
+            try:
+                return raw.decode("utf-8").encode("utf-8")
+            except UnicodeDecodeError:
+                return raw.decode("latin-1", errors="ignore").encode("utf-8")
+        raise GoogleDriveApiError(f"Unsupported export mime type: {mime}")
 
     def _raise_api_error(self, exc: Exception, *, fallback_message: str) -> None:
         status_code = _extract_http_status(exc)
@@ -292,6 +319,58 @@ def decode_google_text_payload(payload: bytes) -> str:
         return payload.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
         raise GoogleDriveApiError("Google Docs exported payload is not valid UTF-8.") from exc
+
+
+def _extract_pdf_text_bytes(raw: bytes) -> bytes:
+    import shutil
+    import subprocess
+    import tempfile
+
+    pdftotext = shutil.which("pdftotext")
+    if not pdftotext:
+        raise GoogleDriveApiError("pdftotext is required to extract text from PDF files.")
+    with tempfile.TemporaryDirectory(prefix="livia-pdf-") as tmp:
+        pdf_path = Path(tmp) / "document.pdf"
+        pdf_path.write_bytes(raw)
+        try:
+            completed = subprocess.run(
+                [pdftotext, "-layout", "-enc", "UTF-8", str(pdf_path), "-"],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise GoogleDriveApiError("Could not extract text from PDF file.") from exc
+    text = completed.stdout.decode("utf-8", errors="ignore").strip()
+    if not text:
+        raise GoogleDriveApiError("PDF text extraction returned empty content.")
+    return text.encode("utf-8")
+
+
+def _extract_docx_text_bytes(raw: bytes) -> bytes:
+    import re
+    import zipfile
+    from io import BytesIO
+
+    try:
+        with zipfile.ZipFile(BytesIO(raw)) as archive:
+            xml = archive.read("word/document.xml").decode("utf-8", errors="ignore")
+    except Exception as exc:  # noqa: BLE001
+        raise GoogleDriveApiError("Could not read DOCX content.") from exc
+    text = re.sub(r"<w:tab[^/]*/>", "\t", xml)
+    text = re.sub(r"</w:p>", "\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = (
+        text.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+    )
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if not text:
+        raise GoogleDriveApiError("DOCX text extraction returned empty content.")
+    return text.encode("utf-8")
 
 
 def _join_relative_path(parent_path: str, child_name: str) -> str:
