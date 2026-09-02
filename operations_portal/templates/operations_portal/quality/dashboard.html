@@ -119,6 +119,21 @@
       </div></div>
     </div>
     <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Collection trigger reasons</h5></div><div class="card-body">
+        {% if dialogue.collection_trigger_reasons %}
+        {% for row in dialogue.collection_trigger_reasons %}
+        <div class="d-flex justify-content-between border-bottom py-2"><span>{{ row.reason }}</span><strong>{{ row.count }}</strong></div>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted mb-0">Sem gatilhos de coleta instrumentados no período.</p>
+        {% endif %}
+        <p class="text-muted fs-13 mb-0 mt-2">Policy leaks bloqueados: {{ dialogue.policy_leaks_blocked }} · Cross-domain filtrados: {{ dialogue.coherence_filtered_count }}</p>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-6">
       <div class="card"><div class="card-header"><h5 class="card-title mb-0">Fallback por tenant</h5></div><div class="card-body">
         {% if fallback.by_tenant %}
         {% for row in fallback.by_tenant %}

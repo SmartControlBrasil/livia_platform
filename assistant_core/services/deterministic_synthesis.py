@@ -54,8 +54,21 @@ META_MARKERS = (
     "a resposta deve pedir confirmação",
     "templates/institutional",
     "sem pedido explícito de orçamento, a lívia",
+    "sem pedido explicito de orcamento, a livia",
     "a lívia explica fatores",
     "`templates/",
+    "não deve prometer",
+    "nao deve prometer",
+    "o que não prometer",
+    "o que nao prometer",
+    "a lívia da smart control brasil não deve",
+    "a livia da smart control brasil nao deve",
+    "catálogo oficial apenas como backing",
+    "catalogo oficial apenas como backing",
+    "limites técnicos e comerciais",
+    "limites tecnicos e comerciais",
+    "substituição completa da equipe",
+    "substituicao completa da equipe",
 )
 
 CONTEXT_TOKEN_ENRICHMENTS = (
@@ -107,16 +120,22 @@ def synthesize_deterministic_reply(
 
 def consultative_followup_for_context(need_or_message: str) -> str:
     normalized = normalize_text(need_or_message)
-    if any(token in normalized for token in ("cozinha", "bancada", "cooktop", "pia", "ilha")):
+    # Domínios específicos ANTES de heurísticas genéricas de "produto/site".
+    if any(token in normalized for token in ("cozinha", "bancada", "cooktop", "pia", "ilha", "granito", "marmore", "mármore")):
         return "Você já tem medidas aproximadas ou fotos da bancada?"
     if any(token in normalized for token in ("banheiro", "nicho", "lavabo", "cuba")):
         return "O projeto já inclui bancada, cuba e nicho, ou só parte disso?"
-    if any(token in normalized for token in ("escola", "educac", "professor")):
+    if any(token in normalized for token in ("duno", "dune", "hygibot", "limpeza", "lavar", "varrer", "aspirar")):
+        return "Qual é o ambiente e o tipo de piso onde a limpeza acontece?"
+    if any(token in normalized for token in ("escola", "educac", "professor")) and "limpeza" not in normalized:
         return "O foco é robótica educacional, demonstração ou outro objetivo na escola?"
-    if any(token in normalized for token in ("automacao", "automação", "clp", "mitsubishi", "robo", "robô")):
+    if any(token in normalized for token in ("automacao", "automação", "clp", "mitsubishi", "robo", "robô", "robotica", "robótica", "xyron")):
         return "Qual ambiente e objetivo você quer cobrir primeiro?"
-    if any(token in normalized for token in ("site", "loja", "ecommerce", "e-commerce")):
+    # E-commerce só com sinais claros de loja/site — nunca só "produto".
+    if any(token in normalized for token in ("loja virtual", "ecommerce", "e-commerce", "loja online")):
         return "Você pretende começar com poucos produtos ou já tem um catálogo maior?"
+    if any(token in normalized for token in ("site institucional", "landing page", "pagina web", "página web")):
+        return "O foco é divulgação, captura de contatos ou outro objetivo do site?"
     return "Qual detalhe é mais importante agora para eu te orientar melhor?"
 
 
@@ -126,20 +145,37 @@ def prefer_contextual_reply_over_fallback(
     need_summary: str = "",
     current_message: str = "",
     history=None,
+    active_domain: str = "",
+    active_entity: str = "",
+    skip_followup: bool = False,
 ) -> str:
     synthesized = synthesize_deterministic_reply(knowledge_context, base_reply="")
     context_blob = " ".join(
         [
+            str(active_domain or ""),
+            str(active_entity or ""),
             str(need_summary or ""),
             str(current_message or ""),
             " ".join(str(item.get("content") or "") for item in (history or []) if item.get("role") == "user"),
         ]
     ).strip()
     if synthesized:
+        if skip_followup:
+            return synthesized
         follow = consultative_followup_for_context(context_blob or current_message)
+        # Nunca anexar follow-up de catálogo fora de software_web/ecommerce.
+        if "catálogo maior" in follow.lower() or "catalogo maior" in normalize_text(follow):
+            if active_domain and active_domain != "software_web":
+                return synthesized
+            if any(token in normalize_text(context_blob) for token in ("robo", "robô", "duno", "limpeza", "mitsubishi", "bancada")):
+                return synthesized
         if follow and follow.lower() not in synthesized.lower():
             return f"{synthesized} {follow}".strip()
         return synthesized
+    if skip_followup:
+        return DEFAULT_REPLY if not context_blob else (
+            f"Posso te orientar sobre {active_entity}." if active_entity else DEFAULT_REPLY
+        )
     if context_blob:
         return consultative_followup_for_context(context_blob)
     return DEFAULT_REPLY
@@ -236,6 +272,12 @@ def _clean_bit(item: str) -> str:
     clipped = " ".join(clipped.split()).strip(" -•#")
     if clipped.lower().startswith("tags:"):
         return ""
+    from knowledge_base.rag.content_classification import is_policy_leak_text
+
+    if is_policy_leak_text(clipped):
+        return ""
+    # Remove seções explícitas de limites/não prometer do texto público.
+    clipped = re.split(r"(?i)\b(?:o que n[aã]o prometer|limites\b)\b", clipped)[0].strip()
     for prefix in (
         "robotica xyron visao geral",
         "robótica de serviço xyron",
@@ -245,13 +287,15 @@ def _clean_bit(item: str) -> str:
         "sistemas python e web",
         "limites e nao prometer",
         "limites e não prometer",
+        "hygibot / dune bot",
+        "hygibot / duno bot",
     ):
         lowered_full = clipped.lower()
         if lowered_full.startswith(prefix):
             clipped = clipped[len(prefix) :].strip(" :-•#")
             break
     body_match = re.search(
-        r"((?:A|O|Os|As|Um|Uma|Este|Esta|A\s+Grani|A\s+Smart|Granimármores|Granimarmores|Smart\s+Control|Robô|Robo)[^.]{25,}[.!?]?)",
+        r"((?:A|O|Os|As|Um|Uma|Este|Esta|A\s+Grani|A\s+Smart|Granimármores|Granimarmores|Smart\s+Control|Robô|Robo|O\s+Duno|O\s+HygiBot)[^.]{25,}[.!?]?)",
         clipped,
     )
     if body_match:
@@ -264,7 +308,7 @@ def _clean_bit(item: str) -> str:
     clipped = re.sub(r"\s+", " ", clipped).strip()
     # Descarta cortes de título tipo "O / Little Bot Categoria:"
     if re.match(r"^[A-Za-zÀ-ÿ]?\s*/\s*[A-Za-z]", clipped) or "categoria:" in clipped.lower()[:40]:
-        body = re.search(r"\b((?:Robô|Robo|Indicar|Atendemos|Desenvolvemos|Integra|Apoia)\b.+)$", clipped)
+        body = re.search(r"\b((?:Robô|Robo|Indicar|Atendemos|Desenvolvemos|Integra|Apoia|Apoiar)\b.+)$", clipped)
         clipped = body.group(1).strip() if body else ""
     clipped = clipped[:280].strip(" -•#")
     if len(clipped) < 40:
@@ -276,6 +320,8 @@ def _clean_bit(item: str) -> str:
             return ""
     lowered = clipped.lower()
     if any(marker in lowered for marker in META_MARKERS):
+        return ""
+    if is_policy_leak_text(clipped):
         return ""
     if lowered.startswith(TITLE_PREFIXES) and len(clipped) < 90:
         return ""

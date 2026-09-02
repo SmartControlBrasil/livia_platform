@@ -52,6 +52,10 @@
         <div class="fs-13 border-bottom py-2">
           <div>{{ obs.created_at|date:"H:i:s" }} · intent={{ obs.intent }} · fallback={{ obs.is_fallback }}</div>
           <div>retrieval={{ obs.retrieval_status }} hit={{ obs.retrieval_hit }} score={{ obs.max_score }} chunks={{ obs.chunk_count }}</div>
+          <div>domain={{ obs.active_domain|default:"—" }} entity={{ obs.active_entity|default:"—" }}</div>
+          <div>entity_match={{ obs.entity_match }} domain_match={{ obs.domain_match }} policy_filtered={{ obs.policy_chunks_filtered }}</div>
+          <div>contextual_query={{ obs.contextual_query_used }} collection={{ obs.collection_trigger_reason|default:"—" }}</div>
+          <div>followup={{ obs.followup_strategy|default:"—" }}</div>
         </div>
         {% endfor %}
         {% endif %}

@@ -386,9 +386,17 @@ class ConversationSemanticRagTests(RagTestDimensionMixin, TestCase):
             "O mármore Carrara é indicado para bancadas internas.\n"
             "[/KNOWLEDGE_BASE]"
         )
+        from knowledge_base.rag.context_builder import KnowledgeContextResult
+
         with patch(
-            "assistant_core.services.chat_processing.build_knowledge_context",
-            return_value=knowledge,
+            "assistant_core.services.chat_processing.build_knowledge_context_result",
+            return_value=KnowledgeContextResult(
+                text=knowledge,
+                retrieval_status="ok",
+                retrieval_hit=True,
+                mode="semantic",
+                domain_match=True,
+            ),
         ):
             response = self.client.post(
                 "/api/chat/",
@@ -581,9 +589,16 @@ class ConversationSemanticRagTests(RagTestDimensionMixin, TestCase):
         knowledge = (
             "[KNOWLEDGE_BASE]\nFonte: Doc\nConteúdo:\nMármore para escada disponível.\n[/KNOWLEDGE_BASE]"
         )
+        from knowledge_base.rag.context_builder import KnowledgeContextResult
+
         with patch(
-            "assistant_core.services.chat_processing.build_knowledge_context",
-            return_value=knowledge,
+            "assistant_core.services.chat_processing.build_knowledge_context_result",
+            return_value=KnowledgeContextResult(
+                text=knowledge,
+                retrieval_status="ok",
+                retrieval_hit=True,
+                mode="semantic",
+            ),
         ) as mocked:
             first = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json")
             second = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json")

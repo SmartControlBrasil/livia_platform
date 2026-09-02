@@ -241,6 +241,7 @@ def build_quality_dashboard(*, tenant=None, period: QualityPeriod, accessible_te
 
     fallback = build_fallback_metrics(tenant=tenant, period=period)
     rag = build_rag_metrics(tenant=tenant, period=period)
+    dialogue = build_dialogue_coherence_metrics(tenant=tenant, period=period)
     latency = build_latency_metrics(tenant=tenant, period=period)
     errors = build_error_metrics(tenant=tenant, period=period)
     chat_requests = build_chat_request_metrics(tenant=tenant, period=period)
@@ -332,6 +333,31 @@ def build_quality_dashboard(*, tenant=None, period: QualityPeriod, accessible_te
             "hint": f"Coverage: {_format_rate(corpus['embedding_coverage'])}",
             "status": "warning" if corpus["embeddings_pending"] >= EMBEDDINGS_PENDING_WARNING else "green",
         },
+        {
+            "key": "policy_leaks",
+            "label": "Policy leaks",
+            "value": dialogue["policy_leaks_blocked"],
+            "hint": f"Filtrados: {dialogue['policy_chunks_filtered']} · esperado 0",
+            "status": dialogue["status"],
+        },
+        {
+            "key": "rag_relevance",
+            "label": "RAG relevance / coherence",
+            "value": _format_rate(dialogue["relevance_coherence_rate"]),
+            "hint": f"Entity {_format_rate(dialogue['entity_match_rate'])} · Domain {_format_rate(dialogue['domain_match_rate'])}",
+        },
+        {
+            "key": "cross_domain_filtered",
+            "label": "Cross-domain filtered",
+            "value": dialogue["coherence_filtered_count"],
+            "hint": f"Contextual query: {_format_rate(dialogue['contextual_query_usage'])}",
+        },
+        {
+            "key": "entity_match_rate",
+            "label": "Entity match rate",
+            "value": _format_rate(dialogue["entity_match_rate"]),
+            "hint": f"Obs: {dialogue['with_observability']}/{dialogue['sampled_requests']}",
+        },
     ]
 
     return {
@@ -345,6 +371,7 @@ def build_quality_dashboard(*, tenant=None, period: QualityPeriod, accessible_te
         "cards": cards,
         "fallback": fallback,
         "rag": rag,
+        "dialogue": dialogue,
         "latency": latency,
         "errors": errors,
         "chat_requests": chat_requests,
@@ -471,6 +498,70 @@ def build_fallback_metrics(*, tenant=None, period: QualityPeriod) -> dict:
         "by_tenant": by_tenant,
         "by_day": by_day,
         "conversations": conversations,
+    }
+
+
+def build_dialogue_coherence_metrics(*, tenant=None, period: QualityPeriod) -> dict:
+    """Métricas leves de relevância/coerência a partir de observability do ChatRequest."""
+    payload_rows = (
+        _scope(ChatRequest.objects.all(), tenant)
+        .filter(created_at__gte=period.start, created_at__lt=period.end, status=ChatRequest.Status.COMPLETED)
+        .values_list("response_payload", flat=True)[:3000]
+    )
+    total = 0
+    with_obs = 0
+    entity_matches = 0
+    domain_matches = 0
+    contextual_queries = 0
+    policy_filtered = 0
+    policy_leaks_blocked = 0
+    coherence_filtered = 0
+    collection_reasons: dict[str, int] = {}
+
+    for payload in payload_rows:
+        total += 1
+        obs = (payload or {}).get("observability") or {}
+        if not obs:
+            continue
+        with_obs += 1
+        if obs.get("entity_match"):
+            entity_matches += 1
+        if obs.get("domain_match"):
+            domain_matches += 1
+        if obs.get("contextual_query_used") or (
+            obs.get("retrieval_query_contextual")
+            and obs.get("retrieval_query_original")
+            and obs.get("retrieval_query_contextual") != obs.get("retrieval_query_original")
+        ):
+            contextual_queries += 1
+        policy_filtered += int(obs.get("policy_chunks_filtered") or 0)
+        if obs.get("policy_leak_blocked"):
+            policy_leaks_blocked += 1
+        coherence_filtered += int(obs.get("coherence_filtered_count") or 0)
+        reason = str(obs.get("collection_trigger_reason") or "").strip()
+        if reason:
+            collection_reasons[reason] = collection_reasons.get(reason, 0) + 1
+
+    denom = with_obs or 1
+    relevance_rate = _pct(entity_matches + domain_matches, denom * 2) if with_obs else None
+    return {
+        "sampled_requests": total,
+        "with_observability": with_obs,
+        "entity_match_rate": _pct(entity_matches, with_obs),
+        "domain_match_rate": _pct(domain_matches, with_obs),
+        "contextual_query_usage": _pct(contextual_queries, with_obs),
+        "policy_chunks_filtered": policy_filtered,
+        "policy_leaks_blocked": policy_leaks_blocked,
+        "policy_leak_rate": 0.0 if policy_leaks_blocked == 0 else _pct(policy_leaks_blocked, with_obs),
+        "coherence_filtered_count": coherence_filtered,
+        "relevance_coherence_rate": relevance_rate,
+        "collection_trigger_reasons": sorted(
+            [{"reason": k, "count": v} for k, v in collection_reasons.items()],
+            key=lambda item: item["count"],
+            reverse=True,
+        )[:8],
+        "status": "green" if policy_leaks_blocked == 0 else "degraded",
+        "tone": "success" if policy_leaks_blocked == 0 else "danger",
     }
 
 

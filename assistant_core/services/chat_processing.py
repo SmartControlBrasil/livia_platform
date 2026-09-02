@@ -36,10 +36,38 @@ class _DeterministicChatResult:
 
 
 def process_chat_request(*, chat_request, tenant, session_id: str, user_message: str, source_page: str = "") -> dict:
+    from assistant_core.consultative_policy import detect_collection_trigger, CollectionTrigger
+    from assistant_core.dialogue_memory import (
+        build_contextual_retrieval_query,
+        load_dialogue_memory,
+        persist_dialogue_memory,
+        update_dialogue_memory_from_turn,
+    )
+    from assistant_core.services.response_quality_gate import apply_response_quality_gate
+
     decision_service = LiviaDecisionService()
     # Garante conversation_id em RagRetrievalEvent sem alterar a política de resposta.
     conversation_ref = _ensure_conversation_for_retrieval(tenant=tenant, session_id=session_id, source_page=source_page)
+    history_preview = list(conversation_ref.messages.values("role", "content").order_by("created_at", "id"))
+    memory = load_dialogue_memory(conversation_ref)
     discovery_preview = analyze_message(user_message)
+    commercial = detect_collection_trigger(user_message) != CollectionTrigger.NONE
+    memory = update_dialogue_memory_from_turn(
+        memory=memory,
+        current_message=user_message,
+        history=history_preview,
+        need_summary=memory.active_need,
+        commercial_trigger=commercial,
+    )
+    original_query, contextual_query = build_contextual_retrieval_query(
+        current_message=user_message,
+        memory=memory,
+        history=history_preview,
+        need_summary=memory.active_need,
+    )
+    memory.retrieval_query_original = original_query
+    memory.retrieval_query_contextual = contextual_query
+
     # Recuperação semântica pode chamar provider externo: permanece fora da transação de negócio.
     knowledge_result = build_knowledge_context_result(
         tenant,
@@ -47,8 +75,15 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
         service_area=discovery_preview.service_area,
         limit=2,
         conversation=conversation_ref,
+        contextual_query=contextual_query,
+        active_domain=memory.active_domain,
+        active_entity=memory.active_entity,
+        retrieval_query_original=original_query,
     )
     knowledge_context = knowledge_result.text
+    memory.entity_match = bool(knowledge_result.entity_match or memory.entity_match)
+    memory.domain_match = bool(knowledge_result.domain_match or memory.domain_match)
+
     deterministic_result = _persist_chat_processing_state(
         chat_request=chat_request,
         tenant=tenant,
@@ -58,6 +93,7 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
         decision_service=decision_service,
         knowledge_context=knowledge_context,
         knowledge_result=knowledge_result,
+        dialogue_memory=memory,
     )
     return _refine_response_with_ai_if_enabled(
         deterministic_result=deterministic_result,
@@ -86,7 +122,11 @@ def _persist_chat_processing_state(
     decision_service: LiviaDecisionService,
     knowledge_context: str = "",
     knowledge_result: KnowledgeContextResult | None = None,
+    dialogue_memory=None,
 ) -> _DeterministicChatResult:
+    from assistant_core.dialogue_memory import persist_dialogue_memory, should_skip_consultative_followup
+    from assistant_core.services.response_quality_gate import apply_response_quality_gate
+
     with transaction.atomic():
         conversation = _get_or_create_locked_conversation(tenant=tenant, session_id=session_id, source_page=source_page)
         assistant_profile = _active_assistant_profile(tenant)
@@ -120,6 +160,30 @@ def _persist_chat_processing_state(
             if human_handoff_payload.get("active"):
                 assistant_reply = "Claro. Use o botão do WhatsApp que apareceu na tela para falar com nossa equipe."
 
+        gate_diagnostics = {}
+        if dialogue_memory is not None and human_handoff_payload is None:
+            try:
+                lead = conversation.lead_draft
+            except Exception:
+                lead = None
+            collection_active = bool(
+                lead is not None
+                and isinstance(getattr(lead, "qualification_data", None), dict)
+                and (lead.qualification_data or {}).get("collection_active")
+            )
+            # Não reescrever prompts de coleta (nome/telefone) com síntese RAG.
+            if not collection_active:
+                assistant_reply, gate_diagnostics = apply_response_quality_gate(
+                    reply=assistant_reply,
+                    knowledge_context=knowledge_context,
+                    current_message=user_message,
+                    memory=dialogue_memory,
+                    history=history,
+                    append_followup=False if should_skip_consultative_followup(current_message=user_message, memory=dialogue_memory) else None,
+                )
+            if lead is not None:
+                persist_dialogue_memory(lead, dialogue_memory)
+
         assistant_message = Message.objects.create(
             conversation=conversation,
             role=Message.Role.ASSISTANT,
@@ -137,6 +201,46 @@ def _persist_chat_processing_state(
             "retrieval_ms": int(getattr(knowledge_result, "duration_ms", 0) or 0),
             "decision_ms": decision_ms,
             "retrieval_mode": getattr(knowledge_result, "mode", "") or "",
+            "policy_chunks_filtered": int(getattr(knowledge_result, "policy_chunks_filtered", 0) or 0),
+            "coherence_filtered_count": int(
+                getattr(knowledge_result, "coherence_filtered_count", 0) or gate_diagnostics.get("coherence_filtered_count", 0) or 0
+            ),
+            "collection_trigger_reason": "",
+            "followup_strategy": gate_diagnostics.get("followup_strategy", ""),
+            "policy_leak_blocked": bool(gate_diagnostics.get("policy_leak_blocked")),
+            "policy_chunk_selected": 0,
+            "contextual_query_used": bool(
+                dialogue_memory
+                and dialogue_memory.retrieval_query_contextual
+                and dialogue_memory.retrieval_query_contextual != dialogue_memory.retrieval_query_original
+            ),
+        }
+        if dialogue_memory is not None:
+            observability.update(dialogue_memory.observability())
+            observability["entity_match"] = bool(dialogue_memory.entity_match or getattr(knowledge_result, "entity_match", False))
+            observability["domain_match"] = bool(dialogue_memory.domain_match or getattr(knowledge_result, "domain_match", False))
+            observability["contextual_query_used"] = bool(
+                dialogue_memory.retrieval_query_contextual
+                and dialogue_memory.retrieval_query_contextual.strip()
+                and dialogue_memory.retrieval_query_contextual.strip()
+                != (dialogue_memory.retrieval_query_original or "").strip()
+            )
+        # Motivo de coleta quando disponível no lead.
+        try:
+            lead_obs = conversation.lead_draft
+            qd = dict(getattr(lead_obs, "qualification_data", None) or {})
+            if qd.get("collection_active"):
+                observability["collection_trigger_reason"] = qd.get("collection_trigger_reason") or "collection_active"
+            elif qd.get("contact_collection_deferred"):
+                observability["collection_trigger_reason"] = "contact_deferred"
+        except Exception:
+            pass
+        # Observabilidade na resposta/API e no ChatRequest deve ser idêntica (idempotência).
+        # Queries completas ficam no RagRetrievalEvent; aqui só flags e domínio/entidade.
+        client_observability = {
+            key: value
+            for key, value in observability.items()
+            if key not in {"retrieval_query_original", "retrieval_query_contextual"}
         }
         response_payload = {
             "tenant": tenant.slug,
@@ -150,7 +254,7 @@ def _persist_chat_processing_state(
                 "initial_message",
                 "Olá! Sou a Lívia. Como posso te ajudar?",
             ),
-            "observability": observability,
+            "observability": client_observability,
         }
         if human_handoff_payload is not None:
             response_payload["human_handoff"] = human_handoff_payload

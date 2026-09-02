@@ -327,9 +327,11 @@ class RagPgvectorPhase6Tests(RagTestDimensionMixin, TestCase):
             "message": "Tem mármore?",
         }
         before = RagRetrievalEvent.objects.filter(tenant=self.tenant).count()
+        from knowledge_base.rag.context_builder import KnowledgeContextResult
+
         with patch(
-            "assistant_core.services.chat_processing.build_knowledge_context",
-            return_value="",
+            "assistant_core.services.chat_processing.build_knowledge_context_result",
+            return_value=KnowledgeContextResult(text="", mode="none"),
         ):
             first = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json")
             second = self.client.post("/api/chat/", data=json.dumps(payload), content_type="application/json")
@@ -337,7 +339,7 @@ class RagPgvectorPhase6Tests(RagTestDimensionMixin, TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.headers.get("X-Livia-Idempotent-Replay"), "true")
         after = RagRetrievalEvent.objects.filter(tenant=self.tenant).count()
-        # build_knowledge_context patched => retrieve_context nao roda no chat.
+        # build_knowledge_context_result patched => retrieve_context nao roda no chat.
         self.assertEqual(after, before)
 
     def test_vector_length_validation_on_model(self):
