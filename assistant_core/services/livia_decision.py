@@ -633,7 +633,18 @@ class LiviaDecisionService:
             clipped = clipped[:280].strip(" -•#")
             if len(clipped) < 40:
                 continue
+            # Descarta cortes no meio da palavra (ex.: "olvemos websites...").
+            if clipped[0].islower():
+                parts = clipped.split(". ", 1)
+                clipped = parts[1].strip() if len(parts) == 2 and parts[1][:1].isupper() else ""
+                if len(clipped) < 40:
+                    continue
             lowered = clipped.lower()
+            if lowered.startswith(("## ", "# ")) or lowered in {
+                "manutenção industrial, tpm e diagnóstico",
+                "manutencao industrial, tpm e diagnostico",
+            }:
+                continue
             if any(
                 marker in lowered
                 for marker in (
