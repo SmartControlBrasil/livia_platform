@@ -156,20 +156,51 @@ def merge_need_summaries(existing: str, incoming: str) -> str:
     return merged[:500]
 
 
+def _lead_model_has_qualification_data(lead_draft) -> bool:
+    meta = getattr(getattr(lead_draft, "__class__", None), "_meta", None)
+    if meta is None:
+        return False
+    try:
+        meta.get_field("qualification_data")
+        return True
+    except Exception:
+        return False
+
+
 def lead_has_name_deferred(lead_draft) -> bool:
-    data = getattr(lead_draft, "qualification_data", None) or {}
-    return bool(data.get(NAME_DEFERRED_KEY))
+    if lead_draft is None:
+        return False
+    if _lead_model_has_qualification_data(lead_draft):
+        data = getattr(lead_draft, "qualification_data", None) or {}
+        if isinstance(data, dict) and data.get(NAME_DEFERRED_KEY):
+            return True
+    conversation = getattr(lead_draft, "conversation", None)
+    if conversation is None:
+        return False
+    try:
+        messages = conversation.messages.all()
+    except Exception:
+        return False
+    for message in messages:
+        role = str(getattr(message, "role", "") or "")
+        content = str(getattr(message, "content", "") or "")
+        if role == "user" and is_name_deferred(content):
+            return True
+    return False
 
 
 def mark_name_deferred(lead_draft) -> None:
-    if lead_draft is None:
+    if lead_draft is None or not _lead_model_has_qualification_data(lead_draft):
         return
     data = dict(getattr(lead_draft, "qualification_data", None) or {})
     if data.get(NAME_DEFERRED_KEY) is True:
         return
     data[NAME_DEFERRED_KEY] = True
     lead_draft.qualification_data = data
-    lead_draft.save(update_fields=["qualification_data", "updated_at"])
+    update_fields = ["qualification_data"]
+    if hasattr(lead_draft, "updated_at"):
+        update_fields.append("updated_at")
+    lead_draft.save(update_fields=update_fields)
 
 
 def has_prior_commercial_thread(conversation, history) -> bool:
