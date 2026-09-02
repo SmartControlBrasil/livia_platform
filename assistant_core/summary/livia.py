@@ -167,6 +167,49 @@ def build_lead_notification_body(lead_draft, *, timestamp: str = "") -> str:
     )
 
 
+def build_handoff_notification_body(handoff, *, timestamp: str = "") -> str:
+    conversation = getattr(handoff, "conversation", None)
+    lead_draft = getattr(handoff, "lead_draft", None)
+    summary = build_conversation_summary(conversation, lead_draft=lead_draft)
+    transcript = build_conversation_transcript(conversation, lead_draft=lead_draft)
+    origin = summary.source_page or str(getattr(handoff, "source_page", "") or "") or "livia-platform"
+    reason = str(getattr(handoff, "reason", "") or "").strip() or "solicitação de atendimento"
+    tenant_slug = summary.tenant_slug or str(getattr(getattr(handoff, "tenant", None), "slug", "") or "")
+    return "\n".join(
+        [
+            "Solicitação de atendimento da Lívia",
+            "",
+            f"Tenant: {tenant_slug}",
+            f"Data/hora: {timestamp or 'não informada'}",
+            f"Origem: {origin}",
+            "",
+            "Dados disponíveis:",
+            f"Nome: {getattr(handoff, 'visitor_name', '') or getattr(lead_draft, 'name', '') or 'Não informado'}",
+            f"Empresa: {getattr(handoff, 'visitor_company', '') or getattr(lead_draft, 'company', '') or 'Não informado'}",
+            f"Telefone: {getattr(handoff, 'visitor_phone', '') or getattr(lead_draft, 'phone', '') or 'Não informado'}",
+            f"E-mail: {getattr(handoff, 'visitor_email', '') or getattr(lead_draft, 'email', '') or 'Não informado'}",
+            "",
+            f"Motivo do handoff: {reason}",
+            "",
+            "Resumo da necessidade:",
+            summary.need_summary or "Não informada",
+            "",
+            "Resumo executivo:",
+            f"Interesse em {AREA_LABELS.get(summary.service_area, summary.service_area or 'indefinido')}; "
+            f"urgência {summary.urgency}; próximo passo: {summary.recommended_next_step}",
+            "",
+            "Pontos importantes:",
+            *[f"- {note}" for note in (summary.conversation_notes or ("Não identificado.",))],
+            "",
+            "Próxima ação sugerida:",
+            "Retornar o contato com o contexto da conversa.",
+            "",
+            "Histórico da conversa:",
+            transcript,
+        ]
+    )
+
+
 def _sanitize_transcript_line(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", str(text or "").strip())
     lowered = cleaned.lower()

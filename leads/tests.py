@@ -623,3 +623,4 @@ class HandoffServiceTests(TestCase):
         self.assertTrue(result.success)
         self.assertTrue(result.dry_run)
         self.assertEqual(result.channel, "email")
+        self.assertTrue(result.skipped)

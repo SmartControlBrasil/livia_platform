@@ -4,8 +4,14 @@ import logging
 from dataclasses import dataclass
 
 from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.utils import timezone
+
+from assistant_core.summary import build_handoff_notification_body
 
 logger = logging.getLogger(__name__)
+
+NOTIFICATION_SENT_KEY = "handoff_notification_sent_at"
 
 
 @dataclass(frozen=True)
@@ -14,6 +20,7 @@ class HandoffNotificationResult:
     dry_run: bool
     channel: str
     message: str
+    skipped: bool = False
 
 
 class HandoffNotificationService:
@@ -24,19 +31,68 @@ class HandoffNotificationService:
         dry_run = bool(getattr(settings, "LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN", True))
         recipient = self._recipient_for(handoff)
 
-        if dry_run or not enabled:
+        if self._already_sent(handoff):
+            message = "Handoff notification already sent; skipping duplicate."
+            self._log("handoff_notification_skipped_duplicate", handoff, message=message)
+            return HandoffNotificationResult(
+                success=True, dry_run=dry_run, channel=self.channel, message=message, skipped=True
+            )
+
+        if not enabled:
+            message = "Handoff notifications disabled; skipping."
+            self._log("handoff_notification_disabled", handoff, message=message)
+            return HandoffNotificationResult(
+                success=True, dry_run=True, channel=self.channel, message=message, skipped=True
+            )
+
+        if dry_run:
             message = f"Dry-run handoff notification prepared for {recipient or 'no-recipient'}."
+            self._mark_sent(handoff, dry_run=True)
             self._log("handoff_notification_dry_run", handoff, message=message)
-            return HandoffNotificationResult(success=True, dry_run=True, channel=self.channel, message=message)
+            return HandoffNotificationResult(
+                success=True, dry_run=True, channel=self.channel, message=message, skipped=False
+            )
 
         if not recipient:
             message = "Handoff notification recipient is not configured."
             self._log("handoff_notification_missing_recipient", handoff, message=message)
-            return HandoffNotificationResult(success=False, dry_run=False, channel=self.channel, message=message)
+            return HandoffNotificationResult(
+                success=False, dry_run=False, channel=self.channel, message=message, skipped=False
+            )
 
-        message = "Real handoff notification transport is not implemented in this phase."
-        self._log("handoff_notification_not_implemented", handoff, message=message)
-        return HandoffNotificationResult(success=False, dry_run=False, channel=self.channel, message=message)
+        display_name = (
+            str(getattr(handoff, "visitor_name", "") or "").strip()
+            or str(getattr(handoff, "visitor_company", "") or "").strip()
+            or str(getattr(getattr(handoff, "tenant", None), "name", "") or "").strip()
+            or "Atendimento"
+        )
+        subject = f"Solicitação de atendimento da Lívia - {display_name}"
+        timestamp = timezone.localtime(timezone.now()).strftime("%d/%m/%Y %H:%M")
+        body = build_handoff_notification_body(handoff, timestamp=timestamp)
+        from_email = str(getattr(settings, "DEFAULT_FROM_EMAIL", "") or "").strip() or recipient
+        bcc = self._bcc_list()
+        email = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=from_email,
+            to=[recipient],
+            bcc=bcc,
+        )
+        email.send(fail_silently=False)
+        self._mark_sent(handoff, dry_run=False)
+        try:
+            from conversations.models import HandoffRequest
+
+            if getattr(handoff, "status", "") == HandoffRequest.Status.PENDING:
+                handoff.status = HandoffRequest.Status.SENT
+                handoff.save(update_fields=["status", "updated_at"])
+        except Exception:
+            pass
+        message = f"Handoff notification sent to {recipient}."
+        self._log("handoff_notification_sent", handoff, message=message)
+        return HandoffNotificationResult(
+            success=True, dry_run=False, channel=self.channel, message=message, skipped=False
+        )
 
     def _recipient_for(self, handoff) -> str:
         tenant = getattr(handoff, "tenant", None)
@@ -45,6 +101,28 @@ class HandoffNotificationService:
         if profile_email:
             return profile_email
         return str(getattr(settings, "LIVIA_HANDOFF_NOTIFICATION_EMAIL", "") or "").strip()
+
+    def _bcc_list(self) -> list[str]:
+        raw = str(getattr(settings, "LIVIA_LEAD_NOTIFICATION_BCC", "") or "").strip()
+        if not raw:
+            return []
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    def _already_sent(self, handoff) -> bool:
+        data = getattr(handoff, "metadata", None) or {}
+        return bool(isinstance(data, dict) and data.get(NOTIFICATION_SENT_KEY))
+
+    def _mark_sent(self, handoff, *, dry_run: bool) -> None:
+        if handoff is None or not hasattr(handoff, "metadata"):
+            return
+        data = dict(getattr(handoff, "metadata", None) or {})
+        data[NOTIFICATION_SENT_KEY] = timezone.now().isoformat()
+        data["handoff_notification_dry_run"] = bool(dry_run)
+        handoff.metadata = data
+        update_fields = ["metadata"]
+        if hasattr(handoff, "updated_at"):
+            update_fields.append("updated_at")
+        handoff.save(update_fields=update_fields)
 
     def _log(self, event: str, handoff, *, message: str) -> None:
         logger.info(
