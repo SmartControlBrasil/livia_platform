@@ -705,8 +705,8 @@ class LiviaDecisionService:
             # Com RAG, prioriza grounding + pergunta leve de contexto — sem
             # desviar para discovery genérico de "automatizar processo".
             reply = (
-                "Se quiser, me conta o ambiente e o objetivo principal para eu "
-                "afinar a orientação com base no material aprovado."
+                "Trabalhamos com robótica de serviço e outras soluções documentadas. "
+                "Se quiser, me conta o ambiente e o objetivo principal para eu afinar a orientação."
             )
         else:
             reply = build_consultative_commercial_reply(

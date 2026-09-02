@@ -358,7 +358,17 @@ def _looks_informational(normalized_text: str) -> bool:
 
 
 def _is_greeting(normalized_text: str) -> bool:
-    return _matches_any(normalized_text, GREETING_PATTERNS) and len(normalized_text.split()) <= 5
+    words = normalized_text.split()
+    if len(words) > 5:
+        return False
+    # Word-boundary match avoids false positives like "escola" containing "ola".
+    for pattern in GREETING_PATTERNS:
+        if " " in pattern:
+            if pattern in normalized_text:
+                return True
+        elif re.search(rf"(?<!\w){re.escape(pattern)}(?!\w)", normalized_text):
+            return True
+    return False
 
 
 def _matches_any(normalized_text: str, patterns: tuple[str, ...]) -> bool:

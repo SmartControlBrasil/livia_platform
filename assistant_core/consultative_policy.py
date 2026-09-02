@@ -148,21 +148,21 @@ def is_human_handoff_request(text: str) -> bool:
 
 
 def collection_already_active(conversation, lead_draft=None) -> bool:
-    state = get_current_state(conversation) if conversation is not None else LeadState.DISCOVERY
-    if state in {LeadState.COLLECT_NAME_COMPANY, LeadState.COLLECT_CONTACT, LeadState.OFFER_HANDOFF}:
-        return True
     lead = lead_draft
     if lead is None and conversation is not None:
         try:
             lead = conversation.lead_draft
         except Exception:
             lead = None
-    if lead is None:
-        return False
-    data = getattr(lead, "qualification_data", None) or {}
-    if isinstance(data, dict) and data.get(COLLECTION_ACTIVE_KEY):
-        return True
-    return False
+    if lead is not None:
+        data = getattr(lead, "qualification_data", None) or {}
+        if isinstance(data, dict) and data.get(COLLECTION_ACTIVE_KEY):
+            return True
+    # Soft capture during consultative mode may advance lead_state to
+    # COLLECT_NAME_COMPANY without opening explicit name/contact collection.
+    # Only treat later commercial states (or the explicit flag above) as active.
+    state = get_current_state(conversation) if conversation is not None else LeadState.DISCOVERY
+    return state in {LeadState.COLLECT_CONTACT, LeadState.OFFER_HANDOFF}
 
 
 def mark_collection_active(lead_draft) -> None:
