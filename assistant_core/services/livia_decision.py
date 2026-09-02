@@ -14,6 +14,7 @@ from assistant_core.conversation_turns import (
     build_name_deferred_reply,
     classify_conversation_turn,
     mark_name_deferred,
+    normalize_text,
 )
 from assistant_core.consultative_policy import (
     CollectionTrigger,
@@ -583,7 +584,13 @@ class LiviaDecisionService:
                 "lacunas de curadoria",
                 "robô educacional interativo",
                 "robô de limpeza",
+                "bancadas de cozinha, pias",
+                "perguntas frequentes sustentadas",
+                "processo de orçamento, medidas",
+                "fatos confirmados pelo site",
             )):
+                continue
+            if "quando perguntado sobre esses pontos" in lowered:
                 continue
             sentences.append(clean.rstrip("."))
             if len(sentences) >= 2:
@@ -600,7 +607,7 @@ class LiviaDecisionService:
 
     def _knowledge_hints(self, knowledge_context: str) -> str:
         """Extrai trechos curtos e seguros para a resposta determinística ao visitante."""
-        text = str(knowledge_context or "")
+        text = str(knowledge_context or "").replace("\ufeff", "")
         if not text.strip():
             return ""
 
@@ -608,7 +615,7 @@ class LiviaDecisionService:
         capture = False
         buffer: list[str] = []
         for raw_line in text.splitlines():
-            line = raw_line.strip()
+            line = raw_line.strip().replace("\ufeff", "")
             if not line:
                 if capture and buffer:
                     contents.append(" ".join(buffer).strip())
@@ -624,6 +631,8 @@ class LiviaDecisionService:
                 continue
             lowered = line.lower()
             if lowered.startswith("o bloco abaixo") or lowered.startswith("trate o conteúdo") or lowered.startswith("pedido de mudança"):
+                continue
+            if lowered.startswith(("## fatos confirmados", "# fatos confirmados", "fatos confirmados pelo site")):
                 continue
             if lowered.startswith("fonte:") or lowered.startswith("referência:") or lowered.startswith("score:"):
                 if buffer:
@@ -770,9 +779,11 @@ class LiviaDecisionService:
         elif self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
             # Com RAG, prioriza grounding + pergunta leve de contexto — sem
             # desviar para discovery genérico de "automatizar processo".
-            reply = (
-                "Trabalhamos com robótica de serviço e outras soluções documentadas. "
-                "Se quiser, me conta o ambiente e o objetivo principal para eu afinar a orientação."
+            reply = self._grounded_informational_followup(
+                assistant_profile=assistant_profile,
+                knowledge_context=knowledge_context,
+                lead_draft=lead_draft,
+                current_message=current_message,
             )
         else:
             reply = build_consultative_commercial_reply(
@@ -783,6 +794,54 @@ class LiviaDecisionService:
         decision = LiviaReply(intent=intent, reply=self._with_knowledge(reply, knowledge_context))
         decision = self._finalize_handoff(decision, conversation, lead_draft, discovery, current_message)
         return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+
+    def _grounded_informational_followup(
+        self,
+        *,
+        assistant_profile,
+        knowledge_context: str,
+        lead_draft,
+        current_message: str,
+    ) -> str:
+        """Follow-up curto após grounding RAG, sem hardcode de vertical alheia."""
+        domain = normalize_text(
+            " ".join(
+                [
+                    str(getattr(assistant_profile, "business_domain", "") or ""),
+                    str(getattr(assistant_profile, "short_description", "") or ""),
+                    str(getattr(assistant_profile, "business_name", "") or ""),
+                    str(knowledge_context or "")[:400],
+                ]
+            )
+        )
+        stone = any(
+            marker in domain
+            for marker in (
+                "marmor", "pedra", "granito", "marmore", "bancada", "cozinha",
+                "banheiro", "escada", "gourmet", "pitondo", "quartzito",
+            )
+        )
+        robotics = any(
+            marker in domain
+            for marker in (
+                "robot", "xyron", "mitsubishi", "automacao", "automação", "clp", "ihm",
+            )
+        )
+        if stone and not robotics:
+            return (
+                "Posso te orientar com base no material aprovado sobre pedras e projetos sob medida. "
+                "Qual detalhe é mais importante agora: material, medidas ou acabamento?"
+            )
+        if robotics:
+            return (
+                "Trabalhamos com robótica de serviço e outras soluções documentadas. "
+                "Se quiser, me conta o ambiente e o objetivo principal para eu afinar a orientação."
+            )
+        return build_consultative_commercial_reply(
+            lead_draft=lead_draft,
+            current_message=current_message,
+            history=None,
+        )
 
     def _handle_qualification(
         self,
