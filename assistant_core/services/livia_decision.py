@@ -528,20 +528,47 @@ class LiviaDecisionService:
 
     def _with_knowledge(self, reply: str, knowledge_context: str) -> str:
         """
-        Ecoa trechos curtos e seguros do knowledge na reply determinística.
+        Fundamenta a reply determinística com fatos curados do RAG.
 
-        Com LIVIA_AI_ENABLED=False, o contexto semântico RAG também precisa
-        fundamentar a resposta ao visitante — sem expor Score/Fonte/arquivo.
+        Com LIVIA_AI_ENABLED=False, sintetiza 1-2 frases naturais a partir dos
+        chunks — sem dump de markdown, score, fonte ou metadados internos.
         """
         text = str(knowledge_context or "")
         if not text.strip():
             return reply
-        hints = self._knowledge_hints(text)
+        hints = self._synthesize_knowledge_reply(text)
         if not hints:
             return reply
         if hints.lower() in str(reply or "").lower():
             return reply
-        return f"{hints}\n\n{reply}"
+        base = str(reply or "").strip()
+        if not base:
+            return hints
+        # Evita colagem quando a reply já é só discovery genérica curta.
+        return f"{hints}\n\n{base}"
+
+    def _synthesize_knowledge_reply(self, knowledge_context: str) -> str:
+        """Converte chunks recuperados em resposta curta e natural."""
+        hints = self._knowledge_hints(knowledge_context)
+        if not hints:
+            return ""
+        # Quebra em frases e mantém no máximo duas frases úteis.
+        sentences: list[str] = []
+        for part in re.split(r"(?<=[.!?])\s+", hints):
+            clean = " ".join(part.split()).strip(" -•#")
+            if len(clean) < 35:
+                continue
+            if clean.lower().startswith(("tags:", "fonte:", "score:", "##")):
+                continue
+            sentences.append(clean.rstrip("."))
+            if len(sentences) >= 2:
+                break
+        if not sentences:
+            return ""
+        synthesized = ". ".join(sentences).strip()
+        if synthesized and not synthesized.endswith((".", "!", "?")):
+            synthesized += "."
+        return synthesized[:420]
 
     def _knowledge_hints(self, knowledge_context: str) -> str:
         """Extrai trechos curtos e seguros para a resposta determinística ao visitante."""

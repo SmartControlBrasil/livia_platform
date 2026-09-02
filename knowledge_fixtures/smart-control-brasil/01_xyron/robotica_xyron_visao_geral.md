@@ -1,16 +1,23 @@
 # Robótica de serviço Xyron
 
-A Smart Control Brasil trabalha com robótica de serviço e IA da linha Xyron.
+A Smart Control Brasil trabalha com robótica de serviço e IA da linha Xyron Robotics.
 
-Os robôs móveis autônomos podem atuar em recepção corporativa, segurança patrimonial,
-demonstrações tecnológicas, ações promocionais, educação, transporte logístico,
-experiências interativas e limpeza profissional.
+## Produtos oficiais no site (nomenclatura institucional)
+- LIRO / Little Bot — robótica educacional interativa
+- HygiBot / Dune Bot — limpeza profissional
+- Orbit Bot / Patrol Bot — patrulhamento e segurança
+- Buddy Bot — inspeção/segurança (quadrúpede)
+- Neo Bot — recepção e atendimento
+- Waiter Bot — entrega e apoio operacional
+- CareBot — assistência (não clínica)
+- HostBot — recepção/eventos com duas telas
+- MowerBot — corte de grama por controle remoto
 
-Para indicação em escola ou robótica educacional, a escolha depende do ambiente,
-do objetivo pedagógico e do material aprovado disponível. Sem ficha curada do modelo,
-não afirmamos nomes comerciais específicos.
+## Orientação rápida
+- Escola/educação → LIRO / Little Bot
+- Limpeza → HygiBot / Dune Bot
+- Segurança/patrulha → Orbit Bot / Patrol Bot
 
-Para limpeza, segurança ou recepção, o caminho é entender o ambiente e o objetivo
-antes de indicar uma família de solução.
+Sem ficha adicional, não afirmar BNCC, preço, autonomia, garantia ou modelo "Connect".
 
-Fonte: site institucional Smart Control Brasil + política de curadoria.
+Fonte: páginas oficiais Smart Control Brasil (/xyron/ e produtos).

@@ -984,6 +984,32 @@ class LiviaDecisionKnowledgeTests(TestCase):
         self.assertNotIn("0.8123", decision.reply)
         self.assertIn("banheiro", decision.reply.lower())
 
+    def test_deterministic_synthesis_avoids_chunk_dump_for_school_robot(self):
+        conversation = Conversation.objects.create(tenant=self.tenant, session_id="school-robot-synthesis")
+        semantic = (
+            "[KNOWLEDGE_BASE]\n"
+            "Fonte: liro_littlebot.md\n"
+            "Score: 0.71\n"
+            "Conteúdo:\n"
+            "# LIRO / Little Bot — robô educacional interativo\n"
+            "Tags: smart-control, curated\n"
+            "O LIRO / Little Bot é um robô interativo para experiências educacionais em escolas.\n"
+            "[/KNOWLEDGE_BASE]"
+        )
+        decision = self.service.generate_reply(
+            [],
+            "qual robô vocês indicam para escola?",
+            conversation=conversation,
+            knowledge_context=semantic,
+        )
+        lowered = decision.reply.lower()
+        self.assertIn("liro", lowered)
+        self.assertNotIn("score:", lowered)
+        self.assertNotIn("fonte:", lowered)
+        self.assertNotIn("tags:", lowered)
+        self.assertNotIn("# liro", lowered)
+        self.assertNotIn("seu nome", lowered)
+
     def test_livia_decision_keeps_current_reply_without_knowledge(self):
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="no-knowledge-session")
 
