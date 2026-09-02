@@ -487,7 +487,16 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["intent"], "commercial_interest")
         reply = response.json()["reply"].lower()
-        self.assertTrue("pouco mais" in reply or "robô" in reply or "robo" in reply or "limpeza" in reply or "automat" in reply)
+        self.assertTrue(
+            "pouco mais" in reply
+            or "robô" in reply
+            or "robo" in reply
+            or "limpeza" in reply
+            or "automat" in reply
+            or "ambiente" in reply
+            or "objetivo" in reply,
+            response.json()["reply"],
+        )
         self.assertNotIn("bancada", reply)
         self.assertNotIn("granito", reply)
         self.assertNotIn("seu nome", reply)

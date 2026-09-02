@@ -39,6 +39,17 @@ def is_informational_knowledge_query(discovery) -> bool:
         "entregam",
         "medicao",
         "medição",
+        "indicado",
+        "robotica educacional",
+        "robótica educacional",
+        "robo de",
+        "robô de",
+        "robo para",
+        "robô para",
+        "clp",
+        "ihm",
+        "mitsubishi",
+        "python",
     )
     if any(marker in normalized for marker in informational_markers):
         return True

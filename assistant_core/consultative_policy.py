@@ -238,10 +238,15 @@ def build_consultative_commercial_reply(*, lead_draft=None, current_message: str
             "Claro. Posso te ajudar com isso. "
             "Qual é o objetivo principal: divulgação, captura de contatos, vendas online ou um sistema interno?"
         )
+    if any(token in normalized for token in ("escola", "educac", "professor", "bncc")):
+        return (
+            "Entendi o contexto educacional. Para orientar melhor: "
+            "o objetivo é robótica educacional, demonstração tecnológica ou outro uso na escola?"
+        )
     if any(token in normalized for token in ("automacao", "automação", "robo", "robô", "robotica", "robótica")):
         return (
-            "Entendi. Para te orientar melhor: qual processo você quer automatizar primeiro "
-            "e qual é o maior gargalo hoje?"
+            "Entendi. Para te orientar melhor: qual ambiente você quer atender "
+            "e qual objetivo principal (recepção, segurança, limpeza, educação ou outro)?"
         )
     if need:
         return (

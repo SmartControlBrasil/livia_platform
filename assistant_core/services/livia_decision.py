@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, replace
 from typing import Iterable
 
@@ -606,13 +607,29 @@ class LiviaDecisionService:
                     break
 
         safe_bits = []
-        for item in contents[:2]:
+        for item in contents[:3]:
             clipped = " ".join(str(item or "").split()).strip()
-            clipped = clipped.lstrip("#").strip()
+            clipped = re.sub(r"^#+\s*", "", clipped)
+            clipped = re.sub(r"\s*#+\s*", " ", clipped)
             clipped = clipped.replace("Tags: smart-control, curated", "").replace("Tags: smart-control", "")
             clipped = " ".join(clipped.split()).strip()
             if clipped.lower().startswith("tags:"):
                 continue
+            # Preferir frases úteis após títulos/meta.
+            for prefix in (
+                "robotica xyron visao geral",
+                "robótica de serviço xyron",
+                "faq comercial smart control brasil",
+                "automacao mitsubishi",
+                "automação industrial mitsubishi",
+                "sistemas python e web",
+                "limites e nao prometer",
+                "limites e não prometer",
+            ):
+                lowered_full = clipped.lower()
+                if lowered_full.startswith(prefix):
+                    clipped = clipped[len(prefix) :].strip(" :-•#")
+                    break
             clipped = clipped[:280].strip(" -•#")
             if len(clipped) < 40:
                 continue
@@ -633,10 +650,24 @@ class LiviaDecisionService:
                     "centro universitário",
                     "arquivo 1 -",
                     "status: sete unidades",
+                    "como a lívia deve",
+                    "como a livia deve",
+                    "não inventar modelo",
+                    "nao inventar modelo",
+                    "catálogos detalhados por modelo",
+                    "catalogos detalhados por modelo",
+                    "saifi",
+                    "saidi",
+                    "arrhenius",
+                    "eyring",
+                    "cut set",
+                    "tabelas booleanas",
                 )
             ):
                 continue
             safe_bits.append(clipped)
+            if len(safe_bits) >= 2:
+                break
         return " ".join(safe_bits)
 
     def _is_followup_from_history(self, history: Iterable[dict[str, str]]) -> bool:
@@ -671,10 +702,11 @@ class LiviaDecisionService:
         if is_conceptual_price_question(current_message):
             reply = build_conceptual_price_reply(lead_draft)
         elif self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
-            reply = build_consultative_commercial_reply(
-                lead_draft=lead_draft,
-                current_message=current_message,
-                history=history,
+            # Com RAG, prioriza grounding + pergunta leve de contexto — sem
+            # desviar para discovery genérico de "automatizar processo".
+            reply = (
+                "Se quiser, me conta o ambiente e o objetivo principal para eu "
+                "afinar a orientação com base no material aprovado."
             )
         else:
             reply = build_consultative_commercial_reply(

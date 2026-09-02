@@ -122,12 +122,32 @@ def is_need_enrichment(text: str) -> bool:
     normalized = normalize_text(text)
     if not normalized:
         return False
+    if re.search(r"\b(?:meu nome|telefone|whatsapp|email|e-mail)\b", normalized):
+        return False
     if any(phrase in normalized for phrase in ENRICHMENT_PHRASES):
         return True
     if any(re.search(rf"\b{re.escape(word)}\b", normalized) for word in ENRICHMENT_WORDS):
         return True
     content_words = [word for word in normalized.split() if word not in STOPWORDS and len(word) > 2]
-    return len(content_words) >= 3 and not re.search(r"\b(?:meu nome|telefone|whatsapp|email|e-mail)\b", normalized)
+    if len(content_words) < 3:
+        return False
+    # Evita tratar rótulos de nome/empresa como enrichment (ex.: "Marcelo Teste RAG").
+    if _looks_like_name_or_company_label(normalized, content_words):
+        return False
+    return True
+
+
+def _looks_like_name_or_company_label(normalized: str, content_words: list[str]) -> bool:
+    if len(content_words) > 5:
+        return False
+    need_markers = (
+        "preciso", "quero", "gostaria", "loja", "site", "sistema", "produto", "produtos",
+        "orcamento", "orçamento", "automacao", "automação", "robo", "robô", "pia", "cozinha",
+        "para", "com", "sobre", "venda", "vendo", "atendo",
+    )
+    if any(marker in normalized for marker in need_markers):
+        return False
+    return True
 
 
 def extract_enrichment_snippet(text: str) -> str:
@@ -312,8 +332,10 @@ def _catalog_or_scope_question(need: str) -> str:
         return "Você pretende começar com poucos produtos ou já tem um catálogo maior?"
     if any(marker in normalized for marker in ("sistema", "portal", "dashboard", "aplicativo", "app")):
         return "Quais processos esse sistema precisa cobrir primeiro?"
+    if any(marker in normalized for marker in ("escola", "educac", "professor", "bncc")):
+        return "O foco é robótica educacional, demonstração ou outro objetivo na escola?"
     if any(marker in normalized for marker in ("automacao", "automação", "robo", "robô", "robotica", "robótica")):
-        return "Qual processo você quer automatizar primeiro?"
+        return "Qual ambiente e objetivo você quer cobrir primeiro?"
     return "Qual detalhe é mais importante para você neste momento: escopo, prazo ou forma de operação?"
 
 
