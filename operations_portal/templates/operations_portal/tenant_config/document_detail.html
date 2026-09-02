@@ -1,0 +1,35 @@
+{% extends 'operations_portal/base.html' %}
+{% block title %}Documento {{ doc.pk }}{% endblock %}
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">{{ doc.title }}</h4>
+      <p class="text-muted mb-0">{{ tenant.slug }} · {{ doc.source_type }} · {{ doc.status }} · {{ doc.lifecycle_status }}</p>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" href="{% url 'operations_portal:tenant_config_rag' tenant.slug %}">Voltar RAG</a>
+  </div>
+  {% if classification.is_internal %}
+  <div class="alert alert-warning">Conteúdo interno — não elegível para resposta pública.</div>
+  {% else %}
+  <div class="alert alert-success">PUBLIC KNOWLEDGE</div>
+  {% endif %}
+  <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Metadata</h5></div><div class="card-body">
+    <p>slug: <code>{{ doc.slug }}</code></p>
+    <p>domain classificado: {{ classification.domain }}</p>
+    <p>source_url: {{ doc.source_url|default:"—" }}</p>
+    <p>tags: {{ doc.tags }}</p>
+  </div></div>
+  <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Preview seguro</h5></div><div class="card-body">
+    <pre class="mb-0" style="white-space:pre-wrap">{{ preview }}</pre>
+  </div></div>
+  {% if can_manage %}
+  <form method="post" action="{% url 'operations_portal:tenant_config_document_toggle' tenant.slug doc.pk %}">
+    {% csrf_token %}
+    <button class="btn btn-{% if doc.status == 'active' %}warning{% else %}primary{% endif %}" type="submit">
+      {% if doc.status == 'active' %}Desativar documento{% else %}Ativar documento{% endif %}
+    </button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}
