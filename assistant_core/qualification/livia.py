@@ -177,6 +177,31 @@ NEED_CONTEXT_KEYWORDS = (
     "dashboard",
     "crm",
     "agente",
+    # marmoraria / pedras naturais (Pitondo e verticais similares)
+    "cozinha",
+    "bancada",
+    "pia",
+    "cooktop",
+    "ilha",
+    "frontao",
+    "frontão",
+    "banheiro",
+    "lavabo",
+    "cuba",
+    "nicho",
+    "escada",
+    "gourmet",
+    "churrasqueira",
+    "granito",
+    "marmore",
+    "mármore",
+    "quartzito",
+    "pedra",
+    "marmoraria",
+    "revestimento",
+    "acabamento",
+    "medidas",
+    "planta",
 )
 
 
@@ -264,7 +289,10 @@ def is_valid_need_summary(value) -> bool:
     has_context = any(keyword in normalized for keyword in context_keywords) or bool(re.search(r"\bia\b", normalized))
     if not has_context:
         return False
-    if len(cleaned) < 18 and not re.search(r"\b(?:site|loja|clp|ihm|robo|robô|ia)\b", normalized):
+    if len(cleaned) < 18 and not re.search(
+        r"\b(?:site|loja|clp|ihm|robo|robô|ia|bancada|cozinha|banheiro|escada|granito|marmore|mármore|nicho|gourmet)\b",
+        normalized,
+    ):
         return False
     return True
 

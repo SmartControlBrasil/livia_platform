@@ -203,10 +203,24 @@ def decide_collection(*, current_message: str, conversation=None, lead_draft=Non
 
 def build_conceptual_price_reply(lead_draft=None) -> str:
     need = str(getattr(lead_draft, "need_summary", "") or "").strip()
-    base = (
-        "O investimento varia conforme o escopo, volume de itens, integrações e conteúdo. "
-        "Ainda não tenho um valor fechado para informar aqui."
+    normalized = normalize_text(need)
+    stone_context = any(
+        marker in normalized
+        for marker in (
+            "cozinha", "bancada", "pia", "cooktop", "banheiro", "lavabo", "escada",
+            "gourmet", "granito", "marmore", "mármore", "nicho", "cuba", "churrasqueira",
+        )
     )
+    if stone_context:
+        base = (
+            "O investimento varia conforme material, medidas, acabamentos e complexidade do projeto. "
+            "Ainda não tenho um valor fechado para informar aqui."
+        )
+    else:
+        base = (
+            "O investimento varia conforme o escopo, volume de itens, integrações e conteúdo. "
+            "Ainda não tenho um valor fechado para informar aqui."
+        )
     if need:
         return f"{base} Se quiser, posso levantar os pontos do seu projeto para preparar um orçamento."
     return f"{base} Se quiser um orçamento, me diga e eu sigo com os dados necessários."
@@ -248,10 +262,36 @@ def build_consultative_commercial_reply(*, lead_draft=None, current_message: str
             "Entendi. Para te orientar melhor: qual ambiente você quer atender "
             "e qual objetivo principal (recepção, segurança, limpeza, educação ou outro)?"
         )
+    # Marmoraria / pedras naturais (Pitondo e verticais similares)
+    if any(token in normalized for token in ("cozinha", "bancada", "pia", "cooktop", "ilha", "frontao", "frontão")):
+        return (
+            "Entendi. Para te orientar melhor: o projeto é de cozinha — "
+            "bancada, pia, ilha ou outro detalhe específico?"
+        )
+    if any(token in normalized for token in ("banheiro", "lavabo", "cuba", "nicho")):
+        return (
+            "Entendi o banheiro/lavabo. Você precisa de bancada, cuba, nicho "
+            "ou mais de um desses itens?"
+        )
+    if any(token in normalized for token in ("escada", "escadas")):
+        return (
+            "Entendi. Para escadas, me conta se é escada completa, revestimento "
+            "ou outro detalhe do projeto."
+        )
+    if any(token in normalized for token in ("gourmet", "churrasqueira")):
+        return (
+            "Entendi a área gourmet. A bancada é para apoio, pia, churrasqueira "
+            "ou outro uso?"
+        )
+    if any(token in normalized for token in ("granito", "marmore", "mármore", "quartzito", "pedra")):
+        return (
+            "Entendi. Qual ambiente você quer atender com a pedra "
+            "(cozinha, banheiro, escada, área gourmet ou outro)?"
+        )
     if need:
         return (
             f"Entendi. Com o contexto de {_short(need)}, posso te orientar melhor. "
-            "Qual detalhe é mais importante agora: escopo, prazo ou forma de operação?"
+            "Qual detalhe é mais importante agora: material, medidas ou acabamento?"
         )
     return "Claro. Pode me contar um pouco mais sobre o que você precisa fazer ou resolver?"
 
@@ -263,10 +303,16 @@ def soft_merge_need_from_history(*, lead_draft, history, message: str) -> str:
         if str(item.get("role") or "") != "user":
             continue
         content = str(item.get("content") or "").strip()
-        if content and not is_name_deferred(content) and not is_conceptual_price_question(content):
-            if detect_collection_trigger(content) == CollectionTrigger.NONE:
-                merged = merge_need_summaries(merged, content)
-    if message and not is_name_deferred(message) and detect_collection_trigger(message) == CollectionTrigger.NONE:
+        if not content or is_name_deferred(content) or is_conceptual_price_question(content) or is_direct_question(content):
+            continue
+        if detect_collection_trigger(content) == CollectionTrigger.NONE:
+            merged = merge_need_summaries(merged, content)
+    if (
+        message
+        and not is_name_deferred(message)
+        and not is_direct_question(message)
+        and detect_collection_trigger(message) == CollectionTrigger.NONE
+    ):
         merged = merge_need_summaries(merged, message)
     return merged[:500]
 

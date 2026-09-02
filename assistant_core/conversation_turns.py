@@ -336,7 +336,9 @@ def _catalog_or_scope_question(need: str) -> str:
         return "O foco é robótica educacional, demonstração ou outro objetivo na escola?"
     if any(marker in normalized for marker in ("automacao", "automação", "robo", "robô", "robotica", "robótica")):
         return "Qual ambiente e objetivo você quer cobrir primeiro?"
-    return "Qual detalhe é mais importante para você neste momento: escopo, prazo ou forma de operação?"
+    if any(marker in normalized for marker in ("cozinha", "bancada", "pia", "cooktop", "ilha", "banheiro", "lavabo", "escada", "gourmet", "granito", "marmore", "mármore")):
+        return "Você já tem medidas aproximadas, fotos ou algum material em mente?"
+    return "Qual detalhe é mais importante para você neste momento: material, medidas ou acabamento?"
 
 
 def _next_discovery_question(need: str, snippet: str) -> str:
@@ -346,12 +348,30 @@ def _next_discovery_question(need: str, snippet: str) -> str:
 
 
 def _grounded_question_answer(question_type: str, need: str) -> str:
+    normalized_need = normalize_text(need)
+    stone_context = any(
+        marker in normalized_need
+        for marker in (
+            "cozinha", "bancada", "pia", "cooktop", "banheiro", "lavabo", "escada",
+            "gourmet", "granito", "marmore", "mármore", "nicho", "cuba", "churrasqueira",
+        )
+    )
     if question_type == "timeline":
+        if stone_context:
+            return (
+                "O prazo depende do tipo de projeto, medidas, material escolhido e da complexidade "
+                "da execução. Posso levantar esses pontos com você para a equipe orientar melhor."
+            )
         return (
             "O prazo depende principalmente da quantidade de produtos, meios de pagamento, "
             "frete, integrações e conteúdo. Posso levantar esses pontos com você para chegar a uma estimativa mais precisa."
         )
     if question_type == "price":
+        if stone_context:
+            return (
+                "O investimento varia conforme material, medidas, acabamentos e complexidade do projeto. "
+                "Ainda não tenho um valor fechado para informar aqui."
+            )
         return "O investimento varia conforme o escopo, volume e integrações envolvidas. Ainda não tenho um valor fechado para informar aqui."
     if question_type == "payment":
         return "Pagamento online pode entrar no projeto, mas o detalhe depende do checkout e dos meios que você precisa usar."
@@ -362,8 +382,15 @@ def _grounded_question_answer(question_type: str, need: str) -> str:
     if question_type == "catalog":
         return "Sim, o cadastro de produtos é um ponto central. O esforço muda bastante se o catálogo começa pequeno ou já chega grande."
     if question_type == "maintenance":
+        if stone_context:
+            return "Os cuidados depois da instalação dependem do material. Posso te orientar com as recomendações gerais e a equipe detalha no atendimento."
         return "A manutenção depois da entrega depende do que for combinado no projeto. Posso registrar essa necessidade para a equipe detalhar."
     if question_type == "how_it_works":
+        if stone_context:
+            return (
+                "O caminho usual é entender o ambiente e o projeto, receber fotos ou medidas aproximadas "
+                "quando possível e só então avançar para o orçamento com a equipe."
+            )
         return "O caminho usual é entender a necessidade, organizar o escopo e só então estimar prazo e próximas etapas."
     return "Posso te orientar com o que já temos da necessidade, sem fechar condição comercial daqui."
 

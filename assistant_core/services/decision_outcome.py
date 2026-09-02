@@ -50,6 +50,17 @@ def is_informational_knowledge_query(discovery) -> bool:
         "ihm",
         "mitsubishi",
         "python",
+        "bancada",
+        "granito",
+        "marmore",
+        "mármore",
+        "cooktop",
+        "nicho",
+        "escada",
+        "gourmet",
+        "medidas",
+        "orcamento",
+        "orçamento",
     )
     if any(marker in normalized for marker in informational_markers):
         return True
