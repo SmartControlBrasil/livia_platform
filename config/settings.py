@@ -232,6 +232,20 @@ LIVIA_LEAD_NOTIFICATIONS_DRY_RUN = config("LIVIA_LEAD_NOTIFICATIONS_DRY_RUN", de
 LIVIA_LEAD_NOTIFICATION_EMAIL = config("LIVIA_LEAD_NOTIFICATION_EMAIL", default="comercial@smartcontrolbrasil.com.br")
 LIVIA_LEAD_NOTIFICATION_BCC = config("LIVIA_LEAD_NOTIFICATION_BCC", default="")
 
+# SMTP (Django defaults to localhost:25 / webmaster@localhost without these).
+EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = config("EMAIL_HOST", default="localhost")
+EMAIL_PORT = config("EMAIL_PORT", default=25, cast=int)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=False, cast=bool)
+EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool)
+DEFAULT_FROM_EMAIL = config(
+    "DEFAULT_FROM_EMAIL",
+    default="Lívia - Smart Control Brasil <comercial@smartcontrolbrasil.com.br>",
+)
+SERVER_EMAIL = config("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
+
 LIVIA_AI_ENABLED = config("LIVIA_AI_ENABLED", default=False, cast=bool)
 LIVIA_AI_DRY_RUN = config("LIVIA_AI_DRY_RUN", default=True, cast=bool)
 LIVIA_AI_GROUNDED_SYNTHESIS_ENABLED = config("LIVIA_AI_GROUNDED_SYNTHESIS_ENABLED", default=False, cast=bool)
