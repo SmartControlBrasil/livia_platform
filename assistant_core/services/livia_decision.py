@@ -556,9 +556,23 @@ class LiviaDecisionService:
         sentences: list[str] = []
         for part in re.split(r"(?<=[.!?])\s+", hints):
             clean = " ".join(part.split()).strip(" -•#")
+            clean = re.sub(r"^#+\s*", "", clean).strip()
             if len(clean) < 35:
                 continue
-            if clean.lower().startswith(("tags:", "fonte:", "score:", "##")):
+            lowered = clean.lower()
+            if lowered.startswith(("tags:", "fonte:", "score:", "##", "nome oficial:", "categoria:", "fonte:")):
+                continue
+            # Descarta títulos de ficha ("LIRO / Little Bot — robô educacional...")
+            if "—" in clean or " - " in clean:
+                left = clean.split("—", 1)[0].split(" - ", 1)[0].strip()
+                if len(left.split()) <= 6 and not clean.endswith((".", "!", "?")):
+                    continue
+            if lowered.startswith((
+                "orientação de indicação",
+                "limites técnicos e comerciais",
+                "automação mitsubishi electric —",
+                "lacunas de curadoria",
+            )):
                 continue
             sentences.append(clean.rstrip("."))
             if len(sentences) >= 2:
@@ -568,6 +582,10 @@ class LiviaDecisionService:
         synthesized = ". ".join(sentences).strip()
         if synthesized and not synthesized.endswith((".", "!", "?")):
             synthesized += "."
+        # Evita cortes feios no início ("O/Little Bot...")
+        if synthesized.startswith(("O/", "A/", "O /", "A /")) or re.match(r"^[A-Za-z]/[A-Za-z]", synthesized):
+            synthesized = re.sub(r"^[^A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]+", "", synthesized)
+            synthesized = synthesized[0].upper() + synthesized[1:] if synthesized else ""
         return synthesized[:420]
 
     def _knowledge_hints(self, knowledge_context: str) -> str:
