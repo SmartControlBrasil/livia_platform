@@ -610,11 +610,17 @@ def _can_reactivate_chunk_set(chunks: list[TenantRagDocumentChunk], chunk_record
 
 
 def mark_manifests_as_removed_if_missing(*, configuration: TenantRagConfiguration, seen_drive_file_ids: set[str], seen_at) -> int:
-    queryset = TenantRagDriveFileManifest.objects.filter(
-        tenant=configuration.tenant,
-        configuration=configuration,
-        is_active=True,
-    ).exclude(drive_file_id__in=seen_drive_file_ids)
+    from knowledge_base.services.manual_rag import MANUAL_SOURCE_PREFIX
+
+    queryset = (
+        TenantRagDriveFileManifest.objects.filter(
+            tenant=configuration.tenant,
+            configuration=configuration,
+            is_active=True,
+        )
+        .exclude(drive_file_id__in=seen_drive_file_ids)
+        .exclude(drive_file_id__startswith=f"{MANUAL_SOURCE_PREFIX}-")
+    )
     removed_count = queryset.count()
     if removed_count:
         queryset.update(
