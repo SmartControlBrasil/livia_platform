@@ -22,7 +22,7 @@ class HandoffNotificationService:
     def notify(self, handoff) -> HandoffNotificationResult:
         enabled = bool(getattr(settings, "LIVIA_HANDOFF_NOTIFICATIONS_ENABLED", False))
         dry_run = bool(getattr(settings, "LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN", True))
-        recipient = str(getattr(settings, "LIVIA_HANDOFF_NOTIFICATION_EMAIL", "contato@smartcontrolbrasil.com.br") or "").strip()
+        recipient = self._recipient_for(handoff)
 
         if dry_run or not enabled:
             message = f"Dry-run handoff notification prepared for {recipient or 'no-recipient'}."
@@ -37,6 +37,14 @@ class HandoffNotificationService:
         message = "Real handoff notification transport is not implemented in this phase."
         self._log("handoff_notification_not_implemented", handoff, message=message)
         return HandoffNotificationResult(success=False, dry_run=False, channel=self.channel, message=message)
+
+    def _recipient_for(self, handoff) -> str:
+        tenant = getattr(handoff, "tenant", None)
+        profile = getattr(tenant, "assistant_profile", None) if tenant is not None else None
+        profile_email = str(getattr(profile, "notification_email", "") or "").strip()
+        if profile_email:
+            return profile_email
+        return str(getattr(settings, "LIVIA_HANDOFF_NOTIFICATION_EMAIL", "") or "").strip()
 
     def _log(self, event: str, handoff, *, message: str) -> None:
         logger.info(
