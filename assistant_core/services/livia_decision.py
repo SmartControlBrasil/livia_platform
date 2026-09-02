@@ -562,16 +562,27 @@ class LiviaDecisionService:
             lowered = clean.lower()
             if lowered.startswith(("tags:", "fonte:", "score:", "##", "nome oficial:", "categoria:", "fonte:")):
                 continue
-            # Descarta títulos de ficha ("LIRO / Little Bot — robô educacional...")
-            if "—" in clean or " - " in clean:
-                left = clean.split("—", 1)[0].split(" - ", 1)[0].strip()
-                if len(left.split()) <= 6 and not clean.endswith((".", "!", "?")):
-                    continue
+            # Descarta/normaliza títulos de ficha ("LIRO / Little Bot — robô educacional...")
+            if "—" in clean:
+                after = clean.split("—", 1)[1].strip()
+                body = re.search(r"\b((?:O|A|Os|As|Um|Uma|Este|Esta|A\s+Smart)\b.+)$", after)
+                if body:
+                    clean = body.group(1).strip()
+                else:
+                    left = clean.split("—", 1)[0].strip()
+                    if len(left.split()) <= 6 and not after.endswith((".", "!", "?")):
+                        continue
+                    clean = after
+            if len(clean) < 35:
+                continue
+            lowered = clean.lower()
             if lowered.startswith((
                 "orientação de indicação",
                 "limites técnicos e comerciais",
-                "automação mitsubishi electric —",
+                "automação mitsubishi electric",
                 "lacunas de curadoria",
+                "robô educacional interativo",
+                "robô de limpeza",
             )):
                 continue
             sentences.append(clean.rstrip("."))
@@ -583,9 +594,8 @@ class LiviaDecisionService:
         if synthesized and not synthesized.endswith((".", "!", "?")):
             synthesized += "."
         # Evita cortes feios no início ("O/Little Bot...")
-        if synthesized.startswith(("O/", "A/", "O /", "A /")) or re.match(r"^[A-Za-z]/[A-Za-z]", synthesized):
-            synthesized = re.sub(r"^[^A-Za-zÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]+", "", synthesized)
-            synthesized = synthesized[0].upper() + synthesized[1:] if synthesized else ""
+        if re.match(r"^[A-Za-z]/[A-Za-z]", synthesized):
+            synthesized = re.sub(r"^.*?([A-ZÁÉÍÓÚÂÊÔÃÕÇ].+)$", r"\1", synthesized)
         return synthesized[:420]
 
     def _knowledge_hints(self, knowledge_context: str) -> str:
