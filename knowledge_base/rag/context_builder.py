@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from django.conf import settings
 
@@ -13,6 +14,19 @@ KNOWLEDGE_BASE_OPEN = "[KNOWLEDGE_BASE]"
 KNOWLEDGE_BASE_CLOSE = "[/KNOWLEDGE_BASE]"
 
 
+@dataclass(frozen=True)
+class KnowledgeContextResult:
+    text: str
+    retrieval_status: str = ""
+    retrieval_hit: bool = False
+    max_score: float = 0.0
+    result_count: int = 0
+    duration_ms: int = 0
+    reason: str = ""
+    backend: str = ""
+    mode: str = ""  # semantic | keyword | none
+
+
 def build_knowledge_context(tenant, message, service_area=None, limit=3, conversation=None):
     """
     Monta contexto de conhecimento para a Lívia.
@@ -21,18 +35,51 @@ def build_knowledge_context(tenant, message, service_area=None, limit=3, convers
     1. recuperação semântica multi-tenant (quando habilitada);
     2. fallback para o retriever textual determinístico existente.
     """
-    semantic = _build_semantic_context(
+    return build_knowledge_context_result(
+        tenant=tenant,
+        message=message,
+        service_area=service_area,
+        limit=limit,
+        conversation=conversation,
+    ).text
+
+
+def build_knowledge_context_result(tenant, message, service_area=None, limit=3, conversation=None) -> KnowledgeContextResult:
+    semantic = _build_semantic_context_result(
         tenant=tenant,
         message=message,
         limit=limit,
         conversation=conversation,
     )
-    if semantic:
+    if semantic.text:
         return semantic
-    return _build_keyword_context(tenant=tenant, message=message, service_area=service_area, limit=limit)
+    keyword_text = _build_keyword_context(tenant=tenant, message=message, service_area=service_area, limit=limit)
+    if keyword_text:
+        return KnowledgeContextResult(
+            text=keyword_text,
+            retrieval_status=semantic.retrieval_status or "keyword",
+            retrieval_hit=True,
+            max_score=semantic.max_score,
+            result_count=semantic.result_count,
+            duration_ms=semantic.duration_ms,
+            reason=semantic.reason or "keyword_fallback",
+            backend=semantic.backend or "keyword",
+            mode="keyword",
+        )
+    return KnowledgeContextResult(
+        text="",
+        retrieval_status=semantic.retrieval_status or "empty",
+        retrieval_hit=False,
+        max_score=semantic.max_score,
+        result_count=0,
+        duration_ms=semantic.duration_ms,
+        reason=semantic.reason or "no_context",
+        backend=semantic.backend,
+        mode="none",
+    )
 
 
-def _build_semantic_context(*, tenant, message, limit, conversation) -> str:
+def _build_semantic_context_result(*, tenant, message, limit, conversation) -> KnowledgeContextResult:
     try:
         result = retrieve_context(
             tenant=tenant,
@@ -45,10 +92,22 @@ def _build_semantic_context(*, tenant, message, limit, conversation) -> str:
             "rag.context_builder.semantic_failed tenant_id=%s",
             getattr(tenant, "id", None),
         )
-        return ""
+        return KnowledgeContextResult(text="", retrieval_status="failed", reason="semantic_exception", mode="semantic")
 
+    meta = KnowledgeContextResult(
+        text="",
+        retrieval_status=str(getattr(result, "status", "") or ""),
+        retrieval_hit=bool(getattr(result, "chunks", None)),
+        max_score=float(getattr(result, "max_score", 0.0) or 0.0),
+        result_count=len(getattr(result, "chunks", []) or []),
+        duration_ms=int(getattr(result, "duration_ms", 0) or 0),
+        reason=str(getattr(result, "reason", "") or ""),
+        backend=str(getattr(result, "backend", "") or ""),
+        mode="semantic",
+    )
     if result.status != "completed" or not result.chunks:
-        return ""
+        return meta
+
     tenant_slug = str(getattr(tenant, "slug", "") or "")
     from assistant_core.services.ai_feature_gates import is_rag_semantic_context_active
 
@@ -63,8 +122,28 @@ def _build_semantic_context(*, tenant, message, limit, conversation) -> str:
             result.max_score,
             result.observe_only,
         )
-        return ""
-    return result.context_text
+        return KnowledgeContextResult(
+            text="",
+            retrieval_status=meta.retrieval_status,
+            retrieval_hit=meta.retrieval_hit,
+            max_score=meta.max_score,
+            result_count=meta.result_count,
+            duration_ms=meta.duration_ms,
+            reason="dry_run_observe",
+            backend=meta.backend,
+            mode="semantic",
+        )
+    return KnowledgeContextResult(
+        text=result.context_text,
+        retrieval_status=meta.retrieval_status,
+        retrieval_hit=True,
+        max_score=meta.max_score,
+        result_count=meta.result_count,
+        duration_ms=meta.duration_ms,
+        reason=meta.reason,
+        backend=meta.backend,
+        mode="semantic",
+    )
 
 
 def _build_keyword_context(*, tenant, message, service_area, limit) -> str:

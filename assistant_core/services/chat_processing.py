@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -10,8 +11,9 @@ from django.db import IntegrityError, connection, transaction
 
 from assistant_core.discovery import analyze_message
 from assistant_core.services.ai_feature_gates import is_grounded_synthesis_allowed
+from assistant_core.services.deterministic_synthesis import is_generic_fallback_reply
 from conversations.models import Conversation, HandoffRequest, Message
-from knowledge_base.rag.context_builder import build_knowledge_context
+from knowledge_base.rag.context_builder import KnowledgeContextResult, build_knowledge_context, build_knowledge_context_result
 from tenants.services.human_handoff import build_human_handoff_payload
 
 from .chat_idempotency import complete_chat_request, update_completed_chat_request_response
@@ -35,15 +37,18 @@ class _DeterministicChatResult:
 
 def process_chat_request(*, chat_request, tenant, session_id: str, user_message: str, source_page: str = "") -> dict:
     decision_service = LiviaDecisionService()
-    # Recuperação semântica pode chamar provider externo: permanece fora da transação de negócio.
+    # Garante conversation_id em RagRetrievalEvent sem alterar a política de resposta.
+    conversation_ref = _ensure_conversation_for_retrieval(tenant=tenant, session_id=session_id, source_page=source_page)
     discovery_preview = analyze_message(user_message)
-    knowledge_context = build_knowledge_context(
+    # Recuperação semântica pode chamar provider externo: permanece fora da transação de negócio.
+    knowledge_result = build_knowledge_context_result(
         tenant,
         user_message,
         service_area=discovery_preview.service_area,
         limit=2,
-        conversation=None,
+        conversation=conversation_ref,
     )
+    knowledge_context = knowledge_result.text
     deterministic_result = _persist_chat_processing_state(
         chat_request=chat_request,
         tenant=tenant,
@@ -52,12 +57,23 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
         source_page=source_page,
         decision_service=decision_service,
         knowledge_context=knowledge_context,
+        knowledge_result=knowledge_result,
     )
     return _refine_response_with_ai_if_enabled(
         deterministic_result=deterministic_result,
         decision_service=decision_service,
         knowledge_context=knowledge_context,
     )
+
+
+def _ensure_conversation_for_retrieval(*, tenant, session_id: str, source_page: str) -> Conversation:
+    existing = Conversation.objects.filter(tenant=tenant, session_id=session_id).first()
+    if existing is not None:
+        return existing
+    try:
+        return Conversation.objects.create(tenant=tenant, session_id=session_id, source_page=source_page or "")
+    except IntegrityError:
+        return Conversation.objects.get(tenant=tenant, session_id=session_id)
 
 
 def _persist_chat_processing_state(
@@ -69,6 +85,7 @@ def _persist_chat_processing_state(
     source_page: str,
     decision_service: LiviaDecisionService,
     knowledge_context: str = "",
+    knowledge_result: KnowledgeContextResult | None = None,
 ) -> _DeterministicChatResult:
     with transaction.atomic():
         conversation = _get_or_create_locked_conversation(tenant=tenant, session_id=session_id, source_page=source_page)
@@ -76,6 +93,7 @@ def _persist_chat_processing_state(
         history = list(conversation.messages.values("role", "content").order_by("created_at", "id"))
 
         # Mantém decisão determinística no bloco atômico e adia IA externa para fora da transação.
+        decision_started = time.monotonic()
         decision = decision_service.generate_reply(
             history=history,
             current_message=user_message,
@@ -83,6 +101,7 @@ def _persist_chat_processing_state(
             assistant_profile=_assistant_profile_without_ai(assistant_profile),
             knowledge_context=knowledge_context,
         )
+        decision_ms = int((time.monotonic() - decision_started) * 1000)
         Message.objects.create(
             conversation=conversation,
             role=Message.Role.USER,
@@ -107,6 +126,18 @@ def _persist_chat_processing_state(
             content=assistant_reply,
         )
 
+        observability = {
+            "is_fallback": bool(is_generic_fallback_reply(assistant_reply)),
+            "intent": getattr(decision, "intent", "") or "",
+            "retrieval_attempted": bool(knowledge_result and knowledge_result.mode in {"semantic", "keyword"}),
+            "retrieval_status": getattr(knowledge_result, "retrieval_status", "") or "",
+            "retrieval_hit": bool(getattr(knowledge_result, "retrieval_hit", False)),
+            "max_score": float(getattr(knowledge_result, "max_score", 0.0) or 0.0),
+            "chunk_count": int(getattr(knowledge_result, "result_count", 0) or 0),
+            "retrieval_ms": int(getattr(knowledge_result, "duration_ms", 0) or 0),
+            "decision_ms": decision_ms,
+            "retrieval_mode": getattr(knowledge_result, "mode", "") or "",
+        }
         response_payload = {
             "tenant": tenant.slug,
             "session_id": session_id,
@@ -119,6 +150,7 @@ def _persist_chat_processing_state(
                 "initial_message",
                 "Olá! Sou a Lívia. Como posso te ajudar?",
             ),
+            "observability": observability,
         }
         if human_handoff_payload is not None:
             response_payload["human_handoff"] = human_handoff_payload
