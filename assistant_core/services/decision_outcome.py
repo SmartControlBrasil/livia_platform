@@ -50,6 +50,14 @@ def is_informational_knowledge_query(discovery) -> bool:
         "ihm",
         "mitsubishi",
         "python",
+        "medidas",
+        "medicao",
+        "medição",
+    )
+    if any(marker in normalized for marker in informational_markers):
+        return True
+    # Tokens de produto/aplicação só contam como informativos em forma de pergunta.
+    product_markers = (
         "bancada",
         "granito",
         "marmore",
@@ -58,12 +66,16 @@ def is_informational_knowledge_query(discovery) -> bool:
         "nicho",
         "escada",
         "gourmet",
-        "medidas",
         "orcamento",
         "orçamento",
     )
-    if any(marker in normalized for marker in informational_markers):
-        return True
+    if any(marker in normalized for marker in product_markers):
+        looks_like_q = "?" in str(getattr(discovery, "normalized_text", "") or "") or any(
+            token in normalized
+            for token in ("qual ", "quais ", "como ", "posso ", "voces ", "voce ", "fazem", "trabalham", "serve")
+        )
+        if looks_like_q and not normalized.startswith(("quero ", "preciso ", "gostaria")):
+            return True
     return "?" in normalized and not bool(getattr(discovery, "should_collect_lead", False))
 
 

@@ -88,6 +88,12 @@ class PitondoConsultativeFlowTests(TestCase):
             if message != "Olá":
                 self.assertNotEqual(payload.get("intent"), "greeting")
             self._assert_no_collection(payload["reply"])
+            if message in {"quero fazer uma bancada", "vou colocar um cooktop", "qual material vocês recomendam?"}:
+                from assistant_core.services.deterministic_synthesis import is_generic_fallback_reply
+
+                self.assertFalse(is_generic_fallback_reply(payload["reply"]), payload["reply"])
+                self.assertNotIn("robótica", payload["reply"].lower())
+                self.assertNotIn("mitsubishi", payload["reply"].lower())
 
         budget = self._chat("quero um orçamento")
         lowered = budget["reply"].lower()

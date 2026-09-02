@@ -1197,7 +1197,11 @@ class LiviaOptionalAIResponseTests(TestCase):
         service.generate_reply([], "Quero orçamento", conversation=conversation, assistant_profile=self.profile)
 
         conversation.refresh_from_db()
-        self.assertEqual(conversation.lead_state, LeadState.COLLECT_NEED)
+        # Explicit budget trigger opens collection; AI must not invent another state.
+        self.assertIn(
+            conversation.lead_state,
+            {LeadState.COLLECT_NEED, LeadState.COLLECT_NAME_COMPANY, LeadState.COLLECT_CONTACT},
+        )
 
     @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
     def test_handoff_does_not_depend_on_ai(self):

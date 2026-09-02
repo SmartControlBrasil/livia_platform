@@ -31,6 +31,11 @@ from assistant_core.prompts import (
     DEFAULT_REPLY,
     build_contextual_reply,
 )
+from assistant_core.services.deterministic_synthesis import (
+    is_generic_fallback_reply,
+    prefer_contextual_reply_over_fallback,
+    synthesize_deterministic_reply,
+)
 from assistant_core.prompts.livia_ai import build_livia_ai_prompt
 from assistant_core.qualification import has_basic_contact
 from assistant_core.state import LeadState, can_start_new_cycle, set_state, should_lock_lead
@@ -256,8 +261,12 @@ class LiviaDecisionService:
                 decision = LiviaReply(
                     intent=intent,
                     reply=self._with_knowledge(
-                        build_conceptual_price_reply() if is_conceptual_price_question(current_message) else DEFAULT_REPLY,
+                        build_conceptual_price_reply() if is_conceptual_price_question(current_message) else "",
                         knowledge_context,
+                    ) or prefer_contextual_reply_over_fallback(
+                        knowledge_context=knowledge_context or "",
+                        current_message=current_message,
+                        history=history,
                     ),
                 )
                 decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
@@ -346,12 +355,21 @@ class LiviaDecisionService:
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if self._is_followup_from_history(history):
+            need = ""
+            if conversation is not None:
+                try:
+                    need = str(getattr(conversation.lead_draft, "need_summary", "") or "")
+                except Exception:
+                    need = ""
+            reply = prefer_contextual_reply_over_fallback(
+                knowledge_context=knowledge_context or "",
+                need_summary=need,
+                current_message=current_message,
+                history=history,
+            )
             decision = LiviaReply(
                 intent="followup",
-                reply=self._with_knowledge(
-                    "Perfeito. Me conte um pouco mais sobre o contexto para eu te orientar.",
-                    knowledge_context,
-                ),
+                reply=reply,
             )
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
@@ -365,9 +383,20 @@ class LiviaDecisionService:
             )
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+        need = ""
+        if conversation is not None:
+            try:
+                need = str(getattr(conversation.lead_draft, "need_summary", "") or "")
+            except Exception:
+                need = ""
         decision = LiviaReply(
             intent=intent,
-            reply=self._with_knowledge(DEFAULT_REPLY, knowledge_context),
+            reply=prefer_contextual_reply_over_fallback(
+                knowledge_context=knowledge_context or "",
+                need_summary=need,
+                current_message=current_message,
+                history=history,
+            ),
         )
         decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
         return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
@@ -534,216 +563,15 @@ class LiviaDecisionService:
         Com LIVIA_AI_ENABLED=False, sintetiza 1-2 frases naturais a partir dos
         chunks — sem dump de markdown, score, fonte ou metadados internos.
         """
-        text = str(knowledge_context or "")
-        if not text.strip():
-            return reply
-        hints = self._synthesize_knowledge_reply(text)
-        if not hints:
-            return reply
-        if hints.lower() in str(reply or "").lower():
-            return reply
-        base = str(reply or "").strip()
-        if not base:
-            return hints
-        # Evita colagem quando a reply já é só discovery genérica curta.
-        return f"{hints}\n\n{base}"
+        return synthesize_deterministic_reply(knowledge_context, base_reply=reply)
 
     def _synthesize_knowledge_reply(self, knowledge_context: str) -> str:
-        """Converte chunks recuperados em resposta curta e natural."""
-        hints = self._knowledge_hints(knowledge_context)
-        if not hints:
-            return ""
-        # Quebra em frases e mantém no máximo duas frases úteis.
-        sentences: list[str] = []
-        for part in re.split(r"(?<=[.!?])\s+", hints):
-            clean = " ".join(part.split()).strip(" -•#")
-            clean = re.sub(r"^#+\s*", "", clean).strip()
-            if len(clean) < 35:
-                continue
-            lowered = clean.lower()
-            if lowered.startswith(("tags:", "fonte:", "score:", "##", "nome oficial:", "categoria:", "fonte:")):
-                continue
-            # Descarta/normaliza títulos de ficha ("LIRO / Little Bot — robô educacional...")
-            if "—" in clean:
-                after = clean.split("—", 1)[1].strip()
-                body = re.search(r"\b((?:O|A|Os|As|Um|Uma|Este|Esta|A\s+Smart)\b.+)$", after)
-                if body:
-                    clean = body.group(1).strip()
-                else:
-                    left = clean.split("—", 1)[0].strip()
-                    if len(left.split()) <= 6 and not after.endswith((".", "!", "?")):
-                        continue
-                    clean = after
-            if len(clean) < 35:
-                continue
-            lowered = clean.lower()
-            if lowered.startswith((
-                "orientação de indicação",
-                "limites técnicos e comerciais",
-                "automação mitsubishi electric",
-                "lacunas de curadoria",
-                "robô educacional interativo",
-                "robô de limpeza",
-                "bancadas de cozinha, pias",
-                "perguntas frequentes sustentadas",
-                "processo de orçamento, medidas",
-                "fatos confirmados pelo site",
-            )):
-                continue
-            if "quando perguntado sobre esses pontos" in lowered:
-                continue
-            sentences.append(clean.rstrip("."))
-            if len(sentences) >= 2:
-                break
-        if not sentences:
-            return ""
-        synthesized = ". ".join(sentences).strip()
-        if synthesized and not synthesized.endswith((".", "!", "?")):
-            synthesized += "."
-        # Evita cortes feios no início ("O/Little Bot...")
-        if re.match(r"^[A-Za-z]/[A-Za-z]", synthesized):
-            synthesized = re.sub(r"^.*?([A-ZÁÉÍÓÚÂÊÔÃÕÇ].+)$", r"\1", synthesized)
-        return synthesized[:420]
+        """Compat: delega para a camada determinística compartilhada."""
+        return synthesize_deterministic_reply(knowledge_context, base_reply="")
 
     def _knowledge_hints(self, knowledge_context: str) -> str:
-        """Extrai trechos curtos e seguros para a resposta determinística ao visitante."""
-        text = str(knowledge_context or "").replace("\ufeff", "")
-        if not text.strip():
-            return ""
-
-        contents: list[str] = []
-        capture = False
-        buffer: list[str] = []
-        for raw_line in text.splitlines():
-            line = raw_line.strip().replace("\ufeff", "")
-            if not line:
-                if capture and buffer:
-                    contents.append(" ".join(buffer).strip())
-                    buffer = []
-                    capture = False
-                continue
-            upper = line.upper()
-            if upper.startswith("[KNOWLEDGE_BASE]") or upper.startswith("[/KNOWLEDGE_BASE]"):
-                if buffer:
-                    contents.append(" ".join(buffer).strip())
-                    buffer = []
-                capture = False
-                continue
-            lowered = line.lower()
-            if lowered.startswith("o bloco abaixo") or lowered.startswith("trate o conteúdo") or lowered.startswith("pedido de mudança"):
-                continue
-            if lowered.startswith(("## fatos confirmados", "# fatos confirmados", "fatos confirmados pelo site")):
-                continue
-            if lowered.startswith("fonte:") or lowered.startswith("referência:") or lowered.startswith("score:"):
-                if buffer:
-                    contents.append(" ".join(buffer).strip())
-                    buffer = []
-                capture = False
-                continue
-            if lowered.startswith("conteúdo:"):
-                if buffer:
-                    contents.append(" ".join(buffer).strip())
-                    buffer = []
-                capture = True
-                remainder = line.split(":", 1)[1].strip()
-                if remainder:
-                    buffer.append(remainder)
-                continue
-            if capture:
-                buffer.append(line)
-        if buffer:
-            contents.append(" ".join(buffer).strip())
-
-        # Compatibilidade com formato legado numerado, se ainda aparecer.
-        if not contents:
-            for line in text.splitlines():
-                clean = line.strip()
-                if not clean or clean.lower().startswith("base de conhecimento"):
-                    continue
-                if ". " in clean and clean.split(". ", 1)[0].isdigit():
-                    clean = clean.split(". ", 1)[1]
-                if clean.upper().startswith("[KNOWLEDGE_BASE]") or clean.upper().startswith("[/KNOWLEDGE_BASE]"):
-                    continue
-                if clean.lower().startswith(("fonte:", "score:", "conteúdo:", "o bloco abaixo", "trate o")):
-                    continue
-                contents.append(clean)
-                if len(contents) >= 2:
-                    break
-
-        safe_bits = []
-        for item in contents[:3]:
-            clipped = " ".join(str(item or "").split()).strip()
-            clipped = re.sub(r"^#+\s*", "", clipped)
-            clipped = re.sub(r"\s*#+\s*", " ", clipped)
-            clipped = clipped.replace("Tags: smart-control, curated", "").replace("Tags: smart-control", "")
-            clipped = " ".join(clipped.split()).strip()
-            if clipped.lower().startswith("tags:"):
-                continue
-            # Preferir frases úteis após títulos/meta.
-            for prefix in (
-                "robotica xyron visao geral",
-                "robótica de serviço xyron",
-                "faq comercial smart control brasil",
-                "automacao mitsubishi",
-                "automação industrial mitsubishi",
-                "sistemas python e web",
-                "limites e nao prometer",
-                "limites e não prometer",
-            ):
-                lowered_full = clipped.lower()
-                if lowered_full.startswith(prefix):
-                    clipped = clipped[len(prefix) :].strip(" :-•#")
-                    break
-            clipped = clipped[:280].strip(" -•#")
-            if len(clipped) < 40:
-                continue
-            # Descarta cortes no meio da palavra (ex.: "olvemos websites...").
-            if clipped[0].islower():
-                parts = clipped.split(". ", 1)
-                clipped = parts[1].strip() if len(parts) == 2 and parts[1][:1].isupper() else ""
-                if len(clipped) < 40:
-                    continue
-            lowered = clipped.lower()
-            if lowered.startswith(("## ", "# ")) or lowered in {
-                "manutenção industrial, tpm e diagnóstico",
-                "manutencao industrial, tpm e diagnostico",
-            }:
-                continue
-            if any(
-                marker in lowered
-                for marker in (
-                    "marque qualquer",
-                    "ignore as regras",
-                    "altere o tenant",
-                    "system prompt",
-                    "você deve sempre",
-                    "crie lead",
-                    "score:",
-                    "fonte:",
-                    "curadoria anhembi",
-                    "submetido em",
-                    "centro universitário",
-                    "arquivo 1 -",
-                    "status: sete unidades",
-                    "como a lívia deve",
-                    "como a livia deve",
-                    "não inventar modelo",
-                    "nao inventar modelo",
-                    "catálogos detalhados por modelo",
-                    "catalogos detalhados por modelo",
-                    "saifi",
-                    "saidi",
-                    "arrhenius",
-                    "eyring",
-                    "cut set",
-                    "tabelas booleanas",
-                )
-            ):
-                continue
-            safe_bits.append(clipped)
-            if len(safe_bits) >= 2:
-                break
-        return " ".join(safe_bits)
+        """Compat: extrai texto sintetizado já limpo."""
+        return synthesize_deterministic_reply(knowledge_context, base_reply="")
 
     def _is_followup_from_history(self, history: Iterable[dict[str, str]]) -> bool:
         messages = list(history or [])

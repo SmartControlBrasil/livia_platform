@@ -177,10 +177,14 @@ def _tenant_gate_checks(tenant_slug: str) -> list[EnvironmentCheck]:
     )
     checks.append(
         EnvironmentCheck(
-            ok=grounded,
+            ok=bool(grounded),
             code="tenant_grounded_gate",
-            detail=f"grounded_synthesis_allowed={grounded}",
-            level="warning" if not grounded else "info",
+            detail=(
+                f"ai_grounded_synthesis_allowed={grounded}; "
+                "deterministic_synthesis=available_when_rag_active "
+                "(OpenAI chat off does not disable deterministic RAG replies)"
+            ),
+            level="info" if grounded else "warning",
         )
     )
     return checks

@@ -124,6 +124,10 @@ def is_need_enrichment(text: str) -> bool:
         return False
     if re.search(r"\b(?:meu nome|telefone|whatsapp|email|e-mail)\b", normalized):
         return False
+    from assistant_core.services.deterministic_synthesis import is_short_context_token
+
+    if is_short_context_token(normalized):
+        return True
     if any(phrase in normalized for phrase in ENRICHMENT_PHRASES):
         return True
     if any(re.search(rf"\b{re.escape(word)}\b", normalized) for word in ENRICHMENT_WORDS):
@@ -402,4 +406,6 @@ def _follow_up_after_question(question_type: str, need: str) -> str:
 
 
 def is_generic_fallback_reply(reply: str) -> bool:
-    return normalize_text(reply) == normalize_text(DEFAULT_REPLY)
+    from assistant_core.services.deterministic_synthesis import is_generic_fallback_reply as _impl
+
+    return _impl(reply)
