@@ -10,6 +10,7 @@ from assistant_core.conversation_turns import normalize_text
 ACTIVE_ENTITY_KEY = "active_entity"
 ACTIVE_DOMAIN_KEY = "active_domain"
 ACTIVE_TOPIC_KEY = "active_topic"
+ACTIVE_APPLICATION_KEY = "active_application"
 ACTIVE_NEED_KEY = "active_need"
 CONTACT_DEFERRED_KEY = "contact_collection_deferred"
 COMMERCIAL_INTENT_KEY = "commercial_intent"
@@ -80,6 +81,22 @@ TOPIC_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("cleaning_robot", ("limpeza", "duno", "dune", "hygibot")),
     ("websites", ("site", "website", "loja virtual", "ecommerce", "django", "python")),
     ("robot_lineup", ("quais robos", "quais robôs", "quais modelos", "que robos", "que robôs", "linha xyron")),
+    ("industrial_automation", ("mitsubishi", "clp", "ihm", "automacao", "automação")),
+)
+
+# Aplicação derivada (memória, sem enum no banco): desambigua "material/melhor/ele".
+APPLICATION_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("stairs", ("escada", "escadas")),
+    ("gourmet_countertop", ("gourmet", "churrasqueira")),
+    ("bathroom_countertop", ("banheiro", "lavabo")),
+    ("niche", ("nicho",)),
+    ("cooktop_countertop", ("cooktop",)),
+    ("kitchen_countertop", ("cozinha", "bancada", "pia", "ilha")),
+    ("quote_process", ("medicao", "medição", "medida", "fotos", "planta")),
+    ("educational_robotics", ("escola", "educacional", "professor", "aluno")),
+    ("cleaning_robotics", ("limpeza", "duno", "dune", "hygibot")),
+    ("industrial_automation", ("mitsubishi", "clp", "ihm")),
+    ("websites", ("site", "website", "loja virtual", "django", "python")),
 )
 
 LINEUP_QUESTION_MARKERS = (
@@ -148,6 +165,7 @@ class DialogueMemory:
     active_entity: str = ""
     active_domain: str = ""
     active_topic: str = ""
+    active_application: str = ""
     active_need: str = ""
     contact_collection_deferred: bool = False
     commercial_intent: bool = False
@@ -163,6 +181,7 @@ class DialogueMemory:
             ACTIVE_ENTITY_KEY: self.active_entity,
             ACTIVE_DOMAIN_KEY: self.active_domain,
             ACTIVE_TOPIC_KEY: self.active_topic,
+            ACTIVE_APPLICATION_KEY: self.active_application,
             ACTIVE_NEED_KEY: self.active_need,
             CONTACT_DEFERRED_KEY: self.contact_collection_deferred,
             COMMERCIAL_INTENT_KEY: self.commercial_intent,
@@ -174,6 +193,7 @@ class DialogueMemory:
             "active_entity": self.active_entity,
             "active_domain": self.active_domain,
             "active_topic": self.active_topic,
+            "active_application": self.active_application,
             "entity_match": self.entity_match,
             "domain_match": self.domain_match,
             "contextual_query_used": bool(
@@ -203,6 +223,7 @@ def load_dialogue_memory(conversation=None, lead_draft=None) -> DialogueMemory:
         active_entity=str(data.get(ACTIVE_ENTITY_KEY) or ""),
         active_domain=str(data.get(ACTIVE_DOMAIN_KEY) or ""),
         active_topic=str(data.get(ACTIVE_TOPIC_KEY) or ""),
+        active_application=str(data.get(ACTIVE_APPLICATION_KEY) or ""),
         active_need=str(data.get(ACTIVE_NEED_KEY) or getattr(lead, "need_summary", "") or ""),
         contact_collection_deferred=bool(data.get(CONTACT_DEFERRED_KEY)),
         commercial_intent=bool(data.get(COMMERCIAL_INTENT_KEY)),
@@ -302,6 +323,25 @@ def infer_topic(text: str, *, fallback: str = "") -> str:
     return fallback
 
 
+def infer_application(text: str, *, fallback: str = "") -> str:
+    normalized = normalize_text(text)
+    if not normalized:
+        return fallback
+    for application, markers in APPLICATION_MARKERS:
+        if any(_marker_in_text(normalized, marker) for marker in markers):
+            return application
+    return fallback
+
+
+def is_material_recommendation_question(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+    asks_material = any(token in normalized for token in ("material", "pedra", "granito", "marmore", "quartzito"))
+    asks_best = any(token in normalized for token in ("melhor", "recomenda", "indic", "suger"))
+    return asks_material and asks_best
+
+
 def is_lineup_question(text: str) -> bool:
     normalized = normalize_text(text)
     return any(marker in normalized for marker in LINEUP_QUESTION_MARKERS)
@@ -329,6 +369,7 @@ def update_dialogue_memory_from_turn(
         memory.active_entity = entity["canonical"]
         memory.active_domain = entity["domain"]
         memory.active_topic = entity["topic"]
+        memory.active_application = infer_application(message) or _application_from_topic(entity["topic"])
         memory.entity_match = True
     elif message_has_pronoun_reference(message) and memory.active_entity:
         memory.entity_match = True
@@ -336,9 +377,11 @@ def update_dialogue_memory_from_turn(
         memory.active_entity = ""
         memory.active_domain = "robotics"
         memory.active_topic = "robot_lineup"
+        memory.active_application = ""
     else:
         switched = infer_domain(message)
         topic = infer_topic(message)
+        application = infer_application(message)
         strong_switch = any(_marker_in_text(normalized, token) for token in STRONG_SWITCH_TOKENS)
         previous_domain = memory.active_domain
         previous_topic = memory.active_topic
@@ -350,11 +393,17 @@ def update_dialogue_memory_from_turn(
                     memory.active_entity = ""
             if topic:
                 memory.active_topic = topic
+            if application:
+                memory.active_application = application
 
         if topic and topic != previous_topic and not message_has_pronoun_reference(message):
             memory.active_topic = topic
+            if application:
+                memory.active_application = application
+            elif topic:
+                memory.active_application = _application_from_topic(topic) or memory.active_application
             # Troca de tópico material/aplicação: não arrastar entity de outro contexto.
-            if topic in {"stairs", "gourmet", "bathroom", "kitchen", "quote_process", "websites", "educational_robot"}:
+            if topic in {"stairs", "gourmet", "bathroom", "kitchen", "quote_process", "websites", "educational_robot", "industrial_automation"}:
                 if memory.active_entity and topic != "cleaning_robot":
                     entity_topic = next(
                         (entry["topic"] for entry in ENTITY_REGISTRY if entry["canonical"] == memory.active_entity),
@@ -362,17 +411,45 @@ def update_dialogue_memory_from_turn(
                     )
                     if entity_topic and entity_topic != topic:
                         memory.active_entity = ""
+        elif application and application != memory.active_application and not message_has_pronoun_reference(message):
+            # Cooktop dentro de cozinha: refina application sem resetar domínio.
+            memory.active_application = application
 
     if not memory.active_domain:
         memory.active_domain = infer_domain(message) or infer_domain(context_blob)
     if not memory.active_topic:
         memory.active_topic = infer_topic(message) or infer_topic(context_blob)
+    if not memory.active_application:
+        memory.active_application = (
+            infer_application(message)
+            or _application_from_topic(memory.active_topic)
+            or infer_application(context_blob)
+        )
+
+    # Material recommendation herda application do contexto (cozinha+bancada+cooktop).
+    if is_material_recommendation_question(message) and not infer_application(message):
+        if memory.active_application in {"", "quote_process"}:
+            memory.active_application = infer_application(context_blob) or memory.active_application
+        if not memory.active_domain:
+            memory.active_domain = "materials"
+        if not memory.active_topic:
+            memory.active_topic = {
+                "kitchen_countertop": "kitchen",
+                "cooktop_countertop": "kitchen",
+                "gourmet_countertop": "gourmet",
+                "bathroom_countertop": "bathroom",
+                "stairs": "stairs",
+            }.get(memory.active_application, memory.active_topic or "kitchen")
 
     if need_summary:
         memory.active_need = str(need_summary).strip()[:240]
     elif not memory.active_need and normalized:
-        if any(token in normalized for token in ("quero", "gostaria", "preciso", "rob", "bancada", "site")):
+        if any(token in normalized for token in ("quero", "gostaria", "preciso", "rob", "bancada", "site", "escola", "cozinha")):
             memory.active_need = message.strip()[:240]
+    elif memory.active_need and any(token in normalized for token in ("cooktop", "bancada", "cozinha", "gourmet", "escada")):
+        # Acumula sinais de aplicação na need sem estourar.
+        merged = f"{memory.active_need} {message.strip()}".strip()
+        memory.active_need = merged[:240]
 
     if commercial_trigger:
         memory.commercial_intent = True
@@ -383,6 +460,20 @@ def update_dialogue_memory_from_turn(
 
     memory.domain_match = bool(memory.active_domain)
     return memory
+
+
+def _application_from_topic(topic: str) -> str:
+    return {
+        "stairs": "stairs",
+        "gourmet": "gourmet_countertop",
+        "bathroom": "bathroom_countertop",
+        "kitchen": "kitchen_countertop",
+        "quote_process": "quote_process",
+        "educational_robot": "educational_robotics",
+        "cleaning_robot": "cleaning_robotics",
+        "websites": "websites",
+        "industrial_automation": "industrial_automation",
+    }.get(str(topic or ""), "")
 
 
 def build_contextual_retrieval_query(
@@ -417,18 +508,38 @@ def build_contextual_retrieval_query(
         "bathroom": "banheiros lavabos nichos cubas",
         "kitchen": "bancadas de cozinha cooktop pia",
         "quote_process": "orçamento medidas fotos planta medição técnica",
+        "industrial_automation": "automação industrial Mitsubishi CLP IHM",
     }.get(memory.active_topic or "", "")
     if topic_query:
         parts.append(topic_query)
 
+    application_query = {
+        "kitchen_countertop": "materiais para bancada de cozinha",
+        "cooktop_countertop": "materiais para bancada de cozinha com cooktop",
+        "gourmet_countertop": "materiais bancada área gourmet",
+        "bathroom_countertop": "materiais bancada banheiro lavabo",
+        "stairs": "escadas sob medida pedras naturais",
+        "educational_robotics": "LIRO robótica educacional escola",
+        "industrial_automation": "automação Mitsubishi CLP",
+    }.get(memory.active_application or "", "")
+    if application_query:
+        parts.append(application_query)
+
     if memory.active_domain == "software_web" or any(_marker_in_text(original_n, m) for m in ("site", "loja virtual", "website", "django")):
         parts.append("sistemas web sites lojas virtuais Python")
     if memory.active_domain == "automation":
-        parts.append("automação industrial Mitsubishi")
-    if memory.active_domain == "materials" and not topic_query:
+        parts.append("automação industrial Mitsubishi CLP")
+    if memory.active_domain == "materials" and not topic_query and not application_query:
         parts.append(memory.active_need or "bancada pedras naturais")
-    if "melhor" in original_n and any(_marker_in_text(original_n, m) for m in ("material", "pedra", "granito", "marmore")):
-        parts.append("qual é a melhor pedra materiais granito mármore quartzito")
+    if is_material_recommendation_question(original):
+        if memory.active_application in {"kitchen_countertop", "cooktop_countertop"}:
+            parts.append("materiais para bancada de cozinha com cooktop granito mármore quartzito perguntas frequentes")
+        elif memory.active_application == "gourmet_countertop":
+            parts.append("materiais bancada área gourmet granito mármore")
+        elif memory.active_application:
+            parts.append("materiais pedras naturais granito mármore quartzito")
+        else:
+            parts.append("qual é a melhor pedra materiais granito mármore quartzito")
 
     # Últimos turnos user relevantes (não concatena tudo; evita sticky de tópico antigo).
     if not lineup and memory.active_topic not in {"stairs", "gourmet", "websites", "quote_process", "robot_lineup"}:

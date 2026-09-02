@@ -250,6 +250,7 @@ def _dedupe_and_limit(
     per_manifest: int,
     active_domain: str = "",
     active_entity: str = "",
+    active_application: str = "",
     query: str = "",
     contextual_query: str = "",
 ) -> tuple[list[RagRetrievedChunk], _SelectionStats, dict]:
@@ -290,14 +291,21 @@ def _dedupe_and_limit(
 
     ranked: list[tuple[TenantRagChunkEmbedding, float]] = []
     entity_n = (active_entity or "").strip().lower()
+    application = (active_application or "").strip().lower()
     query_n = normalize_text(str(query or contextual_query or ""))
     wants_software = any(token in query_n for token in ("site", "website", "loja virtual", "ecommerce", "django", "python", "sistema web"))
     wants_school = any(token in query_n for token in ("escola", "educacional", "professor", "aluno", "liro"))
-    wants_stairs = "escada" in query_n
-    wants_gourmet = "gourmet" in query_n
-    wants_material_best = "melhor" in query_n and any(token in query_n for token in ("material", "pedra", "granito", "marmore"))
+    wants_stairs = "escada" in query_n or application == "stairs"
+    wants_gourmet = "gourmet" in query_n or application == "gourmet_countertop"
+    wants_kitchen = application in {"kitchen_countertop", "cooktop_countertop"} or any(
+        token in query_n for token in ("cozinha", "cooktop", "bancada de cozinha")
+    )
+    wants_material_best = any(token in query_n for token in ("melhor", "recomenda", "indic")) and any(
+        token in query_n for token in ("material", "pedra", "granito", "marmore", "quartzito")
+    )
     wants_measurement = any(token in query_n for token in ("medicao", "medição", "medida", "fotos", "planta"))
     wants_lineup = any(token in query_n for token in ("quais robos", "quais robôs", "quais modelos", "linha xyron"))
+    wants_automation = active_domain == "automation" or any(token in query_n for token in ("mitsubishi", "clp", "ihm", "automacao"))
 
     for embedding, score, _ in boosted:
         chunk = chunks_by_id.get(embedding.chunk_id)
@@ -312,6 +320,9 @@ def _dedupe_and_limit(
         adjusted = float(score)
         blob = f"{source_name} {source_reference} {text[:240]}".lower()
         blob_n = normalize_text(blob)
+        is_gourmet_doc = "gourmet" in blob_n and "perguntas frequentes" not in blob_n
+        is_kitchen_doc = any(token in blob_n for token in ("cozinha", "cooktop", "bancada de cozinha", "perguntas frequentes", "materiais", "melhor pedra"))
+        is_materials_faq = any(token in blob_n for token in ("perguntas frequentes", "melhor pedra", "marmores, granitos e materiais", "materiais"))
         if entity_n and entity_n in blob:
             adjusted += 0.35
         if entity_n == "duno" and any(token in blob for token in ("dune", "hygibot", "limpeza")):
@@ -327,12 +338,27 @@ def _dedupe_and_limit(
                 adjusted -= 0.35
         if wants_school and any(token in blob_n for token in ("liro", "littlebot", "little bot", "educacional", "escola")):
             adjusted += 0.4
+        if wants_automation:
+            if any(token in blob_n for token in ("mitsubishi", "clp", "ihm", "automacao", "automação")):
+                adjusted += 0.45
+            if any(token in blob_n for token in ("xyron", "hygibot", "duno", "dune", "limpeza", "escola", "liro")):
+                adjusted -= 0.4
         if wants_stairs and "escada" in blob_n:
-            adjusted += 0.4
+            adjusted += 0.45
         if wants_gourmet and "gourmet" in blob_n:
             adjusted += 0.4
-        if wants_material_best and any(token in blob_n for token in ("melhor pedra", "perguntas frequentes", "materiais", "granito", "marmore", "quartzito")):
-            adjusted += 0.35
+        if wants_kitchen:
+            if is_kitchen_doc or is_materials_faq:
+                adjusted += 0.5
+            if is_gourmet_doc and "cooktop" not in blob_n and "cozinha" not in query_n:
+                adjusted -= 0.45
+            if is_gourmet_doc and wants_material_best:
+                adjusted -= 0.35
+        if wants_material_best:
+            if is_materials_faq or any(token in blob_n for token in ("granito", "marmore", "quartzito", "melhor pedra", "perguntas frequentes")):
+                adjusted += 0.55
+            if is_gourmet_doc and wants_kitchen:
+                adjusted -= 0.5
         if wants_measurement and any(token in blob_n for token in ("orcamento", "orçamento", "medidas", "fotos", "planta", "medicao", "medição")):
             adjusted += 0.4
         if wants_lineup and any(token in blob_n for token in ("visao geral", "visão geral", "produtos oficiais", "xyron", "liro", "hygibot")):
@@ -461,6 +487,7 @@ def retrieve_context(
     contextual_query: str | None = None,
     active_domain: str = "",
     active_entity: str = "",
+    active_application: str = "",
 ) -> RagRetrievalResult:
     started = time.monotonic()
     conversation_id = getattr(conversation, "id", None)
@@ -735,6 +762,7 @@ def retrieve_context(
             per_manifest=per_manifest,
             active_domain=active_domain,
             active_entity=active_entity,
+            active_application=active_application,
             query=query,
             contextual_query=retrieval_query,
         )
@@ -748,6 +776,7 @@ def retrieve_context(
                 per_manifest=per_manifest,
                 active_domain=active_domain,
                 active_entity=active_entity,
+                active_application=active_application,
                 query=query,
                 contextual_query=retrieval_query,
             )

@@ -56,6 +56,7 @@ def build_knowledge_context_result(
     contextual_query: str | None = None,
     active_domain: str = "",
     active_entity: str = "",
+    active_application: str = "",
     retrieval_query_original: str = "",
 ) -> KnowledgeContextResult:
     semantic = _build_semantic_context_result(
@@ -66,6 +67,7 @@ def build_knowledge_context_result(
         contextual_query=contextual_query,
         active_domain=active_domain,
         active_entity=active_entity,
+        active_application=active_application,
         retrieval_query_original=retrieval_query_original or str(message or ""),
     )
     if semantic.text:
@@ -122,6 +124,7 @@ def _build_semantic_context_result(
     contextual_query: str | None,
     active_domain: str,
     active_entity: str,
+    active_application: str = "",
     retrieval_query_original: str,
 ) -> KnowledgeContextResult:
     try:
@@ -133,6 +136,7 @@ def _build_semantic_context_result(
             contextual_query=contextual_query,
             active_domain=active_domain,
             active_entity=active_entity,
+            active_application=active_application,
         )
     except Exception:  # noqa: BLE001 - chat nunca quebra por RAG
         logger.exception(

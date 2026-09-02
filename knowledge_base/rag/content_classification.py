@@ -54,10 +54,10 @@ DOMAIN_PATH_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 INCOMPATIBLE_DOMAINS = {
-    "robotics": {"software_web"},
-    "software_web": {"robotics", "materials"},
+    "robotics": {"software_web", "automation", "materials"},
+    "software_web": {"robotics", "materials", "automation"},
     "materials": {"robotics", "software_web", "automation"},
-    "automation": {"materials", "software_web"},
+    "automation": {"materials", "software_web", "robotics"},
 }
 
 

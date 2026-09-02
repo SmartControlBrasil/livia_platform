@@ -78,6 +78,7 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
         contextual_query=contextual_query,
         active_domain=memory.active_domain,
         active_entity=memory.active_entity,
+        active_application=memory.active_application,
         retrieval_query_original=original_query,
     )
     knowledge_context = knowledge_result.text
