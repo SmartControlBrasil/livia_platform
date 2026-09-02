@@ -16,6 +16,8 @@ from assistant_core.conversation_turns import (
 from assistant_core.state import LeadState, get_current_state
 
 COLLECTION_ACTIVE_KEY = "collection_active"
+COLLECTION_PAUSED_KEY = "collection_paused"
+CONTACT_DEFERRED_KEY = "contact_collection_deferred"
 
 BUDGET_TRIGGERS = (
     "quero um orcamento",
@@ -156,8 +158,11 @@ def collection_already_active(conversation, lead_draft=None) -> bool:
             lead = None
     if lead is not None:
         data = getattr(lead, "qualification_data", None) or {}
-        if isinstance(data, dict) and data.get(COLLECTION_ACTIVE_KEY):
-            return True
+        if isinstance(data, dict):
+            if data.get(COLLECTION_PAUSED_KEY) or data.get(CONTACT_DEFERRED_KEY):
+                return False
+            if data.get(COLLECTION_ACTIVE_KEY):
+                return True
     # Soft capture during consultative mode may advance lead_state to
     # COLLECT_NAME_COMPANY without opening explicit name/contact collection.
     # Only treat later commercial states (or the explicit flag above) as active.
@@ -165,13 +170,31 @@ def collection_already_active(conversation, lead_draft=None) -> bool:
     return state in {LeadState.COLLECT_CONTACT, LeadState.OFFER_HANDOFF}
 
 
-def mark_collection_active(lead_draft) -> None:
+def pause_collection(lead_draft, *, deferred_contact: bool = True) -> None:
     if lead_draft is None or not hasattr(lead_draft, "qualification_data"):
         return
     data = dict(getattr(lead_draft, "qualification_data", None) or {})
-    if data.get(COLLECTION_ACTIVE_KEY) is True:
+    data[COLLECTION_PAUSED_KEY] = True
+    if deferred_contact:
+        data[CONTACT_DEFERRED_KEY] = True
+    data[COLLECTION_ACTIVE_KEY] = False
+    lead_draft.qualification_data = data
+    update_fields = ["qualification_data"]
+    if hasattr(lead_draft, "updated_at"):
+        update_fields.append("updated_at")
+    lead_draft.save(update_fields=update_fields)
+
+
+def mark_collection_active(lead_draft, *, reason: str = "") -> None:
+    if lead_draft is None or not hasattr(lead_draft, "qualification_data"):
         return
+    data = dict(getattr(lead_draft, "qualification_data", None) or {})
     data[COLLECTION_ACTIVE_KEY] = True
+    data[COLLECTION_PAUSED_KEY] = False
+    # Novo gatilho explícito reabre coleta mesmo após deferência anterior.
+    data[CONTACT_DEFERRED_KEY] = False
+    if reason:
+        data["collection_trigger_reason"] = str(reason)[:80]
     lead_draft.qualification_data = data
     update_fields = ["qualification_data"]
     if hasattr(lead_draft, "updated_at"):
@@ -180,6 +203,18 @@ def mark_collection_active(lead_draft) -> None:
 
 
 def decide_collection(*, current_message: str, conversation=None, lead_draft=None, discovery=None) -> CollectionDecision:
+    from assistant_core.dialogue_memory import is_contact_deferred, wants_consultative_continue
+
+    if is_contact_deferred(current_message) or wants_consultative_continue(current_message):
+        if lead_draft is not None:
+            pause_collection(lead_draft, deferred_contact=True)
+        elif conversation is not None:
+            try:
+                pause_collection(conversation.lead_draft, deferred_contact=True)
+            except Exception:
+                pass
+        return CollectionDecision(False, reason="contact_deferred_consultative")
+
     trigger = detect_collection_trigger(current_message)
     if collection_already_active(conversation, lead_draft=lead_draft):
         return CollectionDecision(True, trigger=trigger if trigger != CollectionTrigger.NONE else CollectionTrigger.BUDGET, reason="collection_already_active")

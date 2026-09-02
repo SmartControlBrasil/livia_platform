@@ -65,6 +65,7 @@ STOPWORDS = {
 }
 
 NAME_DEFERRED_KEY = "name_deferred"
+CONTACT_DEFERRED_KEY = "contact_collection_deferred"
 
 
 def normalize_text(text: str) -> str:
@@ -94,6 +95,12 @@ def is_name_deferred(text: str) -> bool:
     if not normalized:
         return False
     return any(re.search(pattern, normalized) for pattern in NAME_DEFERRED_PATTERNS)
+
+
+def is_contact_deferred_message(text: str) -> bool:
+    from assistant_core.dialogue_memory import is_contact_deferred
+
+    return is_contact_deferred(text)
 
 
 def is_direct_question(text: str) -> bool:
@@ -254,12 +261,13 @@ def has_open_commercial_thread(conversation, history, discovery) -> bool:
 
 def classify_conversation_turn(*, current_message: str, history, conversation, discovery) -> ConversationTurn:
     from assistant_core.consultative_policy import is_explicit_collection_trigger
+    from assistant_core.dialogue_memory import is_contact_deferred, wants_consultative_continue
 
     thread = has_prior_commercial_thread(conversation, history)
     if is_explicit_collection_trigger(current_message):
         # Explicit budget/hire/human handoff must reach the qualification path.
         return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=True)
-    if is_name_deferred(current_message):
+    if is_name_deferred(current_message) or is_contact_deferred(current_message) or wants_consultative_continue(current_message):
         return ConversationTurn(kind=TurnKind.NAME_DEFERRED, continue_commercial_thread=True)
     question_type = detect_question_type(current_message)
     if question_type:
@@ -278,9 +286,17 @@ def classify_conversation_turn(*, current_message: str, history, conversation, d
 
 
 def build_name_deferred_reply(lead_draft=None) -> str:
+    from assistant_core.consultative_policy import pause_collection
+    from assistant_core.dialogue_memory import is_contact_deferred, wants_consultative_continue
+
+    if lead_draft is not None:
+        pause_collection(lead_draft, deferred_contact=True)
     need = str(getattr(lead_draft, "need_summary", "") or "").strip()
-    follow_up = _next_discovery_question(need, snippet="")
-    return f"Tudo bem, podemos seguir sem o nome por agora. {follow_up}"
+    # Recusa de contato / "tire minhas dúvidas": não força próxima pergunta comercial.
+    return (
+        "Tudo bem — seguimos só com as dúvidas por enquanto. "
+        "Pode me perguntar o que quiser sobre a solução."
+    )
 
 
 def build_enrichment_reply(lead_draft=None, *, snippet: str = "", current_message: str = "") -> str:
@@ -305,10 +321,13 @@ def build_direct_question_reply(lead_draft=None, *, question_type: str, current_
 
 def skip_name_prompt_fields(missing_fields: list[str], lead_draft, *, current_message: str = "") -> list[str]:
     fields = list(missing_fields or [])
-    if "name_or_company" not in fields:
-        return fields
-    if lead_has_name_deferred(lead_draft) or is_name_deferred(current_message) or is_direct_question(current_message) or is_need_enrichment(current_message):
-        return [field for field in fields if field != "name_or_company"]
+    data = dict(getattr(lead_draft, "qualification_data", None) or {}) if lead_draft is not None else {}
+    if "name_or_company" in fields:
+        if lead_has_name_deferred(lead_draft) or is_name_deferred(current_message) or is_direct_question(current_message) or is_need_enrichment(current_message):
+            fields = [field for field in fields if field != "name_or_company"]
+    # Recusa de contato: não pede telefone/e-mail, mas ainda pode pedir nome se estiver ativo.
+    if data.get(CONTACT_DEFERRED_KEY) or is_contact_deferred_message(current_message):
+        fields = [field for field in fields if field not in {"phone", "email", "contact", "phone_or_email"}]
     return fields
 
 
@@ -332,17 +351,22 @@ def _short_need(need: str) -> str:
 
 def _catalog_or_scope_question(need: str) -> str:
     normalized = normalize_text(need)
-    if any(marker in normalized for marker in ("loja", "ecommerce", "e-commerce", "virtual", "site", "catalogo", "catálogo", "produto")):
+    # Robótica/limpeza/produto SCB antes de heurística genérica de "produto/site".
+    if any(marker in normalized for marker in ("duno", "dune", "hygibot", "limpeza", "lavar", "varrer", "aspirar")):
+        return "Qual é o ambiente e o tipo de piso onde a limpeza acontece?"
+    if any(marker in normalized for marker in ("automacao", "automação", "robo", "robô", "robotica", "robótica", "xyron", "mitsubishi", "clp")):
+        return "Qual ambiente e objetivo você quer cobrir primeiro?"
+    if any(marker in normalized for marker in ("escola", "educac", "professor", "bncc")) and "limpeza" not in normalized:
+        return "O foco é robótica educacional, demonstração ou outro objetivo na escola?"
+    if any(marker in normalized for marker in ("cozinha", "bancada", "pia", "cooktop", "ilha", "banheiro", "lavabo", "escada", "gourmet", "granito", "marmore", "mármore")):
+        return "Você já tem medidas aproximadas, fotos ou algum material em mente?"
+    if any(marker in normalized for marker in ("loja virtual", "ecommerce", "e-commerce", "loja online")):
         return "Você pretende começar com poucos produtos ou já tem um catálogo maior?"
     if any(marker in normalized for marker in ("sistema", "portal", "dashboard", "aplicativo", "app")):
         return "Quais processos esse sistema precisa cobrir primeiro?"
-    if any(marker in normalized for marker in ("escola", "educac", "professor", "bncc")):
-        return "O foco é robótica educacional, demonstração ou outro objetivo na escola?"
-    if any(marker in normalized for marker in ("automacao", "automação", "robo", "robô", "robotica", "robótica")):
-        return "Qual ambiente e objetivo você quer cobrir primeiro?"
-    if any(marker in normalized for marker in ("cozinha", "bancada", "pia", "cooktop", "ilha", "banheiro", "lavabo", "escada", "gourmet", "granito", "marmore", "mármore")):
-        return "Você já tem medidas aproximadas, fotos ou algum material em mente?"
-    return "Qual detalhe é mais importante para você neste momento: material, medidas ou acabamento?"
+    if any(marker in normalized for marker in ("site institucional", "landing page", "pagina web", "página web")):
+        return "O foco é divulgação, captura de contatos ou outro objetivo do site?"
+    return "Qual detalhe é mais importante para você neste momento?"
 
 
 def _next_discovery_question(need: str, snippet: str) -> str:

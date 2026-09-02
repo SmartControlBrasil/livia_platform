@@ -15,6 +15,15 @@ from assistant_core.conversation_turns import (
     merge_need_summaries,
 )
 from assistant_core.consultative_policy import COLLECTION_ACTIVE_KEY
+from assistant_core.dialogue_memory import (
+    ACTIVE_DOMAIN_KEY,
+    ACTIVE_ENTITY_KEY,
+    ACTIVE_NEED_KEY,
+    ACTIVE_TOPIC_KEY,
+    COLLECTION_PAUSED_KEY,
+    COMMERCIAL_INTENT_KEY,
+    CONTACT_DEFERRED_KEY,
+)
 from assistant_core.qualification import (
     extract_contact_snapshot,
     infer_pending_field_values,
@@ -56,6 +65,34 @@ ACTION_DISPATCH_QUEUED = "dispatch.queued"
 ACTION_DISPATCH_FAILED = "dispatch.failed"
 
 COMMON_FIELDS = ("name", "phone", "email", "company", "city", "interest", "need_summary")
+
+# Chaves de payload operacional em qualification_data (não são custom fields de formulário).
+OPERATIONAL_QUALIFICATION_KEYS = frozenset(
+    {
+        COLLECTION_ACTIVE_KEY,
+        COLLECTION_PAUSED_KEY,
+        CONTACT_DEFERRED_KEY,
+        COMMERCIAL_INTENT_KEY,
+        ACTIVE_ENTITY_KEY,
+        ACTIVE_DOMAIN_KEY,
+        ACTIVE_TOPIC_KEY,
+        ACTIVE_NEED_KEY,
+        "name_deferred",
+        "collection_trigger_reason",
+    }
+)
+
+# Universo conhecido de custom fields de policy — desconhecidos fora da policy são descartados.
+KNOWN_CUSTOM_FIELD_KEYS = frozenset(
+    {
+        "material",
+        "ambiente",
+        "prazo",
+        "instituicao",
+        "aplicacao",
+        "equipamento",
+    }
+)
 CONTACT_FIELDS = {"name", "phone", "email", "company"}
 SOURCE_STRENGTH = {
     FIELD_SOURCE_UNKNOWN: 0,
@@ -311,7 +348,17 @@ class QualificationService:
             changed = True
         if changed:
             allowed = policy.allowed_custom_keys
-            lead.qualification_data = {key: value for key, value in data.items() if key in allowed}
+            # Mantém metadados operacionais e customs da policy; remove só customs fora da policy.
+            lead.qualification_data = {
+                key: value
+                for key, value in data.items()
+                if (
+                    key in allowed
+                    or key in OPERATIONAL_QUALIFICATION_KEYS
+                    or key.startswith("lead_")
+                    or key not in KNOWN_CUSTOM_FIELD_KEYS
+                )
+            }
             lead.field_sources = sources
         return changed
 

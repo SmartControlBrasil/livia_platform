@@ -149,6 +149,7 @@ class LiviaDecisionService:
                 assistant_profile=assistant_profile,
                 knowledge_context=knowledge_context,
                 activate_collection=True,
+                collection_reason=getattr(collection_gate, "reason", "") or "",
             )
         if conversation is not None and turn.kind != TurnKind.OTHER:
             return self._handle_contextual_turn(
@@ -280,6 +281,7 @@ class LiviaDecisionService:
                 assistant_profile=assistant_profile,
                 knowledge_context=knowledge_context,
                 activate_collection=True,
+                collection_reason=getattr(collection, "reason", "") or "",
             )
         if intent == "contact_data":
             collection = decide_collection(
@@ -297,6 +299,7 @@ class LiviaDecisionService:
                     assistant_profile=assistant_profile,
                     knowledge_context=knowledge_context,
                     activate_collection=True,
+                    collection_reason=getattr(collection, "reason", "") or "",
                 )
             if has_basic_contact(current_message) and (has_quote_request or has_commercial_interest):
                 # Contact alone during consultative mode keeps conversation going,
@@ -346,6 +349,7 @@ class LiviaDecisionService:
                 assistant_profile=assistant_profile,
                 knowledge_context=knowledge_context,
                 activate_collection=True,
+                collection_reason=getattr(collection, "reason", "") or "",
             )
         if has_support_request or has_technical_question:
             decision = LiviaReply(
@@ -421,11 +425,30 @@ class LiviaDecisionService:
                 message=current_message,
                 history=history,
             )
-            if turn.kind == TurnKind.NAME_DEFERRED:
-                mark_name_deferred(result.lead_draft)
+        if turn.kind == TurnKind.NAME_DEFERRED:
+            mark_name_deferred(result.lead_draft)
+            from assistant_core.consultative_policy import pause_collection
+
+            pause_collection(result.lead_draft, deferred_contact=True)
         lead_draft = None if result is None else result.lead_draft
         if turn.kind == TurnKind.NAME_DEFERRED:
-            reply = build_name_deferred_reply(lead_draft)
+            # Prefer grounded knowledge when available (e.g. continue answering about Duno).
+            grounded = self._with_knowledge("", knowledge_context)
+            if grounded and not is_generic_fallback_reply(grounded):
+                from assistant_core.services.response_quality_gate import apply_response_quality_gate
+                from assistant_core.dialogue_memory import load_dialogue_memory
+
+                memory = load_dialogue_memory(conversation, lead_draft)
+                reply, _ = apply_response_quality_gate(
+                    reply=grounded,
+                    knowledge_context=knowledge_context,
+                    current_message=current_message,
+                    memory=memory,
+                    append_followup=False,
+                )
+                reply = f"Tudo bem — seguimos só com as dúvidas por enquanto. {reply}".strip()
+            else:
+                reply = build_name_deferred_reply(lead_draft)
         elif turn.kind == TurnKind.DIRECT_QUESTION:
             reply = build_direct_question_reply(
                 lead_draft,
@@ -682,6 +705,7 @@ class LiviaDecisionService:
         assistant_profile=None,
         knowledge_context: str = "",
         activate_collection: bool = False,
+        collection_reason: str = "",
     ) -> LiviaReply:
         if conversation is None:
             decision = LiviaReply(intent=intent, reply=build_contextual_reply(intent=intent))
@@ -695,7 +719,7 @@ class LiviaDecisionService:
 
         if activate_collection:
             lead_seed = self.lead_capture_service.get_or_create_lead_draft(conversation)
-            mark_collection_active(lead_seed)
+            mark_collection_active(lead_seed, reason=collection_reason)
 
         result = self.lead_capture_service.capture_from_message(
             conversation=conversation,
@@ -703,7 +727,7 @@ class LiviaDecisionService:
             history=history,
         )
         if activate_collection:
-            mark_collection_active(result.lead_draft)
+            mark_collection_active(result.lead_draft, reason=collection_reason)
         reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields, intent=intent, invalid_fields=result.invalid_fields)
         if result.is_qualified:
             reply = build_contextual_reply(intent=intent, missing_fields=[])
