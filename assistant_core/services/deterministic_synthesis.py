@@ -52,6 +52,10 @@ META_MARKERS = (
     "catalogos detalhados por modelo",
     "quando perguntado sobre esses pontos",
     "a resposta deve pedir confirmação",
+    "templates/institutional",
+    "sem pedido explícito de orçamento, a lívia",
+    "a lívia explica fatores",
+    "`templates/",
 )
 
 CONTEXT_TOKEN_ENRICHMENTS = (
@@ -247,7 +251,7 @@ def _clean_bit(item: str) -> str:
             clipped = clipped[len(prefix) :].strip(" :-•#")
             break
     body_match = re.search(
-        r"((?:A|O|Os|As|Um|Uma|Este|Esta|A\s+Grani|A\s+Smart|Granimármores|Granimarmores|Smart\s+Control)[^.]{25,}[.!?]?)",
+        r"((?:A|O|Os|As|Um|Uma|Este|Esta|A\s+Grani|A\s+Smart|Granimármores|Granimarmores|Smart\s+Control|Robô|Robo)[^.]{25,}[.!?]?)",
         clipped,
     )
     if body_match:
@@ -256,6 +260,12 @@ def _clean_bit(item: str) -> str:
         capital = re.search(r"[A-ZÁÉÍÓÚÂÊÔÃÕÇ][^.]{39,}[.!]?", clipped)
         if capital:
             clipped = capital.group(0).strip()
+    clipped = re.sub(r"`?templates/institutional/[^`\s]+`?", "", clipped)
+    clipped = re.sub(r"\s+", " ", clipped).strip()
+    # Descarta cortes de título tipo "O / Little Bot Categoria:"
+    if re.match(r"^[A-Za-zÀ-ÿ]?\s*/\s*[A-Za-z]", clipped) or "categoria:" in clipped.lower()[:40]:
+        body = re.search(r"\b((?:Robô|Robo|Indicar|Atendemos|Desenvolvemos|Integra|Apoia)\b.+)$", clipped)
+        clipped = body.group(1).strip() if body else ""
     clipped = clipped[:280].strip(" -•#")
     if len(clipped) < 40:
         return ""
