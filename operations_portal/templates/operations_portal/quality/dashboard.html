@@ -1,0 +1,188 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Qualidade da Lívia{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex align-items-sm-center flex-sm-row flex-column gap-3">
+    <div class="flex-grow-1">
+      <h4 class="fs-18 fw-semibold m-0">Qualidade da Lívia</h4>
+      <p class="text-muted mb-0 mt-1">{{ tenant_scope_note }}</p>
+      <p class="text-muted mb-0 fs-13">{{ period.label }}</p>
+    </div>
+    <form method="get" class="d-flex flex-wrap align-items-end gap-2" aria-label="Filtros de qualidade">
+      <div>
+        <label class="form-label mb-0 text-muted fs-13" for="quality-period">Período</label>
+        <select id="quality-period" name="period" class="form-select" onchange="this.form.submit()">
+          <option value="today" {% if period.key == 'today' %}selected{% endif %}>Hoje</option>
+          <option value="7d" {% if period.key == '7d' %}selected{% endif %}>7 dias</option>
+          <option value="30d" {% if period.key == '30d' %}selected{% endif %}>30 dias</option>
+          <option value="custom" {% if period.key == 'custom' %}selected{% endif %}>Custom</option>
+        </select>
+      </div>
+      {% if period.key == 'custom' %}
+      <div>
+        <label class="form-label mb-0 text-muted fs-13" for="quality-start">Início</label>
+        <input id="quality-start" type="date" name="start" class="form-control" value="{{ filters.start }}">
+      </div>
+      <div>
+        <label class="form-label mb-0 text-muted fs-13" for="quality-end">Fim</label>
+        <input id="quality-end" type="date" name="end" class="form-control" value="{{ filters.end }}">
+      </div>
+      <button class="btn btn-primary" type="submit">Aplicar</button>
+      {% endif %}
+    </form>
+  </div>
+
+  <div class="mb-3 d-flex flex-wrap gap-2">
+    <a class="btn btn-sm btn-outline-primary" href="{% url 'operations_portal:quality_knowledge_gaps' %}?period={{ period.key }}">Lacunas</a>
+    <a class="btn btn-sm btn-outline-primary" href="{% url 'operations_portal:quality_conversations' %}?period={{ period.key }}">Conversas</a>
+    <a class="btn btn-sm btn-outline-primary" href="{% url 'operations_portal:quality_documents' %}">Documentos</a>
+    <a class="btn btn-sm btn-outline-primary" href="{% url 'operations_portal:quality_outbox' %}?period={{ period.key }}">Outbox</a>
+    {% if active_tenant %}
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'operations_portal:quality_tenant_detail' active_tenant.slug %}?period={{ period.key }}">Detalhe do tenant</a>
+    {% endif %}
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-xl-4">
+      <div class="card h-100"><div class="card-body">
+        <p class="text-muted mb-1">Tenant quality score</p>
+        <h3 class="mb-1">{{ quality_score.score }} <span class="fs-14 text-muted">/ 100</span></h3>
+        <span class="badge bg-{{ quality_score.tone }}-subtle text-{{ quality_score.tone }}">{{ quality_score.status|upper }}</span>
+        <ul class="list-unstyled mt-3 mb-0 fs-13">
+          {% for key, value in quality_score.components.items %}
+          <li class="d-flex justify-content-between"><span>{{ key }}</span><strong>{{ value }}</strong></li>
+          {% endfor %}
+        </ul>
+      </div></div>
+    </div>
+    <div class="col-xl-8">
+      <div class="card h-100"><div class="card-body">
+        <h5 class="card-title">Alertas</h5>
+        <div class="d-flex flex-column gap-2">
+          {% for alert in alerts %}
+          <div class="d-flex justify-content-between align-items-center border rounded p-2">
+            <div>
+              <strong>{{ alert.title }}</strong>
+              <div class="text-muted fs-13">{{ alert.detail }}</div>
+            </div>
+            <span class="badge bg-{{ alert.tone }}-subtle text-{{ alert.tone }}">{{ alert.status|upper }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    {% for card in cards %}
+    <div class="col-md-6 col-lg-4 col-xl-3">
+      <div class="card"><div class="card-body">
+        <p class="mb-1 text-muted fs-13">{{ card.label }}</p>
+        <h3 class="mb-1 fs-22">{{ card.value }}</h3>
+        <small class="text-muted">{{ card.hint }}</small>
+        {% if card.status %}<div class="mt-2"><span class="badge bg-{% if card.status == 'green' %}success{% elif card.status == 'warning' %}warning{% else %}danger{% endif %}-subtle text-{% if card.status == 'green' %}success{% elif card.status == 'warning' %}warning{% else %}danger{% endif %}">{{ card.status|upper }}</span></div>{% endif %}
+      </div></div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="row">
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Funil consultivo</h5></div><div class="card-body">
+        {% for step in funnel.steps %}
+        <div class="d-flex justify-content-between border-bottom py-2"><span>{{ step.label }}</span><strong>{{ step.count }}</strong></div>
+        {% endfor %}
+        <p class="text-muted fs-13 mb-0 mt-2">Conversão conversa → lead: {% if funnel.conversion_conversation_to_lead != None %}{{ funnel.conversion_conversation_to_lead|floatformat:1 }}%{% else %}—{% endif %}</p>
+      </div></div>
+    </div>
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Intents</h5></div><div class="card-body">
+        {% if intents %}
+        {% for row in intents %}
+        <div class="d-flex justify-content-between border-bottom py-2"><span>{{ row.intent }}</span><strong>{{ row.count }}</strong></div>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted mb-0">Sem dados de intent no período.</p>
+        {% endif %}
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Score distribution (RAG)</h5></div><div class="card-body">
+        {% for bucket in rag.score_buckets %}
+        <div class="d-flex justify-content-between border-bottom py-2"><span>{{ bucket.label }}</span><strong>{{ bucket.count }}</strong></div>
+        {% endfor %}
+      </div></div>
+    </div>
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Fallback por tenant</h5></div><div class="card-body">
+        {% if fallback.by_tenant %}
+        {% for row in fallback.by_tenant %}
+        <div class="d-flex justify-content-between border-bottom py-2">
+          <span><a href="{% url 'operations_portal:quality_tenant_detail' row.tenant %}?period={{ period.key }}">{{ row.tenant }}</a></span>
+          <strong>{{ row.fallback_count }} · {% if row.rate != None %}{% widthratio row.rate 1 100 %}%{% else %}—{% endif %}</strong>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="text-muted mb-0">Nenhum fallback detectado.</p>
+        {% endif %}
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Top perguntas</h5></div><div class="card-body">
+        {% for row in top_questions %}
+        <div class="border-bottom py-2"><strong>{{ row.count }}×</strong> {{ row.question }}</div>
+        {% empty %}
+        <p class="text-muted mb-0">Sem perguntas no período.</p>
+        {% endfor %}
+      </div></div>
+    </div>
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Top source pages</h5></div><div class="card-body">
+        {% for row in top_sources %}
+        <div class="d-flex justify-content-between border-bottom py-2"><span>{{ row.label }}</span><strong>{{ row.count }}</strong></div>
+        {% empty %}
+        <p class="text-muted mb-0">Sem origens no período.</p>
+        {% endfor %}
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">Drive sync</h5></div><div class="card-body table-responsive">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Tenant</th><th>Mode</th><th>Status</th><th>Seen</th><th>Failed</th></tr></thead>
+          <tbody>
+            {% for row in drive.rows %}
+            <tr>
+              <td>{{ row.tenant }}</td>
+              <td>{{ row.source_mode }}</td>
+              <td><span class="badge bg-{{ row.tone }}-subtle text-{{ row.tone }}">{{ row.last_sync_status }}</span></td>
+              <td>{{ row.files_seen }}</td>
+              <td>{{ row.files_failed }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="text-muted">Sem configuração.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="card-title mb-0">ChatRequest / Outbox / E-mail</h5></div><div class="card-body">
+        <p class="mb-1">ChatRequest: completed={{ chat_requests.completed }} · failed={{ chat_requests.failed }} · processing={{ chat_requests.processing }} · stuck={{ chat_requests.stuck_processing }}</p>
+        <p class="mb-1">Outbox: pending={{ outbox.pending }} · delivered={{ outbox.delivered }} · dead-letter={{ outbox.dead_letter }}</p>
+        <p class="mb-0">E-mails: sent={{ emails.sent }} · failed={{ emails.failed }}</p>
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

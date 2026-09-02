@@ -19,6 +19,11 @@
             <i data-feather="home"></i><span> Visão geral </span>
           </a>
         </li>
+        <li class="{% if active_section == 'qualidade' %}menuitem-active{% endif %}">
+          <a href="{% url 'operations_portal:quality_dashboard' %}" class="tp-link {% if active_section == 'qualidade' %}active{% endif %}">
+            <i data-feather="activity"></i><span> Qualidade da Lívia </span>
+          </a>
+        </li>
         <li class="{% if active_section == 'conversas' %}menuitem-active{% endif %}">
           <a href="{% url 'operations_portal:conversation_list' %}" class="tp-link {% if active_section == 'conversas' %}active{% endif %}">
             <i data-feather="message-square"></i><span> Conversas </span>

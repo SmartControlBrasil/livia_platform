@@ -1,0 +1,58 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Documentos · Qualidade{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-3">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Corpus / embeddings</h4>
+      <p class="text-muted mb-0">{{ tenant_scope_note }}</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'operations_portal:quality_dashboard' %}">Dashboard</a>
+  </div>
+
+  <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Chunks sem embedding ({{ missing.total }})</h5></div>
+    <div class="card-body table-responsive">
+      <table class="table table-sm">
+        <thead><tr><th>Tenant</th><th>Documento</th><th>Source</th><th>Chunk</th><th>Atualizado</th></tr></thead>
+        <tbody>
+          {% for row in missing.rows %}
+          <tr>
+            <td>{{ row.tenant }}</td>
+            <td>{{ row.document_title }}</td>
+            <td class="fs-13">{{ row.source|truncatechars:48 }}</td>
+            <td>{{ row.chunk_id }}</td>
+            <td class="fs-13">{{ row.updated_at|date:"d/m/Y H:i" }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="text-muted">Indicador saudável: zero pendências.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card"><div class="card-header"><h5 class="mb-0">Documentos</h5></div>
+    <div class="card-body table-responsive">
+      <table class="table table-sm">
+        <thead><tr><th>Tenant</th><th>Título</th><th>Source</th><th>Status</th><th>Lifecycle</th><th>Atualizado</th></tr></thead>
+        <tbody>
+          {% for doc in documents_page %}
+          <tr>
+            <td>{{ doc.tenant.slug }}</td>
+            <td>{{ doc.title }}</td>
+            <td>{{ doc.source_type }}</td>
+            <td>{{ doc.status }}</td>
+            <td>{{ doc.lifecycle_status }}</td>
+            <td class="fs-13">{{ doc.updated_at|date:"d/m/Y H:i" }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="text-muted">Sem documentos.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

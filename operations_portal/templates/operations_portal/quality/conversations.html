@@ -1,0 +1,67 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Conversas · Qualidade{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3">
+    <h4 class="fs-18 fw-semibold m-0">Conversas · Qualidade</h4>
+    <p class="text-muted mb-0">{{ tenant_scope_note }} · {{ period.label }}</p>
+  </div>
+
+  <form method="get" class="card mb-3"><div class="card-body row g-2 align-items-end">
+    <input type="hidden" name="period" value="{{ period.key }}">
+    <div class="col-md-2">
+      <label class="form-label">Intent</label>
+      <input class="form-control" name="intent" value="{{ filters.intent }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Lead status</label>
+      <input class="form-control" name="lead_status" value="{{ filters.lead_status }}" placeholder="draft/qualified/...">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Handoff status</label>
+      <input class="form-control" name="handoff_status" value="{{ filters.handoff_status }}" placeholder="pending/sent/...">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Source page</label>
+      <input class="form-control" name="source_page" value="{{ filters.source_page }}">
+    </div>
+    <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Filtrar</button></div>
+  </div></form>
+
+  <div class="card"><div class="card-body table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>Tenant</th>
+          <th>Session</th>
+          <th>Início</th>
+          <th>Última msg</th>
+          <th>Msgs</th>
+          <th>Intent</th>
+          <th>Lead</th>
+          <th>Handoff</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.tenant }}</td>
+          <td><a href="{% url 'operations_portal:quality_conversation_transcript' row.id %}">{{ row.session_id }}</a></td>
+          <td class="fs-13">{{ row.started_at|date:"d/m/Y H:i" }}</td>
+          <td class="fs-13">{{ row.last_message_at|date:"d/m/Y H:i"|default:"—" }}</td>
+          <td>{{ row.message_count }}</td>
+          <td>{{ row.intent|default:"—" }}</td>
+          <td>{{ row.lead_status|default:"—" }}</td>
+          <td>{{ row.handoff_status|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" class="text-muted">Nenhuma conversa.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include 'operations_portal/partials/pagination.html' %}
+  </div></div>
+</div>
+{% endblock %}

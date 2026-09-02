@@ -1,0 +1,64 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Outbox · Qualidade{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3">
+    <h4 class="fs-18 fw-semibold m-0">Outbox operacional</h4>
+    <p class="text-muted mb-0">{{ tenant_scope_note }} · {{ period.label }}</p>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Pending</p><h3>{{ outbox.pending }}</h3></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Delivered</p><h3>{{ outbox.delivered }}</h3></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Failed/retry</p><h3>{{ outbox.failed }}</h3></div></div></div>
+    <div class="col-md-3"><div class="card"><div class="card-body"><p class="text-muted mb-1">Dead letter</p><h3>{{ outbox.dead_letter }}</h3></div></div></div>
+  </div>
+
+  <form method="get" class="card mb-3"><div class="card-body row g-2 align-items-end">
+    <input type="hidden" name="period" value="{{ period.key }}">
+    <div class="col-md-4">
+      <label class="form-label">Event type</label>
+      <select name="event_type" class="form-select">
+        <option value="">Todos</option>
+        <option value="lead.qualified" {% if filters.event_type == 'lead.qualified' %}selected{% endif %}>lead.qualified</option>
+        <option value="handoff.created" {% if filters.event_type == 'handoff.created' %}selected{% endif %}>handoff.created</option>
+        <option value="conversation.summary_ready" {% if filters.event_type == 'conversation.summary_ready' %}selected{% endif %}>conversation.summary_ready</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Status</label>
+      <select name="status" class="form-select">
+        <option value="">Todos</option>
+        <option value="pending" {% if filters.status == 'pending' %}selected{% endif %}>pending</option>
+        <option value="succeeded" {% if filters.status == 'succeeded' %}selected{% endif %}>succeeded</option>
+        <option value="retry" {% if filters.status == 'retry' %}selected{% endif %}>retry</option>
+        <option value="dead_letter" {% if filters.status == 'dead_letter' %}selected{% endif %}>dead_letter</option>
+      </select>
+    </div>
+    <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Filtrar</button></div>
+  </div></form>
+
+  <div class="card"><div class="card-body table-responsive">
+    <table class="table table-sm">
+      <thead><tr><th>Tenant</th><th>Event</th><th>Status</th><th>Attempts</th><th>Erro</th><th>Criado</th></tr></thead>
+      <tbody>
+        {% for event in page_obj %}
+        <tr>
+          <td>{{ event.tenant.slug }}</td>
+          <td><a href="{% url 'operations_portal:outbox_event_detail' event.pk %}">{{ event.event_type }}</a></td>
+          <td>{{ event.status }}</td>
+          <td>{{ event.attempts }}</td>
+          <td class="fs-13">{{ event.last_error_code|default:"—" }}</td>
+          <td class="fs-13">{{ event.created_at|date:"d/m/Y H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-muted">Sem eventos.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include 'operations_portal/partials/pagination.html' %}
+  </div></div>
+</div>
+{% endblock %}

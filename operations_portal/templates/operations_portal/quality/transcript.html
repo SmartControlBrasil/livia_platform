@@ -1,0 +1,68 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Transcript · {{ conversation.session_id }}{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between flex-wrap gap-3">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Transcript</h4>
+      <p class="text-muted mb-0">{{ conversation.tenant.slug }} · {{ conversation.session_id }}</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'operations_portal:quality_conversations' %}">Lista</a>
+      <a class="btn btn-outline-primary" href="{% url 'operations_portal:conversation_detail' conversation.pk %}">Detalhe operacional</a>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-8">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Cliente × Lívia</h5></div><div class="card-body">
+        <div class="d-flex flex-column gap-3">
+          {% for message in transcript_messages %}
+          <div class="p-3 rounded border {% if message.role == 'assistant' %}bg-primary-subtle{% else %}bg-light{% endif %}">
+            <div class="d-flex justify-content-between mb-2">
+              <strong>{% if message.role == 'assistant' %}Lívia{% else %}Cliente{% endif %}</strong>
+              <span class="text-muted fs-13">{{ message.created_at|date:"d/m/Y H:i" }}</span>
+            </div>
+            <div class="text-break" style="white-space: pre-wrap;">{{ message.content }}</div>
+          </div>
+          {% empty %}
+          <p class="text-muted mb-0">Sem mensagens.</p>
+          {% endfor %}
+        </div>
+      </div></div>
+    </div>
+    <div class="col-xl-4">
+      {% if show_rag_debug %}
+      <div class="card mb-3"><div class="card-header"><h5 class="mb-0">Debug RAG</h5></div><div class="card-body">
+        <p class="text-muted fs-13">Somente admin/interno. Embeddings não são expostos.</p>
+        {% for event in rag_debug.retrieval_events %}
+        <div class="border-bottom py-2 fs-13">
+          <div>{{ event.created_at|date:"d/m/Y H:i:s" }} · {{ event.status }} · hit={{ event.hit }}</div>
+          <div>score={{ event.max_score }} · chunks={{ event.result_count }} · {{ event.duration_ms }}ms</div>
+        </div>
+        {% empty %}
+        <p class="text-muted mb-0">Sem eventos de retrieval vinculados.</p>
+        {% endfor %}
+        {% if rag_debug.message_observability %}
+        <hr>
+        <h6>Observabilidade por request</h6>
+        {% for obs in rag_debug.message_observability %}
+        <div class="fs-13 border-bottom py-2">
+          <div>{{ obs.created_at|date:"H:i:s" }} · intent={{ obs.intent }} · fallback={{ obs.is_fallback }}</div>
+          <div>retrieval={{ obs.retrieval_status }} hit={{ obs.retrieval_hit }} score={{ obs.max_score }} chunks={{ obs.chunk_count }}</div>
+        </div>
+        {% endfor %}
+        {% endif %}
+      </div></div>
+      {% endif %}
+      <div class="card"><div class="card-body">
+        <p class="mb-1"><span class="text-muted">Origem:</span> {{ conversation.source_page|default:"—" }}</p>
+        <p class="mb-1"><span class="text-muted">Estado:</span> {{ conversation.lead_state }}</p>
+        <p class="mb-0"><span class="text-muted">Qualificada:</span> {% if conversation.is_qualified %}Sim{% else %}Não{% endif %}</p>
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

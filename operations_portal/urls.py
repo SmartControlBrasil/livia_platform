@@ -1,11 +1,26 @@
 from django.urls import path
 
-from . import analytics_views, integration_views, knowledge_base_views, notification_views, views, work_queue_views
+from . import (
+    analytics_views,
+    integration_views,
+    knowledge_base_views,
+    notification_views,
+    quality_views,
+    views,
+    work_queue_views,
+)
 
 app_name = "operations_portal"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path("qualidade/", quality_views.quality_dashboard, name="quality_dashboard"),
+    path("qualidade/tenants/<slug:slug>/", quality_views.quality_tenant_detail, name="quality_tenant_detail"),
+    path("qualidade/lacunas/", quality_views.quality_knowledge_gaps, name="quality_knowledge_gaps"),
+    path("qualidade/conversas/", quality_views.quality_conversations, name="quality_conversations"),
+    path("qualidade/conversas/<int:pk>/", quality_views.quality_conversation_transcript, name="quality_conversation_transcript"),
+    path("qualidade/documentos/", quality_views.quality_documents, name="quality_documents"),
+    path("qualidade/outbox/", quality_views.quality_outbox, name="quality_outbox"),
     path("conversas/", views.conversation_list, name="conversation_list"),
     path("conversas/<int:pk>/", views.conversation_detail, name="conversation_detail"),
     path("leads/", views.lead_list, name="lead_list"),

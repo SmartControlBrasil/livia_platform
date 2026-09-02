@@ -1,0 +1,80 @@
+{% extends 'operations_portal/base.html' %}
+
+{% block title %}Qualidade · {{ tenant.slug }}{% endblock %}
+
+{% block page_content %}
+<div class="container-fluid">
+  <div class="py-3 d-flex justify-content-between gap-3 flex-wrap">
+    <div>
+      <h4 class="fs-18 fw-semibold m-0">Qualidade · {{ tenant.name }}</h4>
+      <p class="text-muted mb-0">{{ tenant.slug }} · {{ period.label }}</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'operations_portal:quality_dashboard' %}?period={{ period.key }}">Voltar</a>
+  </div>
+
+  <div class="row mb-3">
+    <div class="col-md-4">
+      <div class="card"><div class="card-body">
+        <p class="text-muted mb-1">Quality score</p>
+        <h3>{{ quality_score.score }}</h3>
+        <span class="badge bg-{{ quality_score.tone }}-subtle text-{{ quality_score.tone }}">{{ quality_score.status|upper }}</span>
+      </div></div>
+    </div>
+    <div class="col-md-8">
+      <div class="card"><div class="card-body">
+        <div class="row">
+          <div class="col-sm-4"><p class="text-muted mb-0">Fallback</p><strong>{{ fallback.fallback_count }} {% if fallback.rate != None %}({% widthratio fallback.rate 1 100 %}%){% else %}(—){% endif %}</strong></div>
+          <div class="col-sm-4"><p class="text-muted mb-0">RAG hit</p><strong>{{ rag.hits }}/{{ rag.attempted }}</strong></div>
+          <div class="col-sm-4"><p class="text-muted mb-0">Drive</p><strong>{{ drive.summary_status }}</strong></div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Conversas recentes</h5></div><div class="card-body">
+        {% for row in conversations_preview %}
+        <div class="border-bottom py-2 d-flex justify-content-between">
+          <a href="{% url 'operations_portal:quality_conversation_transcript' row.id %}">{{ row.session_id }}</a>
+          <span class="text-muted fs-13">{{ row.message_count }} msgs · {{ row.intent|default:"—" }}</span>
+        </div>
+        {% empty %}<p class="text-muted mb-0">Sem conversas.</p>{% endfor %}
+      </div></div>
+    </div>
+    <div class="col-xl-6">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Lacunas</h5></div><div class="card-body">
+        {% for row in knowledge_gaps_preview %}
+        <div class="border-bottom py-2">
+          <div class="fs-13 text-muted">{{ row.reason }} · {{ row.retrieval_status }} · score={{ row.max_score }}</div>
+          <div>{{ row.question|default:"(sem pergunta)" }}</div>
+        </div>
+        {% empty %}<p class="text-muted mb-0">Sem lacunas.</p>{% endfor %}
+        <a class="fs-13" href="{% url 'operations_portal:quality_knowledge_gaps' %}?period={{ period.key }}&tenant={{ tenant.pk }}">Ver todas</a>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-xl-4">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Leads</h5></div><div class="card-body">
+        <p>Total {{ leads.total }} · Qualificados {{ leads.qualified }} · Enviados {{ leads.sent }} · Falhos {{ leads.failed }}</p>
+      </div></div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Handoffs</h5></div><div class="card-body">
+        <p>Total {{ handoffs.total }} · Pendentes {{ handoffs.pending }} · Enviados {{ handoffs.sent }} · Falhos {{ handoffs.failed }}</p>
+        <p class="text-muted fs-13 mb-0">Notificação P50={{ handoffs.notification_latency_p50_ms }}ms</p>
+      </div></div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card"><div class="card-header"><h5 class="mb-0">Documentos / embeddings</h5></div><div class="card-body">
+        <p>Docs ativos {{ corpus.documents_active }} · Chunks {{ corpus.chunks_active }} · Pendentes {{ corpus.embeddings_pending }}</p>
+        {% for row in documents_missing_preview %}
+        <div class="fs-13 border-bottom py-1">{{ row.document_title }}</div>
+        {% empty %}<p class="text-muted mb-0 fs-13">Nenhum chunk sem embedding.</p>{% endfor %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
