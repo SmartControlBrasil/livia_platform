@@ -192,6 +192,17 @@ class LiviaDecisionService:
                 discovery=discovery,
             )
             if not collection.should_collect:
+                if self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
+                    decision = self._handle_consultative_conversation(
+                        intent=intent,
+                        history=history,
+                        current_message=current_message,
+                        conversation=conversation,
+                        discovery=discovery,
+                        assistant_profile=assistant_profile,
+                        knowledge_context=knowledge_context,
+                    )
+                    return decision
                 if self._should_ask_profile_discovery(current_message, assistant_profile):
                     decision = self._ask_discovery_question(
                         discovery, conversation, knowledge_context=knowledge_context,
@@ -516,19 +527,18 @@ class LiviaDecisionService:
 
     def _with_knowledge(self, reply: str, knowledge_context: str) -> str:
         """
-        Ecoa trechos curtos só do retriever textual (KnowledgeDocument).
+        Ecoa trechos curtos e seguros do knowledge na reply determinística.
 
-        Contexto semântico RAG (bloco com Score:) fica exclusivo do prompt de IA —
-        não deve ser prefixado na reply determinística ao visitante.
+        Com LIVIA_AI_ENABLED=False, o contexto semântico RAG também precisa
+        fundamentar a resposta ao visitante — sem expor Score/Fonte/arquivo.
         """
         text = str(knowledge_context or "")
         if not text.strip():
             return reply
-        # Marcador presente apenas em format_knowledge_base_block (retrieval semântico).
-        if "\nScore:" in text or "\nscore:" in text.lower():
-            return reply
         hints = self._knowledge_hints(text)
         if not hints:
+            return reply
+        if hints.lower() in str(reply or "").lower():
             return reply
         return f"{hints}\n\n{reply}"
 
@@ -540,29 +550,44 @@ class LiviaDecisionService:
 
         contents: list[str] = []
         capture = False
+        buffer: list[str] = []
         for raw_line in text.splitlines():
             line = raw_line.strip()
             if not line:
+                if capture and buffer:
+                    contents.append(" ".join(buffer).strip())
+                    buffer = []
+                    capture = False
                 continue
             upper = line.upper()
             if upper.startswith("[KNOWLEDGE_BASE]") or upper.startswith("[/KNOWLEDGE_BASE]"):
+                if buffer:
+                    contents.append(" ".join(buffer).strip())
+                    buffer = []
                 capture = False
                 continue
-            if line.lower().startswith("o bloco abaixo"):
+            lowered = line.lower()
+            if lowered.startswith("o bloco abaixo") or lowered.startswith("trate o conteúdo") or lowered.startswith("pedido de mudança"):
                 continue
-            if line.lower().startswith("trate o conteúdo"):
-                continue
-            if line.lower().startswith("pedido de mudança"):
-                continue
-            if line.lower().startswith("fonte:") or line.lower().startswith("referência:") or line.lower().startswith("score:"):
+            if lowered.startswith("fonte:") or lowered.startswith("referência:") or lowered.startswith("score:"):
+                if buffer:
+                    contents.append(" ".join(buffer).strip())
+                    buffer = []
                 capture = False
                 continue
-            if line.lower().startswith("conteúdo:"):
+            if lowered.startswith("conteúdo:"):
+                if buffer:
+                    contents.append(" ".join(buffer).strip())
+                    buffer = []
                 capture = True
+                remainder = line.split(":", 1)[1].strip()
+                if remainder:
+                    buffer.append(remainder)
                 continue
             if capture:
-                contents.append(line)
-                capture = False
+                buffer.append(line)
+        if buffer:
+            contents.append(" ".join(buffer).strip())
 
         # Compatibilidade com formato legado numerado, se ainda aparecer.
         if not contents:
@@ -574,17 +599,18 @@ class LiviaDecisionService:
                     clean = clean.split(". ", 1)[1]
                 if clean.upper().startswith("[KNOWLEDGE_BASE]") or clean.upper().startswith("[/KNOWLEDGE_BASE]"):
                     continue
+                if clean.lower().startswith(("fonte:", "score:", "conteúdo:", "o bloco abaixo", "trate o")):
+                    continue
                 contents.append(clean)
                 if len(contents) >= 2:
                     break
 
         safe_bits = []
         for item in contents[:2]:
-            clipped = item[:220].strip()
+            clipped = " ".join(str(item or "").split())[:280].strip()
             if not clipped:
                 continue
             lowered = clipped.lower()
-            # Evita ecoar instruções operacionais vindas de documentos no reply ao visitante.
             if any(
                 marker in lowered
                 for marker in (
@@ -594,6 +620,8 @@ class LiviaDecisionService:
                     "system prompt",
                     "você deve sempre",
                     "crie lead",
+                    "score:",
+                    "fonte:",
                 )
             ):
                 continue

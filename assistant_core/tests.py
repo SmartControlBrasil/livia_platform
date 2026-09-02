@@ -961,7 +961,7 @@ class LiviaDecisionKnowledgeTests(TestCase):
             "Fonte: GP — Soluções para banheiros\n"
             "Score: 0.8123\n"
             "Conteúdo:\n"
-            "GP — Soluções para banheiros com mármores e cuidados com ácidos.\n"
+            "Trabalhamos com cuidados específicos para banheiros e superfícies sensíveis a ácidos.\n"
             "[/KNOWLEDGE_BASE]"
         )
         decision = self.service.generate_reply(
@@ -970,8 +970,10 @@ class LiviaDecisionKnowledgeTests(TestCase):
             conversation=conversation,
             knowledge_context=semantic,
         )
-        self.assertNotIn("GP — Soluções", decision.reply)
         self.assertNotIn("Score:", decision.reply)
+        self.assertNotIn("Fonte:", decision.reply)
+        self.assertNotIn("0.8123", decision.reply)
+        self.assertIn("banheiro", decision.reply.lower())
 
     def test_livia_decision_keeps_current_reply_without_knowledge(self):
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="no-knowledge-session")
