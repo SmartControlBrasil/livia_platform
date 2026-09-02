@@ -16,6 +16,7 @@ from leads.models import LeadDraft
 from leads.services.crm_dispatch import CRMDispatchService
 from leads.services.commercial import update_lead_dispatch_state_from_outbox
 from leads.services.handoff_notification import HandoffNotificationService
+from leads.services.lead_notification import LeadNotificationService
 from conversations.models import HandoffRequest
 
 from .payloads import SCHEMA_VERSION, short_text
@@ -72,14 +73,35 @@ class LeadQualifiedHandler(BaseOutboxHandler):
         if lead is None:
             return permanent_failure("aggregate_not_found", "LeadDraft not found for tenant.")
         crm_result = self._dispatch_smart360(event, lead)
+        notification_result = LeadNotificationService().notify(lead)
         webhook_result = self._dispatch_webhooks(event, lead)
+        notification_meta = {
+            "success": notification_result.success,
+            "dry_run": notification_result.dry_run,
+            "skipped": notification_result.skipped,
+        }
         if crm_result.retryable or webhook_result.retryable:
-            return retryable_failure("delivery_retryable", "One or more lead deliveries failed temporarily.", {"smart360": crm_result.metadata, "webhooks": webhook_result.metadata})
+            return retryable_failure(
+                "delivery_retryable",
+                "One or more lead deliveries failed temporarily.",
+                {"smart360": crm_result.metadata, "webhooks": webhook_result.metadata, "email": notification_meta},
+            )
         if crm_result.status == "permanent_failure" or webhook_result.status == "permanent_failure":
-            return permanent_failure("delivery_permanent", "One or more lead deliveries failed permanently.", {"smart360": crm_result.metadata, "webhooks": webhook_result.metadata})
-        if crm_result.status == "skipped" and webhook_result.status == "skipped":
-            return skipped("all_deliveries_skipped", "All lead deliveries were skipped.", {"smart360": crm_result.metadata, "webhooks": webhook_result.metadata})
-        return succeeded("lead_delivered", metadata={"smart360": crm_result.metadata, "webhooks": webhook_result.metadata})
+            return permanent_failure(
+                "delivery_permanent",
+                "One or more lead deliveries failed permanently.",
+                {"smart360": crm_result.metadata, "webhooks": webhook_result.metadata, "email": notification_meta},
+            )
+        if crm_result.status == "skipped" and webhook_result.status == "skipped" and notification_result.skipped:
+            return skipped(
+                "all_deliveries_skipped",
+                "All lead deliveries were skipped.",
+                {"smart360": crm_result.metadata, "webhooks": webhook_result.metadata, "email": notification_meta},
+            )
+        return succeeded(
+            "lead_delivered",
+            metadata={"smart360": crm_result.metadata, "webhooks": webhook_result.metadata, "email": notification_meta},
+        )
 
     def _dispatch_smart360(self, event, lead):
         decision = evaluate_side_effect_policy(

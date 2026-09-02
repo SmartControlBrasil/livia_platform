@@ -141,6 +141,10 @@ def resolve_decision_outcome(*, decision, discovery, conversation, knowledge_con
     if not has_knowledge:
         return DecisionOutcome("empty", False, skip_reason="no_knowledge_context")
 
+    # Pergunta informativa (prazo, como funciona, etc.) responde com KB — sem forçar discovery.
+    if is_informational_knowledge_query(discovery):
+        return DecisionOutcome("inform", True, synthesis_mode="inform")
+
     if bool(getattr(discovery, "should_ask_discovery_question", False)):
         category = str(getattr(discovery, "category", "") or getattr(discovery, "scenario", "") or "")
         if category == "ambígua" or "ambig" in category.lower():

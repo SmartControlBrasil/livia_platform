@@ -156,11 +156,13 @@ def evaluate_side_effect_policy(
     if side_effect == SideEffectType.EMAIL_NOTIFICATION:
         handoff_enabled = bool(getattr(settings, "LIVIA_HANDOFF_NOTIFICATIONS_ENABLED", False))
         handoff_dry = bool(getattr(settings, "LIVIA_HANDOFF_NOTIFICATIONS_DRY_RUN", True))
+        lead_enabled = bool(getattr(settings, "LIVIA_LEAD_NOTIFICATIONS_ENABLED", False))
+        lead_dry = bool(getattr(settings, "LIVIA_LEAD_NOTIFICATIONS_DRY_RUN", True))
         operational_enabled = bool(getattr(settings, "LIVIA_OPERATIONAL_EMAIL_NOTIFICATIONS_ENABLED", False))
         operational_dry = bool(getattr(settings, "LIVIA_OPERATIONAL_EMAIL_NOTIFICATIONS_DRY_RUN", True))
-        if not handoff_enabled and not operational_enabled:
+        if not handoff_enabled and not operational_enabled and not lead_enabled:
             return _blocked(side_effect, "email_notifications_disabled", "Notificações de e-mail desabilitadas.")
-        if handoff_dry or operational_dry:
+        if handoff_dry or operational_dry or lead_dry:
             return _dry_run(side_effect, "email_notifications_dry_run", "Notificações de e-mail em dry-run.")
         return _real_enabled(side_effect, "email_notifications_real_enabled", "Notificações de e-mail reais habilitadas.")
 

@@ -14,6 +14,14 @@ from assistant_core.conversation_turns import (
     classify_conversation_turn,
     mark_name_deferred,
 )
+from assistant_core.consultative_policy import (
+    CollectionTrigger,
+    build_consultative_commercial_reply,
+    build_conceptual_price_reply,
+    decide_collection,
+    is_conceptual_price_question,
+    mark_collection_active,
+)
 from assistant_core.discovery import analyze_message
 from assistant_core.discovery.contextual import resolve_discovery_question, should_ask_profile_discovery
 from assistant_core.services.decision_outcome import has_semantic_knowledge_block, should_combine_kb_with_discovery, is_informational_knowledge_query
@@ -119,6 +127,22 @@ class LiviaDecisionService:
             conversation=conversation,
             discovery=discovery,
         )
+        collection_gate = decide_collection(
+            current_message=current_message,
+            conversation=conversation,
+            discovery=discovery,
+        )
+        if conversation is not None and collection_gate.should_collect and turn.kind == TurnKind.OTHER:
+            return self._handle_qualification(
+                intent=discovery.intent if discovery.intent not in {"unknown", "greeting"} else "commercial_interest",
+                history=history,
+                current_message=current_message,
+                conversation=conversation,
+                discovery=discovery,
+                assistant_profile=assistant_profile,
+                knowledge_context=knowledge_context,
+                activate_collection=True,
+            )
         if conversation is not None and turn.kind != TurnKind.OTHER:
             return self._handle_contextual_turn(
                 turn=turn,
@@ -162,31 +186,66 @@ class LiviaDecisionService:
             if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
                 decision = self._locked_lead_reply(intent)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
-            if self._should_ask_profile_discovery(current_message, assistant_profile):
+            collection = decide_collection(
+                current_message=current_message,
+                conversation=conversation,
+                discovery=discovery,
+            )
+            if not collection.should_collect:
+                if self._should_ask_profile_discovery(current_message, assistant_profile):
+                    decision = self._ask_discovery_question(
+                        discovery, conversation, knowledge_context=knowledge_context,
+                        assistant_profile=assistant_profile, tenant=tenant, current_message=current_message,
+                    )
+                    decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                    return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+                if should_combine_kb_with_discovery(discovery, conversation, knowledge_context):
+                    decision = self._ask_discovery_question(
+                        discovery, conversation, knowledge_context=knowledge_context,
+                        assistant_profile=assistant_profile, tenant=tenant, current_message=current_message,
+                    )
+                    decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                    return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+                if not discovery.should_collect_lead and discovery.should_ask_discovery_question and discovery.suggested_next_question:
+                    # Prefer discovery when message is still vague and no profile-specific shape exists.
+                    if len(str(current_message or "").split()) <= 4 and not discovery.should_answer_contextually:
+                        decision = self._ask_discovery_question(
+                            discovery, conversation, knowledge_context=knowledge_context,
+                            assistant_profile=assistant_profile, tenant=tenant, current_message=current_message,
+                        )
+                        decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
+                        return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+                decision = self._handle_consultative_conversation(
+                    intent=intent,
+                    history=history,
+                    current_message=current_message,
+                    conversation=conversation,
+                    discovery=discovery,
+                    assistant_profile=assistant_profile,
+                    knowledge_context=knowledge_context,
+                )
+                return decision
+            if self._should_ask_profile_discovery(current_message, assistant_profile) and collection.trigger == CollectionTrigger.NONE:
                 decision = self._ask_discovery_question(
                     discovery, conversation, knowledge_context=knowledge_context,
                     assistant_profile=assistant_profile, tenant=tenant, current_message=current_message,
                 )
                 decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
-            if should_combine_kb_with_discovery(discovery, conversation, knowledge_context):
+            if should_combine_kb_with_discovery(discovery, conversation, knowledge_context) and not collection.should_collect:
                 decision = self._ask_discovery_question(
                     discovery, conversation, knowledge_context=knowledge_context,
                     assistant_profile=assistant_profile, tenant=tenant, current_message=current_message,
                 )
                 decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
-            if self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
+            if self._should_answer_informatively_from_knowledge(discovery, knowledge_context) and not collection.should_collect:
                 decision = LiviaReply(
                     intent=intent,
-                    reply=self._with_knowledge(DEFAULT_REPLY, knowledge_context),
-                )
-                decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
-                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
-            if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
-                decision = self._ask_discovery_question(
-                    discovery, conversation, knowledge_context=knowledge_context,
-                    assistant_profile=assistant_profile, tenant=tenant,
+                    reply=self._with_knowledge(
+                        build_conceptual_price_reply() if is_conceptual_price_question(current_message) else DEFAULT_REPLY,
+                        knowledge_context,
+                    ),
                 )
                 decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
@@ -198,9 +257,15 @@ class LiviaDecisionService:
                 discovery=discovery,
                 assistant_profile=assistant_profile,
                 knowledge_context=knowledge_context,
+                activate_collection=True,
             )
         if intent == "contact_data":
-            if self._should_start_lead_from_contact(current_message, has_commercial_interest, has_quote_request):
+            collection = decide_collection(
+                current_message=current_message,
+                conversation=conversation,
+                discovery=discovery,
+            )
+            if collection.should_collect:
                 return self._handle_qualification(
                     intent="contact_data",
                     history=history,
@@ -209,7 +274,22 @@ class LiviaDecisionService:
                     discovery=discovery,
                     assistant_profile=assistant_profile,
                     knowledge_context=knowledge_context,
+                    activate_collection=True,
                 )
+            if has_basic_contact(current_message) and (has_quote_request or has_commercial_interest):
+                # Contact alone during consultative mode keeps conversation going,
+                # but if the visitor already provided contact + commercial context
+                # after an active collection, qualification handles it above.
+                decision = self._handle_consultative_conversation(
+                    intent="commercial_interest",
+                    history=history,
+                    current_message=current_message,
+                    conversation=conversation,
+                    discovery=discovery,
+                    assistant_profile=assistant_profile,
+                    knowledge_context=knowledge_context,
+                )
+                return decision
             decision = LiviaReply(
                 intent=intent,
                 reply=build_contextual_reply(intent="contact_data"),
@@ -220,13 +300,21 @@ class LiviaDecisionService:
             if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
                 decision = self._locked_lead_reply("contact_data")
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
-            if not discovery.should_collect_lead and discovery.should_ask_discovery_question:
-                decision = self._ask_discovery_question(
-                    discovery, conversation, knowledge_context=knowledge_context,
-                    assistant_profile=assistant_profile, tenant=tenant,
+            collection = decide_collection(
+                current_message=current_message,
+                conversation=conversation,
+                discovery=discovery,
+            )
+            if not collection.should_collect:
+                return self._handle_consultative_conversation(
+                    intent="commercial_interest",
+                    history=history,
+                    current_message=current_message,
+                    conversation=conversation,
+                    discovery=discovery,
+                    assistant_profile=assistant_profile,
+                    knowledge_context=knowledge_context,
                 )
-                decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
-                return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             return self._handle_qualification(
                 intent="contact_data",
                 history=history,
@@ -235,6 +323,7 @@ class LiviaDecisionService:
                 discovery=discovery,
                 assistant_profile=assistant_profile,
                 knowledge_context=knowledge_context,
+                activate_collection=True,
             )
         if has_support_request or has_technical_question:
             decision = LiviaReply(
@@ -520,6 +609,44 @@ class LiviaDecisionService:
             return False
         return len(str(last_user.get("content") or "").strip()) <= 18
 
+    def _handle_consultative_conversation(
+        self,
+        *,
+        intent: str,
+        history,
+        current_message: str,
+        conversation,
+        discovery,
+        assistant_profile,
+        knowledge_context: str,
+    ) -> LiviaReply:
+        lead_draft = None
+        if conversation is not None:
+            result = self.lead_capture_service.capture_from_message(
+                conversation=conversation,
+                message=current_message,
+                history=history,
+            )
+            lead_draft = result.lead_draft
+            set_state(conversation, LeadState.DISCOVERY)
+        if is_conceptual_price_question(current_message):
+            reply = build_conceptual_price_reply(lead_draft)
+        elif self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
+            reply = build_consultative_commercial_reply(
+                lead_draft=lead_draft,
+                current_message=current_message,
+                history=history,
+            )
+        else:
+            reply = build_consultative_commercial_reply(
+                lead_draft=lead_draft,
+                current_message=current_message,
+                history=history,
+            )
+        decision = LiviaReply(intent=intent, reply=self._with_knowledge(reply, knowledge_context))
+        decision = self._finalize_handoff(decision, conversation, lead_draft, discovery, current_message)
+        return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+
     def _handle_qualification(
         self,
         *,
@@ -530,6 +657,7 @@ class LiviaDecisionService:
         discovery=None,
         assistant_profile=None,
         knowledge_context: str = "",
+        activate_collection: bool = False,
     ) -> LiviaReply:
         if conversation is None:
             decision = LiviaReply(intent=intent, reply=build_contextual_reply(intent=intent))
@@ -546,6 +674,8 @@ class LiviaDecisionService:
             message=current_message,
             history=history,
         )
+        if activate_collection:
+            mark_collection_active(result.lead_draft)
         reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields, intent=intent, invalid_fields=result.invalid_fields)
         if result.is_qualified:
             reply = build_contextual_reply(intent=intent, missing_fields=[])

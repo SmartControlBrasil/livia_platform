@@ -16,6 +16,7 @@ from assistant_core.conversation_turns import (
 )
 from assistant_core.qualification import (
     extract_contact_snapshot,
+    infer_pending_field_values,
     is_valid_city,
     is_valid_company,
     is_valid_email,
@@ -180,6 +181,21 @@ class QualificationService:
         changed |= self._merge_common(lead, "email", snapshot.email, normalize_email, is_valid_email, invalid_fields)
         changed |= self._merge_common(lead, "phone", snapshot.phone, normalize_phone, is_valid_phone, invalid_fields)
         changed |= self._merge_common(lead, "city", snapshot.city, normalize_city, is_valid_city, invalid_fields)
+
+        pending = self.missing_fields(lead, policy=policy)
+        if pending:
+            inferred = infer_pending_field_values(message, pending[0])
+            validators = {
+                "name": (normalize_name, is_valid_name),
+                "company": (normalize_name, is_valid_company),
+                "email": (normalize_email, is_valid_email),
+                "phone": (normalize_phone, is_valid_phone),
+                "city": (normalize_city, is_valid_city),
+            }
+            for field_name, value in inferred.items():
+                normalizer, validator = validators[field_name]
+                changed |= self._merge_common(lead, field_name, value, normalizer, validator, invalid_fields)
+
         need_summary = self._extract_need_summary(history=history, message=message, existing=lead.need_summary)
         if need_summary:
             changed |= merge_field_value(lead, "need_summary", need_summary[:500], source=FIELD_SOURCE_EXPLICIT)

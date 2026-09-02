@@ -229,7 +229,12 @@ def has_open_commercial_thread(conversation, history, discovery) -> bool:
 
 
 def classify_conversation_turn(*, current_message: str, history, conversation, discovery) -> ConversationTurn:
+    from assistant_core.consultative_policy import is_explicit_collection_trigger
+
     thread = has_prior_commercial_thread(conversation, history)
+    if is_explicit_collection_trigger(current_message):
+        # Explicit budget/hire/human handoff must reach the qualification path.
+        return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=True)
     if is_name_deferred(current_message):
         return ConversationTurn(kind=TurnKind.NAME_DEFERRED, continue_commercial_thread=True)
     question_type = detect_question_type(current_message)

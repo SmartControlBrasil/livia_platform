@@ -86,6 +86,95 @@ def format_conversation_summary_notes(summary: ConversationSummary) -> str:
     return "\n".join(lines)
 
 
+MAX_TRANSCRIPT_CHARS = 14000
+MAX_TRANSCRIPT_TURNS = 80
+INTERNAL_CONTENT_MARKERS = (
+    "correlation_id",
+    "traceback",
+    "api_key",
+    "api-key",
+    "bearer ",
+    "openai",
+    "system prompt",
+    "token:",
+    "access_token",
+    "refresh_token",
+)
+
+
+def build_conversation_transcript(conversation, *, lead_draft=None) -> str:
+    messages = _conversation_messages(conversation)
+    if not messages:
+        return "Sem histórico registrado nesta conversa."
+
+    selected = messages[-MAX_TRANSCRIPT_TURNS:] if len(messages) > MAX_TRANSCRIPT_TURNS else messages
+    omitted = len(messages) - len(selected)
+    lines: list[str] = []
+    total_chars = 0
+    if omitted > 0:
+        lines.append(f"... ({omitted} mensagens anteriores omitidas para legibilidade) ...")
+        lines.append("")
+
+    for message in selected:
+        content = _sanitize_transcript_line(message.content)
+        if not content:
+            continue
+        speaker = "Cliente" if message.role == Message.Role.USER else "Lívia"
+        line = f"{speaker}: {content}"
+        if total_chars + len(line) > MAX_TRANSCRIPT_CHARS:
+            lines.append("... (histórico truncado para caber no e-mail) ...")
+            break
+        lines.append(line)
+        total_chars += len(line)
+    return "\n".join(lines) if lines else "Sem histórico registrado nesta conversa."
+
+
+def build_lead_notification_body(lead_draft, *, timestamp: str = "") -> str:
+    conversation = getattr(lead_draft, "conversation", None)
+    summary = build_conversation_summary(conversation, lead_draft=lead_draft)
+    transcript = build_conversation_transcript(conversation, lead_draft=lead_draft)
+    origin = summary.source_page or "livia-platform"
+    return "\n".join(
+        [
+            "Novo lead qualificado pela Lívia",
+            "",
+            f"Tenant: {summary.tenant_slug or getattr(getattr(lead_draft, 'tenant', None), 'slug', '')}",
+            f"Data/hora: {timestamp or 'não informada'}",
+            f"Origem: {origin}",
+            "",
+            f"Nome: {getattr(lead_draft, 'name', '') or 'Não informado'}",
+            f"Empresa: {getattr(lead_draft, 'company', '') or 'Não informado'}",
+            f"Telefone: {getattr(lead_draft, 'phone', '') or 'Não informado'}",
+            f"E-mail: {getattr(lead_draft, 'email', '') or 'Não informado'}",
+            f"Cidade: {getattr(lead_draft, 'city', '') or 'Não informada'}",
+            "",
+            "Necessidade principal:",
+            summary.need_summary or "Não informada",
+            "",
+            "Resumo executivo:",
+            f"Interesse em {AREA_LABELS.get(summary.service_area, summary.service_area or 'indefinido')}; "
+            f"urgência {summary.urgency}; próximo passo: {summary.recommended_next_step}",
+            "",
+            "Pontos importantes:",
+            *[f"- {note}" for note in (summary.conversation_notes or ("Não identificado.",))],
+            "",
+            "Próxima ação sugerida:",
+            summary.recommended_next_step,
+            "",
+            "Histórico da conversa:",
+            transcript,
+        ]
+    )
+
+
+def _sanitize_transcript_line(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "").strip())
+    lowered = cleaned.lower()
+    if any(marker in lowered for marker in INTERNAL_CONTENT_MARKERS):
+        return ""
+    return cleaned[:1200]
+
+
 def _conversation_messages(conversation):
     if conversation is None:
         return []

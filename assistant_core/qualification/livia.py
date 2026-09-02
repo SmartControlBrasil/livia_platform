@@ -280,6 +280,74 @@ def extract_contact_snapshot(text: str) -> ContactSnapshot:
     )
 
 
+def infer_pending_field_values(message: str, pending_field: str) -> dict[str, str]:
+    """Interpreta resposta curta ao próximo campo pedido (ex.: 'Maria Silva' após pedir nome)."""
+    text = strip_repetition_noise(str(message or "").strip(" .,-"))
+    pending = str(pending_field or "").strip()
+    if not text or not pending or "?" in text or len(text) > 180:
+        return {}
+
+    if pending == "name_or_company":
+        if _extract_email(text) or _extract_phone(text):
+            return {}
+        normalized = normalize_text(text)
+        company_markers = ("empresa", "sou da", "trabalho na", "da empresa")
+        name_candidate = re.sub(
+            r"^(?:meu nome é|meu nome e|me chamo|sou o|sou a|sou|nome)\s+",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        ).strip(" .,-")
+        company_candidate = re.sub(
+            r"^(?:a empresa é|a empresa e|empresa|sou da|trabalho na|da)\s+",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        ).strip(" .,-")
+        if any(marker in normalized for marker in company_markers):
+            if is_valid_company(company_candidate):
+                return {"company": company_candidate}
+            return {}
+        if is_valid_name(name_candidate) and len(name_candidate.split()) <= 4:
+            return {"name": name_candidate}
+        if is_valid_company(company_candidate) and len(company_candidate.split()) <= 6:
+            return {"company": company_candidate}
+        return {}
+
+    if pending == "phone_or_email":
+        email = _extract_email(text)
+        if email and is_valid_email(email):
+            return {"email": email}
+        phone = _extract_phone(text)
+        if phone and is_valid_phone(phone):
+            return {"phone": phone}
+        digits = re.sub(r"\D", "", text)
+        if digits and is_valid_phone(digits):
+            return {"phone": digits}
+        return {}
+
+    if pending in {"name", "company", "email", "phone", "city"}:
+        mapped = {
+            "name": ("name", _extract_name(text) or text),
+            "company": ("company", _extract_company(text) or text),
+            "email": ("email", _extract_email(text)),
+            "phone": ("phone", _extract_phone(text) or re.sub(r"\D", "", text)),
+            "city": ("city", _extract_city(text) or text),
+        }
+        field_name, value = mapped[pending]
+        validators = {
+            "name": is_valid_name,
+            "company": is_valid_company,
+            "email": is_valid_email,
+            "phone": is_valid_phone,
+            "city": is_valid_city,
+        }
+        candidate = str(value or "").strip()
+        if candidate and validators[field_name](candidate):
+            return {field_name: candidate}
+    return {}
+
+
 def has_basic_contact(text: str) -> bool:
     return extract_contact_snapshot(text).has_any_contact()
 

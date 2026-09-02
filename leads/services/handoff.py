@@ -221,6 +221,11 @@ class HandoffService:
 
     def _build_summary(self, conversation, lead_draft, message="") -> str:
         summary = format_conversation_summary_notes(build_conversation_summary(conversation, lead_draft=lead_draft))
+        from assistant_core.summary import build_conversation_transcript
+
+        transcript = build_conversation_transcript(conversation, lead_draft=lead_draft)
+        if transcript:
+            summary = f"{summary}\n\nHistórico da conversa:\n{transcript}"
         current_message = str(message or "").strip()
         if current_message and current_message not in summary:
             summary = f"{summary}\n- Última mensagem: {current_message[:500]}"

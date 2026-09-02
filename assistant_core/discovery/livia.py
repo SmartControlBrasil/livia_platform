@@ -190,21 +190,34 @@ def analyze_message(text: str) -> DiscoveryResult:
         )
 
     if has_quote:
-        should_collect = has_substantive_context and not generic_need
+        from assistant_core.consultative_policy import detect_collection_trigger, is_conceptual_price_question
+        from assistant_core.consultative_policy import CollectionTrigger
+
+        conceptual_price = is_conceptual_price_question(text)
+        informational = conceptual_price or _looks_informational(normalized) or any(
+            marker in normalized for marker in ("prazo", "entrega", "tempo de", "quanto tempo", "demora", "como funciona")
+        )
+        explicit_collect = detect_collection_trigger(text) != CollectionTrigger.NONE
+        should_collect = explicit_collect and not generic_need and not informational
         return _result(
             "quote_request",
             normalized,
             scenario="quote_request",
             confidence=0.9 if should_collect else 0.75,
             should_collect_lead=should_collect,
-            should_ask_discovery_question=not should_collect,
+            should_ask_discovery_question=not should_collect and not informational,
+            should_answer_contextually=informational,
             suggested_next_question=GENERIC_DISCOVERY_QUESTION,
             has_contact_data=has_contact,
             has_quote_request=True,
             has_commercial_interest=True,
             has_technical_question=has_technical,
             has_support_request=has_support,
-            reason="quote_with_context" if should_collect else "quote_needs_discovery",
+            reason=(
+                "quote_explicit_collection"
+                if should_collect
+                else ("quote_informational" if informational else "quote_needs_discovery")
+            ),
         )
 
     if has_technical and not _has_visit_or_budget_marker(normalized):
@@ -235,22 +248,31 @@ def analyze_message(text: str) -> DiscoveryResult:
         )
 
     if has_commercial:
-        informational_question = _looks_informational(normalized)
-        should_collect = has_substantive_context and not informational_question
+        from assistant_core.consultative_policy import detect_collection_trigger, is_conceptual_price_question
+        from assistant_core.consultative_policy import CollectionTrigger
+
+        informational_question = _looks_informational(normalized) or is_conceptual_price_question(text)
+        explicit_collect = detect_collection_trigger(text) != CollectionTrigger.NONE
+        # commercial_interest alone must NOT start name/contact collection.
+        should_collect = explicit_collect and not informational_question
         return _result(
             "commercial_interest",
             normalized,
             scenario="commercial_interest",
             confidence=0.8 if should_collect else 0.68,
             should_collect_lead=should_collect,
-            should_ask_discovery_question=not should_collect,
-            should_answer_contextually=informational_question,
+            should_ask_discovery_question=not should_collect and not informational_question,
+            should_answer_contextually=informational_question or has_substantive_context,
             suggested_next_question=GENERIC_DISCOVERY_QUESTION,
             has_contact_data=has_contact,
             has_commercial_interest=True,
             has_technical_question=has_technical,
             has_support_request=has_support,
-            reason="commercial_with_context" if should_collect else "commercial_needs_discovery",
+            reason=(
+                "commercial_explicit_collection"
+                if should_collect
+                else ("commercial_consultative" if has_substantive_context else "commercial_needs_discovery")
+            ),
         )
 
     if has_contact:

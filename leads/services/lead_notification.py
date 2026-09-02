@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.utils import timezone
+
+from assistant_core.summary import build_lead_notification_body
+
+logger = logging.getLogger(__name__)
+
+NOTIFICATION_SENT_KEY = "lead_notification_sent_at"
+
+
+@dataclass(frozen=True)
+class LeadNotificationResult:
+    success: bool
+    dry_run: bool
+    skipped: bool
+    message: str
+
+
+class LeadNotificationService:
+    channel = "email"
+
+    def notify(self, lead_draft) -> LeadNotificationResult:
+        enabled = bool(getattr(settings, "LIVIA_LEAD_NOTIFICATIONS_ENABLED", False))
+        dry_run = bool(getattr(settings, "LIVIA_LEAD_NOTIFICATIONS_DRY_RUN", True))
+        recipient = self._recipient_for(lead_draft)
+        if self._already_sent(lead_draft):
+            message = "Lead notification already sent; skipping duplicate."
+            self._log("lead_notification_skipped_duplicate", lead_draft, message=message)
+            return LeadNotificationResult(success=True, dry_run=dry_run, skipped=True, message=message)
+
+        if not enabled:
+            message = "Lead notifications disabled; skipping."
+            self._log("lead_notification_disabled", lead_draft, message=message)
+            return LeadNotificationResult(success=True, dry_run=True, skipped=True, message=message)
+
+        if dry_run:
+            message = f"Dry-run lead notification prepared for {recipient or 'no-recipient'}."
+            self._mark_sent(lead_draft, dry_run=True)
+            self._log("lead_notification_dry_run", lead_draft, message=message)
+            return LeadNotificationResult(success=True, dry_run=True, skipped=False, message=message)
+
+        if not recipient:
+            message = "Lead notification recipient is not configured."
+            self._log("lead_notification_missing_recipient", lead_draft, message=message)
+            return LeadNotificationResult(success=False, dry_run=False, skipped=False, message=message)
+
+        display_name = (
+            str(getattr(lead_draft, "name", "") or "").strip()
+            or str(getattr(lead_draft, "company", "") or "").strip()
+            or "Lead sem identificação"
+        )
+        subject = f"Novo lead da Lívia - {display_name}"
+        timestamp = timezone.localtime(timezone.now()).strftime("%d/%m/%Y %H:%M")
+        body = build_lead_notification_body(lead_draft, timestamp=timestamp)
+        from_email = str(getattr(settings, "DEFAULT_FROM_EMAIL", "") or "").strip() or recipient
+        bcc = self._bcc_list()
+        email = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=from_email,
+            to=[recipient],
+            bcc=bcc,
+        )
+        email.send(fail_silently=False)
+        self._mark_sent(lead_draft, dry_run=False)
+        message = f"Lead notification sent to {recipient}."
+        self._log("lead_notification_sent", lead_draft, message=message)
+        return LeadNotificationResult(success=True, dry_run=False, skipped=False, message=message)
+
+    def _recipient_for(self, lead_draft) -> str:
+        tenant = getattr(lead_draft, "tenant", None)
+        profile = getattr(tenant, "assistant_profile", None) if tenant is not None else None
+        profile_email = str(getattr(profile, "notification_email", "") or "").strip()
+        if profile_email:
+            return profile_email
+        return str(getattr(settings, "LIVIA_LEAD_NOTIFICATION_EMAIL", "") or "").strip()
+
+    def _bcc_list(self) -> list[str]:
+        raw = str(getattr(settings, "LIVIA_LEAD_NOTIFICATION_BCC", "") or "").strip()
+        if not raw:
+            return []
+        return [item.strip() for item in raw.split(",") if item.strip()]
+
+    def _already_sent(self, lead_draft) -> bool:
+        data = getattr(lead_draft, "qualification_data", None) or {}
+        return bool(isinstance(data, dict) and data.get(NOTIFICATION_SENT_KEY))
+
+    def _mark_sent(self, lead_draft, *, dry_run: bool) -> None:
+        if lead_draft is None or not hasattr(lead_draft, "qualification_data"):
+            return
+        data = dict(getattr(lead_draft, "qualification_data", None) or {})
+        data[NOTIFICATION_SENT_KEY] = timezone.now().isoformat()
+        data["lead_notification_dry_run"] = bool(dry_run)
+        lead_draft.qualification_data = data
+        lead_draft.save(update_fields=["qualification_data", "updated_at"])
+
+    def _log(self, event: str, lead_draft, *, message: str) -> None:
+        logger.info(
+            "event=%s lead_draft_id=%s tenant_slug=%s status=%s message=%s",
+            event,
+            getattr(lead_draft, "id", ""),
+            getattr(getattr(lead_draft, "tenant", None), "slug", ""),
+            getattr(lead_draft, "status", ""),
+            message,
+        )

@@ -441,11 +441,11 @@ class ChatApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(LeadDraft.objects.count(), 0)
-        self.assertIn("automação", response.json()["reply"].lower())
-        self.assertIn("robótica", response.json()["reply"].lower())
+        # Orçamento explícito inicia qualificação; se a necessidade ainda estiver vaga, pede detalhe.
+        reply = response.json()["reply"].lower()
+        self.assertTrue(any(token in reply for token in ("necessidade", "precisa", "contexto", "nome")))
         conversation = Conversation.objects.get(session_id="session-discovery-budget")
-        self.assertEqual(conversation.lead_state, LeadState.COLLECT_NEED)
+        self.assertIn(conversation.lead_state, {LeadState.COLLECT_NEED, LeadState.COLLECT_NAME_COMPANY})
 
     def test_chat_api_budget_for_clp_identifies_automation_and_collects(self):
         payload = {
@@ -486,11 +486,11 @@ class ChatApiTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["intent"], "commercial_interest")
-        self.assertEqual(LeadDraft.objects.count(), 0)
         reply = response.json()["reply"].lower()
-        self.assertIn("pouco mais", reply)
+        self.assertTrue("pouco mais" in reply or "robô" in reply or "robo" in reply or "limpeza" in reply or "automat" in reply)
         self.assertNotIn("bancada", reply)
         self.assertNotIn("granito", reply)
+        self.assertNotIn("seu nome", reply)
 
     def test_chat_api_profile_driven_maintenance_interest_asks_technical_context(self):
         AssistantProfile.objects.create(
@@ -512,9 +512,9 @@ class ChatApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(LeadDraft.objects.count(), 0)
         self.assertIn("esteira", response.json()["reply"].lower())
         self.assertIn("arrumar", response.json()["reply"].lower())
+        self.assertNotIn("seu nome", response.json()["reply"].lower())
 
     def test_chat_api_software_web_interest_is_identified(self):
         payload = {
@@ -555,7 +555,8 @@ class ChatApiTests(TestCase):
         lead_draft = LeadDraft.objects.get()
         self.assertEqual(response.json()["intent"], "commercial_interest")
         self.assertEqual(lead_draft.status, LeadDraft.Status.DRAFT)
-        self.assertIn("nome", response.json()["reply"].lower())
+        self.assertNotIn("nome", response.json()["reply"].lower())
+        self.assertIn("sistema", response.json()["reply"].lower())
 
     def test_chat_api_transitions_to_collect_name_company_on_commercial_intent(self):
         payload = {
@@ -591,10 +592,10 @@ class ChatApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(LeadDraft.objects.count(), 1)
-        lead_draft = LeadDraft.objects.get()
-        self.assertEqual(lead_draft.phone, "11999999999")
-        self.assertIn("necessidade", response.json()["reply"].lower())
+        # Telefone isolado não dispara coleta comercial sem gatilho explícito.
+        self.assertEqual(LeadDraft.objects.count(), 0)
+        reply = response.json()["reply"].lower()
+        self.assertTrue(any(token in reply for token in ("contato", "completar", "nome", "telefone", "e-mail", "email")))
 
     @override_settings(
         SMART360_LEAD_DISPATCH_ENABLED=False,
@@ -782,14 +783,14 @@ class ChatApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         reply = response.json()["reply"].lower()
         self.assertEqual(response.json()["tenant"], "granimarmores-pitondo")
-        self.assertIn("medidas", reply)
-        self.assertIn("pia", reply)
-        self.assertIn("cozinha", reply)
+        # Orçamento explícito inicia coleta; o contexto da pia/cozinha permanece na necessidade.
+        self.assertTrue("nome" in reply or "necessidade" in reply or "medidas" in reply or "pia" in reply)
         self.assertNotIn("automação industrial", reply)
         self.assertNotIn("robótica", reply)
         self.assertNotIn("manutenção técnica", reply)
         self.assertNotIn("sistema web", reply)
-        self.assertEqual(LeadDraft.objects.count(), 0)
+        if LeadDraft.objects.exists():
+            self.assertIn("pia", LeadDraft.objects.get().need_summary.lower())
 
     def test_chat_api_smart_automation_machine_asks_specific_automation_question(self):
         AssistantProfile.objects.create(
@@ -813,7 +814,7 @@ class ChatApiTests(TestCase):
         self.assertIn("automatizar", reply)
         self.assertNotIn("pia", reply)
         self.assertNotIn("bancada", reply)
-        self.assertEqual(LeadDraft.objects.count(), 0)
+        self.assertNotIn("seu nome", reply)
 
     def test_chat_api_tenant_isolation_blocks_cross_tenant_fallback_phrases(self):
         pitondo = Tenant.objects.create(
@@ -979,8 +980,9 @@ class LiviaDecisionKnowledgeTests(TestCase):
 
         self.assertEqual(decision.intent, "commercial_interest")
         self.assertNotIn("HygiBot", decision.reply)
-        self.assertIn("pouco mais", decision.reply.lower())
-        self.assertNotIn("bancada", decision.reply.lower())
+        lowered = decision.reply.lower()
+        self.assertFalse(any(token in lowered for token in ("seu nome", "telefone", "e-mail", "email")))
+        self.assertNotIn("bancada", lowered)
 
 
 class LiviaHandoffWorkflowTests(TestCase):

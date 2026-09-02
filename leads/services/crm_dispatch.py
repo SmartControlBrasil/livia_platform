@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from django.conf import settings
 from django.utils import timezone
 
-from assistant_core.summary import build_conversation_summary, format_conversation_summary_notes
+from assistant_core.summary import build_lead_notification_body
 from integrations.side_effect_policy import (
     SideEffectType,
     evaluate_side_effect_policy,
@@ -117,9 +117,12 @@ class CRMDispatchService:
         conversation = lead_draft.conversation
         summary_notes = ""
         if conversation is not None:
-            summary_notes = format_conversation_summary_notes(
-                build_conversation_summary(conversation, lead_draft=lead_draft)
-            )
+            from assistant_core.summary import build_conversation_transcript, build_lead_notification_body
+
+            summary_notes = build_lead_notification_body(lead_draft)[:4000]
+            transcript = build_conversation_transcript(conversation, lead_draft=lead_draft)
+            if transcript and "Histórico da conversa:" not in summary_notes:
+                summary_notes = f"{summary_notes}\n\nHistórico da conversa:\n{transcript}"[:4000]
         return LeadIngestPayload(
             tenant_slug=lead_draft.tenant.slug,
             name=lead_draft.name,
