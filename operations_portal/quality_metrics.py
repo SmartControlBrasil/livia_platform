@@ -516,6 +516,8 @@ def build_dialogue_coherence_metrics(*, tenant=None, period: QualityPeriod) -> d
     policy_filtered = 0
     policy_leaks_blocked = 0
     coherence_filtered = 0
+    application_present = 0
+    followup_mismatch = 0
     collection_reasons: dict[str, int] = {}
 
     for payload in payload_rows:
@@ -528,6 +530,8 @@ def build_dialogue_coherence_metrics(*, tenant=None, period: QualityPeriod) -> d
             entity_matches += 1
         if obs.get("domain_match"):
             domain_matches += 1
+        if obs.get("active_application"):
+            application_present += 1
         if obs.get("contextual_query_used") or (
             obs.get("retrieval_query_contextual")
             and obs.get("retrieval_query_original")
@@ -538,9 +542,24 @@ def build_dialogue_coherence_metrics(*, tenant=None, period: QualityPeriod) -> d
         if obs.get("policy_leak_blocked"):
             policy_leaks_blocked += 1
         coherence_filtered += int(obs.get("coherence_filtered_count") or 0)
+        if obs.get("followup_domain") and obs.get("active_domain") and obs.get("followup_domain") != obs.get("active_domain"):
+            followup_mismatch += 1
         reason = str(obs.get("collection_trigger_reason") or "").strip()
         if reason:
             collection_reasons[reason] = collection_reasons.get(reason, 0) + 1
+
+    # Meta-RAG phrases em respostas do período (amostra).
+    meta_rag_count = 0
+    assistant_sample = (
+        _scope_message(Message.objects.filter(role=Message.Role.ASSISTANT), tenant)
+        .filter(created_at__gte=period.start, created_at__lt=period.end)
+        .values_list("content", flat=True)[:1500]
+    )
+    meta_markers = ("há referências a", "ha referencias a", "encontramos informações sobre", "o contexto recuperado indica", "o site cita")
+    for content in assistant_sample:
+        lowered = str(content or "").lower()
+        if any(marker in lowered for marker in meta_markers):
+            meta_rag_count += 1
 
     denom = with_obs or 1
     relevance_rate = _pct(entity_matches + domain_matches, denom * 2) if with_obs else None
@@ -549,18 +568,21 @@ def build_dialogue_coherence_metrics(*, tenant=None, period: QualityPeriod) -> d
         "with_observability": with_obs,
         "entity_match_rate": _pct(entity_matches, with_obs),
         "domain_match_rate": _pct(domain_matches, with_obs),
+        "application_present_rate": _pct(application_present, with_obs),
         "contextual_query_usage": _pct(contextual_queries, with_obs),
         "policy_chunks_filtered": policy_filtered,
         "policy_leaks_blocked": policy_leaks_blocked,
         "policy_leak_rate": 0.0 if policy_leaks_blocked == 0 else _pct(policy_leaks_blocked, with_obs),
         "coherence_filtered_count": coherence_filtered,
+        "followup_mismatch_count": followup_mismatch,
+        "meta_rag_phrase_count": meta_rag_count,
         "relevance_coherence_rate": relevance_rate,
         "collection_trigger_reasons": sorted(
             [{"reason": k, "count": v} for k, v in collection_reasons.items()],
             key=lambda item: item["count"],
             reverse=True,
         )[:8],
-        "status": "green" if policy_leaks_blocked == 0 else "degraded",
+        "status": "green" if policy_leaks_blocked == 0 and meta_rag_count == 0 else "degraded",
         "tone": "success" if policy_leaks_blocked == 0 else "danger",
     }
 

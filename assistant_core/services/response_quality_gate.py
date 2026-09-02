@@ -7,10 +7,11 @@ import re
 from assistant_core.conversation_turns import normalize_text
 from assistant_core.dialogue_memory import DialogueMemory, should_skip_consultative_followup
 from assistant_core.services.deterministic_synthesis import (
-    consultative_followup_for_context,
     is_generic_fallback_reply,
+    strip_meta_rag_phrasing,
     synthesize_deterministic_reply,
 )
+from assistant_core.followup_strategy import select_followup
 from knowledge_base.rag.content_classification import is_policy_leak_text
 
 
@@ -19,16 +20,25 @@ CROSS_DOMAIN_MARKERS = {
         "python",
         "loja virtual",
         "ecommerce",
-        "criancas e jovens",
-        "crianças e jovens",
-        "centro universitario",
-        "experiencias educacionais",
-        "experiências educacionais",
-        "aproximar criancas",
-        "aproximar crianças",
+        "mitsubishi",
+        "clp",
+    ),
+    "automation": (
+        "python",
+        "loja virtual",
+        "ecommerce",
+        "hygibot",
+        "duno",
+        "dune",
+        "limpeza",
+        "escola",
+        "liro",
+        "robotica de servico",
+        "robótica de serviço",
+        "xyron",
     ),
     "materials": ("python", "mitsubishi", "hygibot", "duno", "dune", "loja virtual"),
-    "software_web": ("granito", "bancada", "hygibot", "duno", "limpeza"),
+    "software_web": ("granito", "bancada", "hygibot", "duno", "limpeza", "mitsubishi"),
 }
 
 
@@ -52,15 +62,28 @@ def apply_response_quality_gate(
         "policy_chunk_filtered": False,
         "coherence_filtered_count": 0,
         "followup_strategy": "none",
+        "followup_selected": False,
+        "followup_domain": memory.active_domain or "",
         "policy_leak_blocked": False,
         "regrounded": False,
+        "meta_rag_stripped": False,
+        "answer_shape": "",
+        "active_application": getattr(memory, "active_application", "") or "",
     }
-    text = str(reply or "").strip()
+    text = strip_meta_rag_phrasing(str(reply or "").strip())
+    if text != str(reply or "").strip():
+        diagnostics["meta_rag_stripped"] = True
 
     # A) Policy leak
     if is_policy_leak_text(text):
         diagnostics["policy_leak_blocked"] = True
-        regenerated = synthesize_deterministic_reply(knowledge_context, base_reply="")
+        regenerated = synthesize_deterministic_reply(
+            knowledge_context,
+            base_reply="",
+            current_message=current_message,
+            active_domain=memory.active_domain,
+            active_application=getattr(memory, "active_application", "") or "",
+        )
         if regenerated and not is_policy_leak_text(regenerated):
             text = regenerated
             diagnostics["regrounded"] = True
@@ -68,7 +91,9 @@ def apply_response_quality_gate(
             text = _safe_entity_fallback(memory, current_message)
 
     # B/D) Cross-domain noise
-    cleaned, removed = _strip_incompatible_sentences(text, memory.active_domain, memory.active_topic)
+    cleaned, removed = _strip_incompatible_sentences(
+        text, memory.active_domain, memory.active_topic, getattr(memory, "active_application", "") or ""
+    )
     diagnostics["coherence_filtered_count"] = removed
     text = cleaned or text
 
@@ -78,7 +103,13 @@ def apply_response_quality_gate(
         diagnostics["regrounded"] = False
     elif memory.active_entity and memory.active_entity.lower() not in normalize_text(text):
         if detect_entity_in_message(current_message) or "fale sobre" in normalize_text(current_message):
-            regenerated = synthesize_deterministic_reply(knowledge_context, base_reply="")
+            regenerated = synthesize_deterministic_reply(
+                knowledge_context,
+                base_reply="",
+                current_message=current_message,
+                active_domain=memory.active_domain,
+                active_application=getattr(memory, "active_application", "") or "",
+            )
             if regenerated and not is_policy_leak_text(regenerated):
                 if memory.active_entity.lower() in normalize_text(regenerated) or _looks_like_cleaning_robot(regenerated):
                     text = regenerated
@@ -86,29 +117,38 @@ def apply_response_quality_gate(
 
     # E) Fallback despite evidence
     if is_generic_fallback_reply(text) and knowledge_context.strip():
-        regenerated = synthesize_deterministic_reply(knowledge_context, base_reply="")
+        regenerated = synthesize_deterministic_reply(
+            knowledge_context,
+            base_reply="",
+            current_message=current_message,
+            active_domain=memory.active_domain,
+            active_application=getattr(memory, "active_application", "") or "",
+        )
         if regenerated and not is_policy_leak_text(regenerated):
             text = regenerated
             diagnostics["regrounded"] = True
 
-    # Follow-up strategy
-    skip = should_skip_consultative_followup(current_message=current_message, memory=memory)
-    if append_followup is False or skip:
+    text = strip_meta_rag_phrasing(text)
+
+    # Follow-up strategy centralizada
+    if append_followup is False or should_skip_consultative_followup(current_message=current_message, memory=memory):
         diagnostics["followup_strategy"] = "skipped_direct_ask"
-        text = _strip_known_bad_followups(text)
+        text = _strip_known_bad_followups(text, active_domain=memory.active_domain)
     elif append_followup is True:
-        follow = consultative_followup_for_context(
-            " ".join([current_message, memory.active_topic, memory.active_domain, memory.active_entity, need_summary])
+        follow, follow_diag = select_followup(
+            memory=memory,
+            current_message=current_message,
+            need_summary=need_summary,
+            answer_text=text,
+            force=True,
         )
-        if follow and follow.lower() not in text.lower():
-            # Nunca anexar follow-up de ecommerce em robotics.
-            if memory.active_domain == "robotics" and "catálogo" in follow.lower():
-                diagnostics["followup_strategy"] = "blocked_cross_domain_followup"
-            else:
-                text = f"{text} {follow}".strip()
-                diagnostics["followup_strategy"] = "domain_followup"
+        diagnostics.update(follow_diag)
+        if follow:
+            text = f"{text} {follow}".strip()
+        else:
+            text = _strip_known_bad_followups(text, active_domain=memory.active_domain)
     else:
-        # Default: se já veio follow-up ruim, remove.
+        # Default: sanitiza follow-ups incompatíveis já presentes; não inventa pergunta nova.
         text = _strip_known_bad_followups(text, active_domain=memory.active_domain)
         diagnostics["followup_strategy"] = "sanitize_existing"
 
@@ -116,7 +156,7 @@ def apply_response_quality_gate(
         diagnostics["policy_leak_blocked"] = True
         text = _safe_entity_fallback(memory, current_message)
 
-    return text.strip(), diagnostics
+    return strip_meta_rag_phrasing(text).strip(), diagnostics
 
 
 def detect_entity_in_message(message: str) -> bool:
@@ -162,11 +202,16 @@ def _safe_entity_fallback(memory: DialogueMemory, current_message: str) -> str:
     )
 
 
-def _strip_incompatible_sentences(text: str, active_domain: str, active_topic: str = "") -> tuple[str, int]:
+def _strip_incompatible_sentences(
+    text: str,
+    active_domain: str,
+    active_topic: str = "",
+    active_application: str = "",
+) -> tuple[str, int]:
     if not text:
         return "", 0
     markers = list(CROSS_DOMAIN_MARKERS.get(active_domain or "", ()))
-    if active_topic == "cleaning_robot" or active_domain == "robotics":
+    if active_topic == "cleaning_robot" or active_application == "cleaning_robotics":
         markers.extend(
             (
                 "criancas e jovens",
@@ -177,8 +222,13 @@ def _strip_incompatible_sentences(text: str, active_domain: str, active_topic: s
                 "robo educacional",
                 "little bot",
                 "liro",
+                "mitsubishi",
             )
         )
+    if active_topic == "educational_robot" or active_application == "educational_robotics":
+        markers.extend(("limpeza", "duno", "dune", "hygibot", "mitsubishi", "piso"))
+    if active_domain == "automation" or active_application == "industrial_automation":
+        markers.extend(("robotica de servico", "robótica de serviço", "limpeza", "escola", "xyron"))
     if not markers:
         return text, 0
     kept: list[str] = []
@@ -218,5 +268,16 @@ def _strip_known_bad_followups(text: str, *, active_domain: str = "") -> str:
             " ",
             cleaned,
             flags=re.IGNORECASE,
+        )
+    if active_domain == "automation":
+        cleaned = re.sub(
+            r"(?i)\s*Trabalhamos com rob[oó]tica de servi[cç]o[^.]*\.\s*",
+            " ",
+            cleaned,
+        )
+        cleaned = re.sub(
+            r"(?i)\s*Se quiser, me conta o ambiente e o objetivo principal[^.]*\.\s*",
+            " ",
+            cleaned,
         )
     return re.sub(r"\s{2,}", " ", cleaned).strip()

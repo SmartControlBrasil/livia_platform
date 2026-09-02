@@ -660,40 +660,31 @@ class LiviaDecisionService:
         lead_draft,
         current_message: str,
     ) -> str:
-        """Follow-up curto após grounding RAG, sem hardcode de vertical alheia."""
-        domain = normalize_text(
-            " ".join(
-                [
-                    str(getattr(assistant_profile, "business_domain", "") or ""),
-                    str(getattr(assistant_profile, "short_description", "") or ""),
-                    str(getattr(assistant_profile, "business_name", "") or ""),
-                    str(knowledge_context or "")[:400],
-                ]
-            )
+        """Grounding RAG + follow-up curto por domínio/aplicação (sem misturar verticais)."""
+        from assistant_core.dialogue_memory import load_dialogue_memory
+        from assistant_core.followup_strategy import select_followup
+        from assistant_core.services.deterministic_synthesis import synthesize_deterministic_reply
+
+        conversation = getattr(lead_draft, "conversation", None) if lead_draft is not None else None
+        memory = load_dialogue_memory(conversation, lead_draft)
+        grounded = synthesize_deterministic_reply(
+            knowledge_context,
+            base_reply="",
+            current_message=current_message,
+            active_domain=memory.active_domain,
+            active_application=getattr(memory, "active_application", "") or "",
         )
-        stone = any(
-            marker in domain
-            for marker in (
-                "marmor", "pedra", "granito", "marmore", "bancada", "cozinha",
-                "banheiro", "escada", "gourmet", "pitondo", "quartzito",
+        if grounded and not is_generic_fallback_reply(grounded):
+            follow, _ = select_followup(
+                memory=memory,
+                current_message=current_message,
+                need_summary=str(getattr(lead_draft, "need_summary", "") or ""),
+                answer_text=grounded,
+                force=False,
             )
-        )
-        robotics = any(
-            marker in domain
-            for marker in (
-                "robot", "xyron", "mitsubishi", "automacao", "automação", "clp", "ihm",
-            )
-        )
-        if stone and not robotics:
-            return (
-                "Posso te orientar com base no material aprovado sobre pedras e projetos sob medida. "
-                "Qual detalhe é mais importante agora: material, medidas ou acabamento?"
-            )
-        if robotics:
-            return (
-                "Trabalhamos com robótica de serviço e outras soluções documentadas. "
-                "Se quiser, me conta o ambiente e o objetivo principal para eu afinar a orientação."
-            )
+            if follow and follow.lower() not in grounded.lower():
+                return f"{grounded} {follow}".strip()
+            return grounded
         return build_consultative_commercial_reply(
             lead_draft=lead_draft,
             current_message=current_message,

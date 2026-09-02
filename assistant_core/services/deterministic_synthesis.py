@@ -105,62 +105,160 @@ def synthesize_deterministic_reply(
     base_reply: str = "",
     max_sentences: int = 2,
     max_chars: int = 420,
+    current_message: str = "",
+    active_domain: str = "",
+    active_application: str = "",
 ) -> str:
+    shape = detect_answer_shape(current_message)
     hints = _extract_safe_bits(knowledge_context)
+    hints = _select_primary_bits(
+        hints,
+        current_message=current_message,
+        active_domain=active_domain,
+        active_application=active_application,
+    )
     synthesized = _sentences_from_bits(hints, max_sentences=max_sentences, max_chars=max_chars)
-    synthesized = _strip_site_meta_phrasing(synthesized)
+    synthesized = strip_meta_rag_phrasing(synthesized)
+    synthesized = _apply_answer_shape(synthesized, shape=shape, current_message=current_message, active_application=active_application)
     base = str(base_reply or "").strip()
     if not synthesized:
-        return base
+        return strip_meta_rag_phrasing(base)
     if not base or is_generic_fallback_reply(base):
         return synthesized
     # Preço conceitual / policy comercial: resposta de preço prevalece (não inventar ficha + preço).
     base_n = normalize_text(base)
     if any(token in base_n for token in ("investimento varia", "valor fechado", "nao tenho um valor", "não tenho um valor")):
-        return base
+        return strip_meta_rag_phrasing(base)
     if normalize_text(synthesized) in normalize_text(base):
-        return base
-    return f"{synthesized}\n\n{base}"
+        return strip_meta_rag_phrasing(base)
+    return strip_meta_rag_phrasing(f"{synthesized}\n\n{base}")
+
+
+def detect_answer_shape(message: str) -> str:
+    normalized = normalize_text(message)
+    if not normalized:
+        return "GENERAL"
+    if any(token in normalized for token in ("quanto custa", "qual o preco", "qual o preço", "qual valor")):
+        return "PRICE"
+    if any(token in normalized for token in ("melhor", "recomenda", "indic", "suger")):
+        return "RECOMMENDATION"
+    if any(token in normalized for token in ("como funciona", "como e o processo", "como é o processo")):
+        return "PROCESS"
+    if any(token in normalized for token in ("trabalham com", "voces fazem", "vocês fazem", "voces tem", "vocês têm")):
+        return "CAPABILITY"
+    if any(token in normalized for token in ("o que e", "o que é", "fale sobre", "me fale", "me fala")):
+        return "WHAT_IS"
+    return "GENERAL"
+
+
+def strip_meta_rag_phrasing(text: str) -> str:
+    cleaned = str(text or "")
+    patterns = (
+        r"(?i)\bO site cita\b",
+        r"(?i)\bO site informa\b",
+        r"(?i)\bO site orienta que\b",
+        r"(?i)\bO site descreve\b",
+        r"(?i)\bHá referências a\b",
+        r"(?i)\bHa referencias a\b",
+        r"(?i)\bEncontramos informações sobre\b",
+        r"(?i)\bEncontramos informacoes sobre\b",
+        r"(?i)\bO contexto recuperado indica\b",
+        r"(?i)\bFonte: página oficial[^.]*\.\s*",
+        r"(?i)\bFonte: pagina oficial[^.]*\.\s*",
+    )
+    for pattern in patterns:
+        cleaned = re.sub(pattern, "", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,;:-")
+    if cleaned and cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned
 
 
 def _strip_site_meta_phrasing(text: str) -> str:
-    cleaned = str(text or "")
-    replacements = (
-        (r"(?i)\bO site cita\b", "Há referências a"),
-        (r"(?i)\bO site informa\b", "Em geral,"),
-        (r"(?i)\bO site orienta que\b", ""),
-        (r"(?i)\bO site descreve\b", ""),
-        (r"(?i)\bFonte: página oficial[^.]*\.\s*", ""),
-    )
-    for pattern, repl in replacements:
-        cleaned = re.sub(pattern, repl, cleaned)
-    return re.sub(r"\s{2,}", " ", cleaned).strip()
+    return strip_meta_rag_phrasing(text)
+
+
+def _select_primary_bits(
+    hints: list[str],
+    *,
+    current_message: str = "",
+    active_domain: str = "",
+    active_application: str = "",
+) -> list[str]:
+    if not hints:
+        return []
+    msg_n = normalize_text(current_message)
+    app = normalize_text(active_application)
+    domain = normalize_text(active_domain)
+    scored: list[tuple[int, str]] = []
+    for hint in hints:
+        hint_n = normalize_text(hint)
+        weight = 0
+        if domain == "automation" and any(token in hint_n for token in ("mitsubishi", "clp", "automacao")):
+            weight += 3
+        if domain == "automation" and any(token in hint_n for token in ("xyron", "limpeza", "escola", "duno")):
+            weight -= 4
+        if app in {"kitchen_countertop", "cooktop_countertop"}:
+            if any(token in hint_n for token in ("cozinha", "cooktop", "bancada", "material", "granito", "marmore", "melhor")):
+                weight += 3
+            if "gourmet" in hint_n and "cozinha" not in hint_n:
+                weight -= 3
+        if app == "educational_robotics" or "escola" in msg_n:
+            if any(token in hint_n for token in ("liro", "educacional", "escola")):
+                weight += 3
+            if any(token in hint_n for token in ("limpeza", "duno", "mitsubishi")):
+                weight -= 3
+        # lexical overlap
+        overlap = sum(1 for token in msg_n.split() if len(token) > 3 and token in hint_n)
+        weight += min(overlap, 3)
+        scored.append((weight, hint))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    primary = [hint for weight, hint in scored if weight >= 0][:2]
+    return primary or [scored[0][1]]
+
+
+def _apply_answer_shape(
+    synthesized: str,
+    *,
+    shape: str,
+    current_message: str = "",
+    active_application: str = "",
+) -> str:
+    text = str(synthesized or "").strip()
+    if not text:
+        return text
+    if shape == "RECOMMENDATION":
+        app = normalize_text(active_application)
+        if app in {"kitchen_countertop", "cooktop_countertop", "gourmet_countertop", "bathroom_countertop"}:
+            if not any(token in normalize_text(text) for token in ("depende", "compar", "nao existe melhor", "não existe melhor")):
+                prefix = (
+                    "Não existe um material universalmente melhor: a escolha depende da aplicação e do uso. "
+                )
+                if prefix.lower() not in text.lower():
+                    text = f"{prefix}{text}"
+        elif not app and is_ambiguous_material_question(current_message):
+            return "Você está comparando quais opções, ou para qual aplicação (cozinha, banheiro, gourmet)?"
+    return text
+
+
+def is_ambiguous_material_question(message: str) -> bool:
+    from assistant_core.dialogue_memory import is_material_recommendation_question
+
+    return is_material_recommendation_question(message)
 
 
 def consultative_followup_for_context(need_or_message: str) -> str:
-    normalized = normalize_text(need_or_message)
-    # Domínios específicos ANTES de heurísticas genéricas de "produto/site".
-    # Escada antes de bancada/cozinha para não herdar follow-up sticky.
-    if any(token in normalized for token in ("escada", "escadas")):
-        return "Você já tem medidas, fotos ou planta da escada?"
-    if any(token in normalized for token in ("gourmet", "churrasqueira")):
-        return "A área gourmet já tem projeto ou medidas aproximadas?"
-    if any(token in normalized for token in ("cozinha", "bancada", "cooktop", "pia", "ilha", "granito", "marmore", "mármore")):
-        return "Você já tem medidas aproximadas ou fotos da bancada?"
-    if any(token in normalized for token in ("banheiro", "nicho", "lavabo", "cuba")):
-        return "O projeto já inclui bancada, cuba e nicho, ou só parte disso?"
-    if any(token in normalized for token in ("duno", "dune", "hygibot", "limpeza", "lavar", "varrer", "aspirar")):
-        return "Qual é o ambiente e o tipo de piso onde a limpeza acontece?"
-    if any(token in normalized for token in ("escola", "educac", "professor")) and "limpeza" not in normalized:
-        return "O foco é robótica educacional, demonstração ou outro objetivo na escola?"
-    if any(token in normalized for token in ("automacao", "automação", "clp", "mitsubishi", "robo", "robô", "robotica", "robótica", "xyron")):
-        return "Qual ambiente e objetivo você quer cobrir primeiro?"
-    # E-commerce só com sinais claros de loja/site — nunca só "produto".
-    if any(token in normalized for token in ("loja virtual", "ecommerce", "e-commerce", "loja online")):
-        return "Você pretende começar com poucos produtos ou já tem um catálogo maior?"
-    if any(token in normalized for token in ("site institucional", "landing page", "pagina web", "página web")) or re.search(r"\bsite\b", normalized):
-        return "O foco é divulgação, captura de contatos ou outro objetivo do site?"
-    return "Qual detalhe é mais importante agora para eu te orientar melhor?"
+    """Compat: delega para a estratégia centralizada."""
+    from assistant_core.dialogue_memory import DialogueMemory, infer_application, infer_domain, infer_topic
+    from assistant_core.followup_strategy import select_followup
+
+    memory = DialogueMemory(
+        active_domain=infer_domain(need_or_message),
+        active_topic=infer_topic(need_or_message),
+        active_application=infer_application(need_or_message),
+    )
+    follow, _ = select_followup(memory=memory, current_message=need_or_message, force=True)
+    return follow
 
 
 def prefer_contextual_reply_over_fallback(
