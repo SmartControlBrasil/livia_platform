@@ -669,6 +669,10 @@ class LiviaDecisionService:
             )
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
 
+        if activate_collection:
+            lead_seed = self.lead_capture_service.get_or_create_lead_draft(conversation)
+            mark_collection_active(lead_seed)
+
         result = self.lead_capture_service.capture_from_message(
             conversation=conversation,
             message=current_message,

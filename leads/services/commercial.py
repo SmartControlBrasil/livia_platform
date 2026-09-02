@@ -14,6 +14,7 @@ from assistant_core.conversation_turns import (
     mark_name_deferred,
     merge_need_summaries,
 )
+from assistant_core.consultative_policy import COLLECTION_ACTIVE_KEY
 from assistant_core.qualification import (
     extract_contact_snapshot,
     infer_pending_field_values,
@@ -183,7 +184,8 @@ class QualificationService:
         changed |= self._merge_common(lead, "city", snapshot.city, normalize_city, is_valid_city, invalid_fields)
 
         pending = self.missing_fields(lead, policy=policy)
-        if pending:
+        collection_active = bool((lead.qualification_data or {}).get(COLLECTION_ACTIVE_KEY))
+        if pending and collection_active:
             inferred = infer_pending_field_values(message, pending[0])
             validators = {
                 "name": (normalize_name, is_valid_name),

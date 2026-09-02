@@ -37,3 +37,15 @@ class ConsultativePolicyTests(SimpleTestCase):
         discovery = analyze_message("quanto custa uma loja virtual?")
         self.assertFalse(discovery.should_collect_lead)
         self.assertTrue(discovery.should_answer_contextually)
+
+    def test_pending_inference_rejects_consultative_phrases(self):
+        from assistant_core.qualification import infer_pending_field_values
+
+        self.assertEqual(infer_pending_field_values("eu vendo produtos para serralheria", "name_or_company"), {})
+        self.assertEqual(infer_pending_field_values("quero um orçamento para essa loja", "name_or_company"), {})
+        self.assertEqual(infer_pending_field_values("Maria Silva", "name_or_company"), {"name": "Maria Silva"})
+        self.assertEqual(infer_pending_field_values("Ferragens Silva", "name_or_company"), {"name": "Ferragens Silva"})
+        self.assertEqual(
+            infer_pending_field_values("empresa Ferragens Silva", "name_or_company"),
+            {"company": "Ferragens Silva"},
+        )

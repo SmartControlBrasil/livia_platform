@@ -75,6 +75,18 @@ INVALID_COMPANY_OR_CITY_SNIPPETS = (
     "todo o brasil",
     "brasil todo",
     "nacional",
+    "orcamento",
+    "orçamento",
+    "proposta",
+    "cotacao",
+    "cotação",
+    "loja virtual",
+    "preciso",
+    "gostaria",
+    "vendo",
+    "trabalho",
+    "quanto tempo",
+    "quanto custa",
 )
 
 INVALID_CITY_VALUES = {
@@ -92,12 +104,12 @@ INVALID_CITY_VALUES = {
 }
 
 REPETITION_NOISE_PATTERNS = (
-    r"ja falei",
-    r"já falei",
-    r"como falei",
-    r"eu ja falei",
-    r"eu já falei",
-    r"conforme falei",
+    r"\bja falei\b",
+    r"\bjá falei\b",
+    r"\bcomo falei\b",
+    r"\beu ja falei\b",
+    r"\beu já falei\b",
+    r"\bconforme falei\b",
 )
 
 GENERIC_NEED_PHRASES = {
@@ -284,14 +296,38 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
     """Interpreta resposta curta ao próximo campo pedido (ex.: 'Maria Silva' após pedir nome)."""
     text = strip_repetition_noise(str(message or "").strip(" .,-"))
     pending = str(pending_field or "").strip()
-    if not text or not pending or "?" in text or len(text) > 180:
+    if not text or not pending or "?" in text or len(text) > 80:
         return {}
 
+    normalized = normalize_text(text)
+    reject_markers = (
+        "preciso",
+        "quero",
+        "gostaria",
+        "orcamento",
+        "orçamento",
+        "proposta",
+        "cotacao",
+        "cotação",
+        "quanto",
+        "vendo",
+        "trabalho",
+        "site",
+        "loja",
+        "automat",
+        "integr",
+        "prazo",
+        "tempo",
+        "custa",
+        "valor",
+    )
     if pending == "name_or_company":
         if _extract_email(text) or _extract_phone(text):
             return {}
-        normalized = normalize_text(text)
         company_markers = ("empresa", "sou da", "trabalho na", "da empresa")
+        has_company_marker = any(marker in normalized for marker in company_markers)
+        if not has_company_marker and any(marker in normalized for marker in reject_markers):
+            return {}
         name_candidate = re.sub(
             r"^(?:meu nome é|meu nome e|me chamo|sou o|sou a|sou|nome)\s+",
             "",
@@ -304,13 +340,18 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
             text,
             flags=re.IGNORECASE,
         ).strip(" .,-")
-        if any(marker in normalized for marker in company_markers):
-            if is_valid_company(company_candidate):
+        if has_company_marker:
+            if is_valid_company(company_candidate) and len(company_candidate.split()) <= 6:
                 return {"company": company_candidate}
             return {}
-        if is_valid_name(name_candidate) and len(name_candidate.split()) <= 4:
+        if is_valid_name(name_candidate) and 1 <= len(name_candidate.split()) <= 4:
             return {"name": name_candidate}
-        if is_valid_company(company_candidate) and len(company_candidate.split()) <= 6:
+        # Resposta nua curta sem marcadores comerciais: pode ser empresa (ex.: "Ferragens Silva").
+        if (
+            is_valid_company(company_candidate)
+            and 1 <= len(company_candidate.split()) <= 4
+            and not any(marker in normalize_text(company_candidate) for marker in reject_markers)
+        ):
             return {"company": company_candidate}
         return {}
 
@@ -343,6 +384,8 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
             "city": is_valid_city,
         }
         candidate = str(value or "").strip()
+        if field_name in {"name", "company"} and any(marker in normalize_text(candidate) for marker in reject_markers):
+            return {}
         if candidate and validators[field_name](candidate):
             return {field_name: candidate}
     return {}
@@ -398,7 +441,7 @@ def _extract_company(text: str) -> str:
     match = re.search(r"(?:empresa|companhia)\s*(?:é|e|:)?\s+([^,;]+)", text, re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    match = re.search(r"(?:da|de|do)\s+([A-ZÀ-Ý0-9][A-Za-zÀ-ÿ0-9 .&'-]{1,80})", text)
+    match = re.search(r"\b(?:da|de|do)\s+([A-ZÀ-Ý0-9][A-Za-zÀ-ÿ0-9 .&'-]{1,80})", text)
     return match.group(1).strip() if match else ""
 
 
