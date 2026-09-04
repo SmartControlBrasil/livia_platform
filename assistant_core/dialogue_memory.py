@@ -80,6 +80,7 @@ TOPIC_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("quote_process", ("medicao", "medição", "medida", "fotos", "planta", "orcamento", "orçamento")),
     ("educational_robot", ("escola", "educacional", "professor", "aluno", "liro", "bncc")),
     ("cleaning_robot", ("limpeza", "duno", "dune", "hygibot")),
+    ("security_robot", ("seguranca", "segurança", "patrulha", "orbit", "patrol", "vigilancia", "vigilância")),
     ("websites", ("site", "website", "loja virtual", "ecommerce", "django", "python")),
     ("robot_lineup", ("quais robos", "quais robôs", "quais modelos", "que robos", "que robôs", "linha xyron")),
     ("industrial_automation", ("mitsubishi", "clp", "ihm", "automacao", "automação")),
@@ -96,6 +97,7 @@ APPLICATION_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("quote_process", ("medicao", "medição", "medida", "fotos", "planta")),
     ("educational_robotics", ("escola", "educacional", "professor", "aluno", "bncc")),
     ("cleaning_robotics", ("limpeza", "duno", "dune", "hygibot")),
+    ("security_robotics", ("seguranca", "segurança", "patrulha", "orbit", "patrol", "vigilancia", "vigilância", "monitoramento")),
     ("industrial_automation", ("mitsubishi", "clp", "ihm")),
     ("websites", ("site", "website", "loja virtual", "django", "python")),
 )
@@ -370,6 +372,9 @@ def update_dialogue_memory_from_turn(
     )
     context_blob = " ".join([memory.active_need, need_summary, history_blob, message]).strip()
 
+    query_topic = infer_topic(message) or infer_topic(context_blob) or memory.active_topic
+    query_application = infer_application(message) or infer_application(context_blob) or memory.active_application
+
     if tenant is not None:
         try:
             from knowledge_base.rag.entity_catalog import resolve_knowledge_entity
@@ -378,6 +383,8 @@ def update_dialogue_memory_from_turn(
                 tenant=tenant,
                 message=message,
                 active_subject=memory.active_knowledge_subject or None,
+                active_application=query_application,
+                active_topic=query_topic,
             )
         except Exception:
             resolution = None
@@ -497,6 +504,7 @@ def _application_from_topic(topic: str) -> str:
         "quote_process": "quote_process",
         "educational_robot": "educational_robotics",
         "cleaning_robot": "cleaning_robotics",
+        "security_robot": "security_robotics",
         "websites": "websites",
         "industrial_automation": "industrial_automation",
     }.get(str(topic or ""), "")

@@ -309,6 +309,7 @@ def _dedupe_and_limit(
     requested_robotics_family = infer_robotics_family(text=query_n, application=application)
     wants_cleaning = requested_robotics_family == "cleaning" or application == "cleaning_robotics"
     wants_educational = requested_robotics_family == "educational" or application == "educational_robotics"
+    wants_security = requested_robotics_family == "security" or application == "security_robotics"
     wants_stairs = "escada" in query_n or application == "stairs"
     wants_gourmet = "gourmet" in query_n or application == "gourmet_countertop"
     wants_kitchen = application in {"kitchen_countertop", "cooktop_countertop"} or any(
@@ -321,7 +322,16 @@ def _dedupe_and_limit(
     wants_lineup = any(token in query_n for token in ("quais robos", "quais robôs", "quais modelos", "linha xyron"))
     wants_automation = active_domain == "automation" or any(token in query_n for token in ("mitsubishi", "clp", "ihm", "automacao"))
     subject_doc_ids = {int(item) for item in (active_subject or {}).get("source_document_ids", []) if str(item).isdigit() or isinstance(item, int)}
+    primary_subject_doc = next(iter((active_subject or {}).get("source_document_ids") or []), None)
+    if primary_subject_doc is not None:
+        try:
+            primary_subject_doc = int(primary_subject_doc)
+        except (TypeError, ValueError):
+            primary_subject_doc = None
     comparative = _is_comparative_query(query_n)
+    subject_confidence = float((active_subject or {}).get("confidence") or 0.0)
+    subject_method = str((active_subject or {}).get("match_method") or "")
+    strong_subject_lock = subject_confidence >= 0.75 and subject_method in {"exact", "lexical", "application_family"}
     has_subject_candidate = bool(subject_doc_ids) and any(embedding.manifest_id in subject_doc_ids for embedding, _score, _b in boosted)
 
     for embedding, score, _ in boosted:
@@ -340,11 +350,43 @@ def _dedupe_and_limit(
         is_gourmet_doc = "gourmet" in blob_n and "perguntas frequentes" not in blob_n
         is_kitchen_doc = any(token in blob_n for token in ("cozinha", "cooktop", "bancada de cozinha", "perguntas frequentes", "materiais", "melhor pedra"))
         is_materials_faq = any(token in blob_n for token in ("perguntas frequentes", "melhor pedra", "marmores, granitos e materiais", "materiais"))
+        doc_meta = dict(getattr(manifest, "document_metadata", None) or {})
+        from knowledge_base.rag.entity_catalog import document_specificity_score
+
+        doc_specificity = document_specificity_score(
+            document_metadata=doc_meta,
+            file_name=source_name,
+            text=text,
+        )
+        doc_scope = str(doc_meta.get("document_scope") or "")
         if subject_doc_ids and chunk is not None:
             if chunk.manifest_id in subject_doc_ids:
                 adjusted += 0.75
-            elif has_subject_candidate and not comparative:
+            elif has_subject_candidate and not comparative and strong_subject_lock:
                 adjusted -= 0.45
+            elif has_subject_candidate and not comparative:
+                adjusted -= 0.15
+        if doc_scope == "catalog_overview" and not wants_lineup:
+            adjusted -= 0.45
+        elif doc_scope == "product_dedicated" and not wants_lineup:
+            adjusted += doc_specificity * 0.25
+        elif doc_specificity >= 0.9:
+            adjusted += 0.12
+        if primary_subject_doc and chunk.manifest_id == primary_subject_doc:
+            adjusted += 0.55
+        elif (
+            primary_subject_doc
+            and primary_subject_doc in subject_doc_ids
+            and chunk.manifest_id != primary_subject_doc
+            and doc_scope == "catalog_overview"
+        ):
+            adjusted -= 0.50
+        elif (
+            primary_subject_doc
+            and primary_subject_doc in subject_doc_ids
+            and chunk.manifest_id != primary_subject_doc
+        ):
+            adjusted -= 0.30
         if entity_n and entity_n in blob:
             adjusted += 0.35
         if entity_n == "duno" and any(token in blob for token in ("dune", "hygibot", "limpeza")):
@@ -365,11 +407,33 @@ def _dedupe_and_limit(
                 adjusted += 0.45
             if any(token in blob_n for token in ("liro", "littlebot", "little bot", "educacional", "criancas", "crianças", "escola")):
                 adjusted -= 0.5
-        if wants_educational and not wants_cleaning:
+            if any(token in blob_n for token in ("patrulha", "vigilancia", "vigilância", "seguranca", "segurança", "monitoramento")) and not any(
+                token in blob_n for token in ("limpeza", "lavar", "varrer", "aspirar", "hygibot", "dune", "duno")
+            ):
+                adjusted -= 0.55
+            if any(token in blob_n for token in ("recepcao", "recepção", "atendimento", "visitantes", "hall", "neobot")) and not any(
+                token in blob_n for token in ("limpeza", "lavar", "varrer", "aspirar", "hygibot", "dune", "duno")
+            ):
+                adjusted -= 0.55
+            chunk_family = infer_robotics_family(text=blob_n[:400])
+            if chunk_family in {"educational", "security", "service"}:
+                adjusted -= 0.4
+        if wants_educational and not wants_cleaning and not wants_security:
             if any(token in blob_n for token in ("liro", "littlebot", "little bot", "educacional", "escola")):
                 adjusted += 0.4
-            if any(token in blob_n for token in ("limpeza", "duno", "dune", "hygibot", "lavar", "varrer")):
+            if any(token in blob_n for token in ("limpeza", "duno", "dune", "hygibot", "lavar", "varrer", "orbit", "patrol")):
                 adjusted -= 0.45
+            chunk_family = infer_robotics_family(text=blob_n[:400])
+            if chunk_family in {"cleaning", "security"}:
+                adjusted -= 0.4
+        if wants_security and not wants_cleaning and not wants_educational:
+            if any(token in blob_n for token in ("orbit", "patrol", "patrulha", "seguranca", "segurança", "monitoramento")):
+                adjusted += 0.4
+            if any(token in blob_n for token in ("liro", "limpeza", "hygibot", "duno", "dune", "educacional", "escola")):
+                adjusted -= 0.45
+            chunk_family = infer_robotics_family(text=blob_n[:400])
+            if chunk_family in {"cleaning", "educational"}:
+                adjusted -= 0.4
         if wants_automation:
             if any(token in blob_n for token in ("mitsubishi", "clp", "ihm", "automacao", "automação")):
                 adjusted += 0.45
@@ -413,7 +477,17 @@ def _dedupe_and_limit(
         chunk = chunks_by_id.get(embedding.chunk_id)
         if chunk is None or chunk.tenant_id != embedding.tenant_id:
             continue
-        if subject_doc_ids and has_subject_candidate and not comparative and chunk.manifest_id not in subject_doc_ids:
+        if (
+            subject_doc_ids
+            and has_subject_candidate
+            and not comparative
+            and strong_subject_lock
+            and primary_subject_doc
+            and primary_subject_doc in subject_doc_ids
+            and chunk.manifest_id != primary_subject_doc
+        ):
+            continue
+        if subject_doc_ids and has_subject_candidate and not comparative and strong_subject_lock and chunk.manifest_id not in subject_doc_ids:
             continue
 
         text = str(chunk.chunk_text or "").strip()
@@ -526,6 +600,45 @@ def _emit_metric(*, tenant, conversation, result: RagRetrievalResult) -> None:
 
 def _is_comparative_query(query_n: str) -> bool:
     return any(token in query_n for token in ("compar", "diferenca entre", "diferença entre", " versus ", " vs "))
+
+
+def _inject_primary_subject_candidates(
+    *,
+    tenant,
+    scored: list[tuple[TenantRagChunkEmbedding, float]],
+    active_subject: dict | None,
+    threshold: float,
+) -> list[tuple[TenantRagChunkEmbedding, float]]:
+    """Garante que o manifesto principal do subject entre no pool de rerank."""
+    if tenant is None or not active_subject:
+        return scored
+    raw_ids = list(active_subject.get("source_document_ids") or [])
+    if not raw_ids:
+        return scored
+    try:
+        primary_manifest_id = int(raw_ids[0])
+    except (TypeError, ValueError):
+        return scored
+    present = {embedding.manifest_id for embedding, _score in scored}
+    if primary_manifest_id in present:
+        return scored
+    embeddings = list(
+        TenantRagChunkEmbedding.objects.filter(
+            tenant=tenant,
+            manifest_id=primary_manifest_id,
+            status=TenantRagChunkEmbedding.Status.ACTIVE,
+            chunk__is_active=True,
+            chunk__status=TenantRagDocumentChunk.Status.ACTIVE,
+            manifest__is_active=True,
+        )
+        .select_related("chunk", "manifest")
+        .order_by("chunk__ordinal")[:2]
+    )
+    if not embeddings:
+        return scored
+    base_score = max((score for _emb, score in scored), default=float(threshold))
+    injected_score = base_score
+    return [*scored, *((embedding, injected_score) for embedding in embeddings)]
 
 
 def retrieve_context(
@@ -809,6 +922,12 @@ def retrieve_context(
         vector_search_ms = int((time.monotonic() - vector_started) * 1000)
         postprocess_started = time.monotonic()
         scored = [(hit.embedding, hit.score) for hit in hits]
+        scored = _inject_primary_subject_candidates(
+            tenant=tenant,
+            scored=scored,
+            active_subject=active_subject,
+            threshold=threshold,
+        )
         selected, selection_stats, selection_meta = _dedupe_and_limit(
             scored=scored,
             threshold=threshold,

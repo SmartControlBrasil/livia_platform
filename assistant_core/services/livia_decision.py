@@ -488,6 +488,23 @@ class LiviaDecisionService:
                     append_followup=False,
                     dialogue_memory=dialogue_memory,
                 )
+        elif turn.kind == TurnKind.NEED_ENRICHMENT and not has_semantic_knowledge_block(knowledge_context):
+            from assistant_core.consultative_policy import build_consultative_commercial_reply
+            from assistant_core.conversation_turns import build_enrichment_reply
+
+            if turn.enrichment_snippet:
+                reply = build_enrichment_reply(
+                    lead_draft,
+                    snippet=turn.enrichment_snippet,
+                    current_message=current_message,
+                    history=history,
+                )
+            else:
+                reply = build_consultative_commercial_reply(
+                    lead_draft=lead_draft,
+                    current_message=current_message,
+                    history=history,
+                )
         else:
             reply = self._build_grounded_consultative_reply(
                 lead_draft=lead_draft,
@@ -496,7 +513,7 @@ class LiviaDecisionService:
                 history=history,
                 knowledge_context=knowledge_context,
                 enrichment_snippet=turn.enrichment_snippet,
-                append_followup=True,
+                append_followup=turn.kind == TurnKind.NEED_ENRICHMENT,
                 dialogue_memory=dialogue_memory,
             )
         decision = LiviaReply(intent=intent, reply=reply)
@@ -513,7 +530,7 @@ class LiviaDecisionService:
         history: Iterable[dict[str, str]],
         knowledge_context: str,
     ) -> LiviaReply:
-        if not self._should_try_ai(assistant_profile):
+        if not self._inline_openai_in_generate_reply_enabled(assistant_profile):
             return decision
         tenant = getattr(conversation, "tenant", None)
         lead_state = str(getattr(conversation, "lead_state", "") or "")
@@ -537,8 +554,17 @@ class LiviaDecisionService:
             return replace(decision, reply=result.text)
         return decision
 
-    def _should_try_ai(self, assistant_profile) -> bool:
-        return bool(getattr(settings, "LIVIA_AI_ENABLED", False)) and bool(getattr(assistant_profile, "use_ai", False))
+    def _inline_openai_in_generate_reply_enabled(self, assistant_profile) -> bool:
+        """OpenAI inline em generate_reply permanece desligada de propósito.
+
+        A síntese conversacional ocorre pós-commit em chat_processing via
+        OpenAIGroundedConversationService, depois que estado comercial e
+        persistência determinísticos já foram resolvidos.
+        """
+        return False
+
+    # Alias legado — callers internos usam o nome explícito acima.
+    _should_try_ai = _inline_openai_in_generate_reply_enabled
 
 
     def _finalize_handoff(self, decision: LiviaReply, conversation, lead_draft, discovery, current_message: str) -> LiviaReply:
@@ -743,6 +769,23 @@ class LiviaDecisionService:
             history=history,
             append_followup=False,
         )
+        if not str(reply or "").strip() or is_acknowledgement_only_reply(reply) or is_generic_fallback_reply(reply):
+            from assistant_core.consultative_policy import build_consultative_commercial_reply
+            from assistant_core.conversation_turns import build_enrichment_reply
+
+            if enrichment_snippet or looks_like_environment_answer(current_message):
+                reply = build_enrichment_reply(
+                    lead_draft,
+                    snippet=enrichment_snippet,
+                    current_message=current_message,
+                    history=history,
+                )
+            else:
+                reply = build_consultative_commercial_reply(
+                    lead_draft=lead_draft,
+                    current_message=current_message,
+                    history=history,
+                )
         return reply
 
     def _insufficient_evidence_reply(self, current_message: str, knowledge_context: str, *, memory=None) -> str:

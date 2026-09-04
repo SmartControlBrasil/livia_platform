@@ -11,7 +11,6 @@ from django.db import IntegrityError, connection, transaction
 
 from assistant_core.discovery import analyze_message
 from assistant_core.prompts.livia import DEFAULT_REPLY
-from assistant_core.services.ai_feature_gates import is_grounded_synthesis_allowed
 from assistant_core.services.deterministic_synthesis import is_generic_fallback_reply
 from conversations.models import Conversation, HandoffRequest, Message
 from knowledge_base.rag.context_builder import KnowledgeContextResult, build_knowledge_context, build_knowledge_context_result
@@ -34,6 +33,8 @@ class _DeterministicChatResult:
     decision: object
     assistant_message: Message
     response_payload: dict
+    dialogue_memory: object | None = None
+    knowledge_result: KnowledgeContextResult | None = None
 
 
 def process_chat_request(*, chat_request, tenant, session_id: str, user_message: str, source_page: str = "") -> dict:
@@ -70,12 +71,15 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
     memory.retrieval_query_original = original_query
     memory.retrieval_query_contextual = contextual_query
 
+    assistant_profile_preview = _active_assistant_profile(tenant)
+    rag_limit = _rag_retrieval_limit(assistant_profile_preview)
+
     # Recuperação semântica pode chamar provider externo: permanece fora da transação de negócio.
     knowledge_result = build_knowledge_context_result(
         tenant,
         user_message,
         service_area=discovery_preview.service_area,
-        limit=2,
+        limit=rag_limit,
         conversation=conversation_ref,
         contextual_query=contextual_query,
         active_domain=memory.active_domain,
@@ -176,8 +180,10 @@ def _persist_chat_processing_state(
                 and isinstance(getattr(lead, "qualification_data", None), dict)
                 and (lead.qualification_data or {}).get("collection_active")
             )
-            # Não reescrever prompts de coleta (nome/telefone) com síntese RAG.
-            if not collection_active:
+            ai_primary = _will_use_openai_primary(assistant_profile)
+            # Não reescrever prompts de coleta (nome/telefone) com síntese determinística.
+            # Com OpenAI primária, a LLM gera linguagem após commit; gate determinístico fica como fallback.
+            if not collection_active and not ai_primary:
                 assistant_reply, gate_diagnostics = apply_response_quality_gate(
                     reply=assistant_reply,
                     knowledge_context=knowledge_context,
@@ -286,6 +292,8 @@ def _persist_chat_processing_state(
             decision=decision,
             assistant_message=assistant_message,
             response_payload=response_payload,
+            dialogue_memory=dialogue_memory,
+            knowledge_result=knowledge_result,
         )
 
 
@@ -300,20 +308,21 @@ def _refine_response_with_ai_if_enabled(
     if deterministic_result.response_payload.get("human_handoff", {}).get("active"):
         return deterministic_result.response_payload
 
+    from assistant_core.services.response_quality_gate import apply_response_quality_gate
+    from assistant_core.services.openai_grounded_conversation import OpenAIGroundedConversationService
+
     discovery = analyze_message(deterministic_result.user_message)
     context = knowledge_context or build_knowledge_context(
         deterministic_result.tenant,
         deterministic_result.user_message,
         service_area=discovery.service_area,
-        limit=2,
+        limit=_rag_retrieval_limit(deterministic_result.assistant_profile),
         conversation=deterministic_result.conversation,
     )
 
-    from assistant_core.services.grounded_response import GroundedResponseService
-
-    grounded_service = GroundedResponseService(ai_client=decision_service.ai_client)
+    conversation_service = OpenAIGroundedConversationService(ai_client=decision_service.ai_client)
     try:
-        grounded = grounded_service.generate(
+        ai_result = conversation_service.generate(
             tenant=deterministic_result.tenant,
             assistant_profile=deterministic_result.assistant_profile,
             message=deterministic_result.user_message,
@@ -322,51 +331,93 @@ def _refine_response_with_ai_if_enabled(
             decision=deterministic_result.decision,
             knowledge_context=context,
             history=deterministic_result.history,
+            dialogue_memory=deterministic_result.dialogue_memory,
+            knowledge_result=deterministic_result.knowledge_result,
+            deterministic_reply=str(deterministic_result.response_payload.get("reply", "") or ""),
         )
     except Exception:
         logger.exception(
-            "ai.grounded.failed tenant_slug=%s session_hash_unavailable",
+            "ai.conversation.unhandled tenant_slug=%s session_hash_unavailable",
             deterministic_result.tenant.slug,
         )
-        grounded = None
+        return _mark_ai_fallback_observability(deterministic_result.response_payload)
 
-    if grounded is not None and grounded.used and grounded.text:
-        return _apply_refined_reply(deterministic_result, grounded.text, ai_mode="grounded")
-
-    if is_grounded_synthesis_allowed(
-        tenant_slug=deterministic_result.tenant.slug,
-        assistant_profile=deterministic_result.assistant_profile,
-    ):
-        # Tenant configurado para grounded: não cair no rewrite legado.
-        return deterministic_result.response_payload
-
-    try:
-        refined_decision = decision_service._finalize_ai_response(  # noqa: SLF001
-            decision=deterministic_result.decision,
-            conversation=deterministic_result.conversation,
-            assistant_profile=deterministic_result.assistant_profile,
-            discovery=discovery,
-            current_message=deterministic_result.user_message,
-            history=deterministic_result.history,
+    if ai_result.used and ai_result.text:
+        try:
+            lead = deterministic_result.conversation.lead_draft
+            need_summary = str(getattr(lead, "need_summary", "") or "") if lead is not None else ""
+        except Exception:
+            need_summary = ""
+        reply, gate_diagnostics = apply_response_quality_gate(
+            reply=ai_result.text,
             knowledge_context=context,
+            current_message=deterministic_result.user_message,
+            memory=deterministic_result.dialogue_memory,
+            need_summary=need_summary,
+            history=deterministic_result.history,
+            llm_primary=True,
         )
-    except Exception:
-        logger.exception(
-            "livia_ai_post_commit_refine_failed tenant_slug=%s session_hash_unavailable",
-            deterministic_result.tenant.slug,
+        if not reply.strip():
+            return _mark_ai_fallback_observability(deterministic_result.response_payload)
+        return _apply_refined_reply(
+            deterministic_result,
+            reply,
+            ai_mode="openai_conversation",
+            ai_observability={
+                "ai_provider": "openai",
+                "ai_model": ai_result.model,
+                "ai_latency_ms": ai_result.latency_ms,
+                "ai_prompt_tokens": ai_result.prompt_tokens,
+                "ai_completion_tokens": ai_result.completion_tokens,
+                "ai_total_tokens": ai_result.total_tokens,
+                "ai_grounded": ai_result.grounded,
+                "ai_fallback_used": False,
+                "ai_rag_docs": ai_result.metadata.get("rag_docs", []),
+                **gate_diagnostics,
+            },
         )
-        return deterministic_result.response_payload
 
-    if refined_decision.reply == deterministic_result.response_payload.get("reply", ""):
-        return deterministic_result.response_payload
+    # Fallback seguro: resposta determinística já persistida.
+    logger.info(
+        "ai.conversation.fallback tenant_slug=%s reason=%s",
+        deterministic_result.tenant.slug,
+        ai_result.skip_reason or ai_result.status,
+    )
+    return _mark_ai_fallback_observability(
+        deterministic_result.response_payload,
+        ai_observability={
+            "ai_provider": "openai",
+            "ai_model": ai_result.model,
+            "ai_latency_ms": ai_result.latency_ms,
+            "ai_fallback_used": True,
+            "ai_error_type": ai_result.error_type,
+            "ai_skip_reason": ai_result.skip_reason,
+        },
+    )
 
-    return _apply_refined_reply(deterministic_result, refined_decision.reply, ai_mode="rewrite")
+
+def _mark_ai_fallback_observability(response_payload: dict, ai_observability: dict | None = None) -> dict:
+    updated = dict(response_payload)
+    observability = dict(updated.get("observability") or {})
+    observability.update(ai_observability or {"ai_fallback_used": True})
+    updated["observability"] = observability
+    return updated
 
 
-def _apply_refined_reply(deterministic_result: _DeterministicChatResult, reply: str, *, ai_mode: str) -> dict:
+def _apply_refined_reply(
+    deterministic_result: _DeterministicChatResult,
+    reply: str,
+    *,
+    ai_mode: str,
+    ai_observability: dict | None = None,
+) -> dict:
     updated_payload = dict(deterministic_result.response_payload)
     updated_payload["reply"] = reply
     updated_payload["ai_mode"] = ai_mode
+    if ai_observability:
+        observability = dict(updated_payload.get("observability") or {})
+        observability.update(ai_observability)
+        updated_payload["observability"] = observability
     with transaction.atomic():
         Message.objects.filter(pk=deterministic_result.assistant_message.pk).update(content=reply)
         update_completed_chat_request_response(
@@ -407,7 +458,18 @@ def _can_refine_with_ai(assistant_profile) -> bool:
         return False
     if bool(getattr(settings, "RUNNING_TESTS", False)):
         return False
-    return bool(getattr(settings, "LIVIA_AI_ENABLED", False)) and bool(getattr(assistant_profile, "use_ai", False))
+    from assistant_core.services.ai_feature_gates import is_openai_conversation_allowed
+
+    return is_openai_conversation_allowed(assistant_profile=assistant_profile)
+
+
+def _will_use_openai_primary(assistant_profile) -> bool:
+    """Indica se a resposta final virá da OpenAI (fora da transação)."""
+    return _can_refine_with_ai(assistant_profile)
+
+
+def _rag_retrieval_limit(assistant_profile) -> int:
+    return 4 if _will_use_openai_primary(assistant_profile) else 2
 
 
 def _get_or_create_locked_conversation(*, tenant, session_id: str, source_page: str = "") -> Conversation:

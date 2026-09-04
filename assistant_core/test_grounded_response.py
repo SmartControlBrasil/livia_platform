@@ -288,10 +288,20 @@ class GroundedResponseTests(TestCase):
 
     @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
     def test_decision_service_does_not_change_state_from_ai(self):
-        ai_client = FakeAIClient(
-            OpenAIChatResult(text="Trabalhamos com granito, mármore e quartzito.", success=True, dry_run=False)
-        )
-        service = LiviaDecisionService(ai_client=ai_client)
+        from assistant_core.discovery import analyze_message
+        from assistant_core.services.openai_grounded_conversation import OpenAIGroundedConversationService
+        from leads.models import LeadDraft
+
+        service = LiviaDecisionService()
+        lead, _ = LeadDraft.objects.get_or_create(tenant=self.tenant, conversation=self.conversation)
+        before = {
+            "lead_state": self.conversation.lead_state,
+            "collection_active": bool((lead.qualification_data or {}).get("collection_active")),
+            "need_summary": str(lead.need_summary or ""),
+            "name": str(lead.name or ""),
+            "company": str(lead.company or ""),
+        }
+
         decision = service.generate_reply(
             [],
             "Quais materiais vocês trabalham para bancada?",
@@ -300,8 +310,42 @@ class GroundedResponseTests(TestCase):
             knowledge_context=self.knowledge,
         )
         self.conversation.refresh_from_db()
-        self.assertEqual(self.conversation.lead_state, "discovery")
+        lead.refresh_from_db()
+        after_deterministic = {
+            "lead_state": self.conversation.lead_state,
+            "collection_active": bool((lead.qualification_data or {}).get("collection_active")),
+            "need_summary": str(lead.need_summary or ""),
+            "name": str(lead.name or ""),
+            "company": str(lead.company or ""),
+        }
+        self.assertEqual(after_deterministic["lead_state"], "discovery")
+        self.assertEqual(before, after_deterministic)
         self.assertIn("granito", decision.reply.lower())
+
+        ai_client = FakeAIClient(
+            OpenAIChatResult(text="Trabalhamos com granito, mármore e quartzito.", success=True, dry_run=False)
+        )
+        discovery = analyze_message("Quais materiais vocês trabalham para bancada?")
+        OpenAIGroundedConversationService(ai_client=ai_client).generate(
+            tenant=self.tenant,
+            assistant_profile=self.profile,
+            message="Quais materiais vocês trabalham para bancada?",
+            conversation=self.conversation,
+            discovery=discovery,
+            decision=decision,
+            knowledge_context=self.knowledge,
+        )
+        self.conversation.refresh_from_db()
+        lead.refresh_from_db()
+        after_ai = {
+            "lead_state": self.conversation.lead_state,
+            "collection_active": bool((lead.qualification_data or {}).get("collection_active")),
+            "need_summary": str(lead.need_summary or ""),
+            "name": str(lead.name or ""),
+            "company": str(lead.company or ""),
+        }
+        self.assertEqual(after_deterministic, after_ai)
+        self.assertEqual(ai_client.calls[0][0]["role"], "system")
 
     @override_settings(LIVIA_AI_ENABLED=False, RUNNING_TESTS=False)
     def test_chat_processing_uses_grounded_post_commit(self):
@@ -347,6 +391,7 @@ class GroundedResponseTests(TestCase):
             LIVIA_AI_GROUNDED_SYNTHESIS_ENABLED=True,
             LIVIA_AI_GROUNDED_SYNTHESIS_TENANT_ALLOWLIST="granimarmores-pitondo-test",
             LIVIA_AI_ENABLED=True,
+            LIVIA_AI_DRY_RUN=False,
             LIVIA_OPENAI_API_KEY="k",
         ):
             payload = _refine_response_with_ai_if_enabled(
@@ -354,7 +399,7 @@ class GroundedResponseTests(TestCase):
                 decision_service=decision_service,
                 knowledge_context=self.knowledge,
             )
-        self.assertEqual(payload["ai_mode"], "grounded")
+        self.assertEqual(payload["ai_mode"], "openai_conversation")
         self.assertIn("granito", payload["reply"].lower())
         assistant_message.refresh_from_db()
         self.assertIn("granito", assistant_message.content.lower())

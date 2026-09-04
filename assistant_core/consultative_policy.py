@@ -336,8 +336,6 @@ def build_consultative_commercial_reply(*, lead_draft=None, current_message: str
             question_type=detect_question_type(message),
             current_message=message,
         )
-    if is_need_enrichment(message):
-        return build_enrichment_reply(lead_draft, current_message=message)
     normalized = normalize_text(message)
     if any(token in normalized for token in ("loja virtual", "ecommerce", "e-commerce", "loja online")):
         return (
@@ -349,6 +347,8 @@ def build_consultative_commercial_reply(*, lead_draft=None, current_message: str
             "Claro. Posso te ajudar com isso. "
             "Qual é o objetivo principal: divulgação, captura de contatos, vendas online ou um sistema interno?"
         )
+    if is_need_enrichment(message):
+        return build_enrichment_reply(lead_draft, current_message=message)
     if any(token in normalized for token in ("escola", "educac", "professor", "bncc")):
         return (
             "Entendi o contexto educacional. Para orientar melhor: "

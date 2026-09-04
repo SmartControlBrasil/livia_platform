@@ -24,6 +24,33 @@ _PRONOUN_OR_ELLIPTIC_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+_CATALOG_ORIENTATION_RE = re.compile(r"(?:→|->)")
+_OFFICIAL_NAME_RE = re.compile(r"(?i)^nome oficial\s*:\s*(.+)$")
+_PRODUCT_HEADING_RE = re.compile(r"^(.+?)\s*[—–-]\s*(?:rob[oô]|robótica|limpeza|segurança|patrulhamento|educacional)", re.IGNORECASE)
+
+_GENERIC_CATEGORY_TOKENS = frozenset({
+    "limpeza", "seguranca", "patrulha", "escola", "educacao", "educacional",
+    "recepcao", "inspecao", "entrega", "assistencia", "corte", "grama",
+})
+
+_APPLICATION_ENTITY_HINTS: dict[str, tuple[str, ...]] = {
+    "cleaning_robotics": ("hygibot", "dune", "duno", "limpeza"),
+    "security_robotics": ("orbit", "patrol", "patrulha", "seguranca"),
+    "educational_robotics": ("liro", "little bot", "littlebot", "educacional"),
+}
+
+_APPLICATION_QUERY_MARKERS: dict[str, tuple[str, ...]] = {
+    "cleaning_robotics": ("limpeza", "lavar", "varrer", "aspirar", "hygibot", "dune", "duno", "galpao", "piso"),
+    "security_robotics": ("seguranca", "patrulha", "orbit", "patrol", "vigilancia", "monitoramento"),
+    "educational_robotics": ("escola", "educacional", "professor", "aluno", "bncc", "liro", "little bot"),
+}
+
+_DOCUMENT_SCOPE_SCORES = {
+    "product_dedicated": 1.0,
+    "general": 0.55,
+    "catalog_overview": 0.15,
+}
+
 
 @dataclass(frozen=True)
 class KnowledgeEntity:
@@ -34,12 +61,13 @@ class KnowledgeEntity:
     confidence: float = 0.0
     metadata: dict = field(default_factory=dict)
 
-    def to_subject(self) -> dict:
+    def to_subject(self, *, match_method: str = "", confidence: float | None = None) -> dict:
         return {
             "canonical_name": self.canonical_name,
             "entity_type": self.entity_type,
             "source_document_ids": list(self.document_ids),
-            "confidence": self.confidence,
+            "confidence": float(confidence if confidence is not None else self.confidence),
+            "match_method": match_method or "",
         }
 
 
@@ -68,11 +96,21 @@ def extract_document_metadata(*, file_name: str, mime_type: str = "", relative_p
     model_names = _dedupe_preserve([c for c in candidates if _looks_like_model_name(c)])
     if title and _looks_like_product_name(title):
         product_names = _dedupe_preserve([title, *product_names])
+    heading_product = _product_name_from_heading(title)
+    if heading_product:
+        product_names = _dedupe_preserve([heading_product, *product_names])
+    document_scope = _document_scope(
+        file_name=file_name,
+        relative_path=relative_path,
+        text=text,
+        product_names=product_names,
+    )
     return {
         "source_document_id": "",
         "file_name": str(file_name or ""),
         "document_title": title or None,
         "document_type": doc_type or None,
+        "document_scope": document_scope,
         "product_names": product_names,
         "model_names": model_names,
         "section": None,
@@ -80,6 +118,23 @@ def extract_document_metadata(*, file_name: str, mime_type: str = "", relative_p
         "page_number": None,
         "source_modified_time": source_modified_time.isoformat() if hasattr(source_modified_time, "isoformat") else None,
     }
+
+
+def document_specificity_score(*, document_metadata: dict | None, file_name: str = "", text: str = "") -> float:
+    meta = dict(document_metadata or {})
+    scope = str(meta.get("document_scope") or _document_scope(
+        file_name=file_name or meta.get("file_name") or "",
+        relative_path="",
+        text=text,
+        product_names=list(meta.get("product_names") or []),
+    ))
+    base = float(_DOCUMENT_SCOPE_SCORES.get(scope, 0.5))
+    product_count = len(meta.get("product_names") or [])
+    if product_count == 1:
+        base += 0.1
+    elif product_count >= 5:
+        base -= 0.2
+    return max(0.0, min(1.0, base))
 
 
 def build_chunk_metadata(*, document_metadata: dict | None, text: str, start_char: int = 0) -> dict:
@@ -105,17 +160,39 @@ def entity_catalog_for_tenant(tenant) -> list[KnowledgeEntity]:
     grouped: dict[str, dict] = {}
     for manifest in docs:
         meta = dict(getattr(manifest, "document_metadata", None) or {})
+        manifest_specificity = document_specificity_score(
+            document_metadata=meta,
+            file_name=str(getattr(manifest, "name", "") or ""),
+        )
         names = [*list(meta.get("product_names") or []), *list(meta.get("model_names") or [])]
         title = meta.get("document_title") or manifest.name
+        heading_product = _product_name_from_heading(str(title or ""))
+        if heading_product:
+            names.append(heading_product)
         if title and _looks_like_product_name(str(title)):
             names.append(str(title))
         for name in _dedupe_preserve(names):
             canonical = _canonicalize_name(name)
-            if not canonical:
+            if not canonical or _is_catalog_orientation_canonical(canonical):
                 continue
-            key = normalize_entity_text(canonical)
-            entry = grouped.setdefault(key, {"canonical": canonical, "aliases": set(), "documents": set(), "confidence": 0.75})
+            key = _entity_group_key(canonical, name)
+            if not key:
+                continue
+            entry = grouped.setdefault(
+                key,
+                {
+                    "canonical": canonical,
+                    "aliases": set(),
+                    "documents": set(),
+                    "doc_specificity": {},
+                    "confidence": 0.75,
+                },
+            )
+            if manifest_specificity >= entry["doc_specificity"].get(manifest.id, 0.0):
+                if manifest_specificity > max(entry["doc_specificity"].values() or [0.0]):
+                    entry["canonical"] = canonical
             entry["documents"].add(manifest.id)
+            entry["doc_specificity"][manifest.id] = manifest_specificity
             entry["aliases"].add(str(name).strip())
             for alias in meta.get("aliases") or []:
                 if str(alias).strip():
@@ -126,16 +203,31 @@ def entity_catalog_for_tenant(tenant) -> list[KnowledgeEntity]:
     result = []
     for item in grouped.values():
         aliases = tuple(sorted({a for a in item["aliases"] if normalize_entity_text(a) != normalize_entity_text(item["canonical"])}))
+        doc_ids = tuple(
+            doc_id
+            for doc_id, _score in sorted(
+                item["doc_specificity"].items(),
+                key=lambda pair: (-pair[1], pair[0]),
+            )
+        )
         result.append(KnowledgeEntity(
             canonical_name=item["canonical"],
             aliases=aliases,
-            document_ids=tuple(sorted(item["documents"])),
+            document_ids=doc_ids,
             confidence=float(item["confidence"]),
+            metadata={"doc_specificity": dict(item["doc_specificity"])},
         ))
     return sorted(result, key=lambda e: normalize_entity_text(e.canonical_name))
 
 
-def resolve_knowledge_entity(*, tenant, message: str, active_subject: dict | None = None) -> EntityResolution:
+def resolve_knowledge_entity(
+    *,
+    tenant,
+    message: str,
+    active_subject: dict | None = None,
+    active_application: str = "",
+    active_topic: str = "",
+) -> EntityResolution:
     msg_n = normalize_entity_text(message)
     if not msg_n:
         return EntityResolution()
@@ -147,7 +239,7 @@ def resolve_knowledge_entity(*, tenant, message: str, active_subject: dict | Non
         best_method = "none"
         for name in names:
             name_n = normalize_entity_text(name)
-            if not name_n:
+            if not name_n or _is_catalog_orientation_canonical(name):
                 continue
             if _contains_phrase(msg_n, name_n):
                 score = 1.0 if len(name_n.split()) > 1 else 0.86
@@ -159,24 +251,58 @@ def resolve_knowledge_entity(*, tenant, message: str, active_subject: dict | Non
                 score = 0.62
                 method = "partial"
             elif any(len(token) >= 4 and _contains_phrase(msg_n, token) for token in name_n.split()):
-                score = 0.62
-                method = "partial"
+                if any(token in _GENERIC_CATEGORY_TOKENS for token in name_n.split()):
+                    score = 0.0
+                    method = "none"
+                else:
+                    score = 0.62
+                    method = "partial"
             else:
                 continue
             if score > best_score:
                 best_score = score
                 best_method = method
+        family_score, family_method = _score_application_family_entity(
+            entity,
+            active_application=active_application,
+            active_topic=active_topic,
+            msg_n=msg_n,
+        )
+        if family_score > best_score:
+            best_score = family_score
+            best_method = family_method
         if best_score:
             scored.append((entity, best_score, best_method))
-    scored.sort(key=lambda item: (-item[1], -len(item[0].canonical_name), item[0].canonical_name))
+    scored.sort(
+        key=lambda item: (
+            -item[1],
+            -_entity_specificity(item[0]),
+            -len(normalize_entity_text(item[0].canonical_name).split()),
+            item[0].canonical_name,
+        )
+    )
     if scored:
         top_score = scored[0][1]
         top = [item for item in scored if abs(item[1] - top_score) < 0.04]
         if len(top) > 1 and top_score < 0.9:
+            top.sort(key=lambda item: (-_entity_specificity(item[0]), item[0].canonical_name))
+            if len(top) > 1 and abs(_entity_specificity(top[0][0]) - _entity_specificity(top[1][0])) >= 0.15:
+                entity, score, method = top[0]
+                return EntityResolution(
+                    subject=entity.to_subject(match_method=method, confidence=score),
+                    matches=(entity,),
+                    confidence=score,
+                    method=method,
+                )
             options = tuple(entity.canonical_name for entity, _score, _method in top[:5])
             return EntityResolution(matches=tuple(entity for entity, _score, _method in top), ambiguous=True, ambiguity_options=options, confidence=top_score, method="ambiguous")
         entity, score, method = scored[0]
-        return EntityResolution(subject=entity.to_subject(), matches=(entity,), confidence=score, method=method)
+        return EntityResolution(
+            subject=entity.to_subject(match_method=method, confidence=score),
+            matches=(entity,),
+            confidence=score,
+            method=method,
+        )
     if active_subject and _PRONOUN_OR_ELLIPTIC_RE.search(str(message or "")):
         confidence = float(active_subject.get("confidence") or 0.0)
         if confidence >= 0.55:
@@ -188,6 +314,9 @@ def _document_title(*, file_name: str, relative_path: str, text: str) -> str:
     for line in str(text or "").splitlines()[:20]:
         stripped = line.strip().strip("# ").strip()
         if stripped and len(stripped) <= 120 and not stripped.lower().startswith(("fonte:", "tags:", "conteúdo:", "conteudo:")):
+            heading_product = _product_name_from_heading(stripped)
+            if heading_product:
+                return heading_product
             return _clean_title(stripped)
     stem = Path(str(file_name or relative_path or "")).stem.replace("_", " ").replace("-", " ").strip()
     return _clean_title(stem)
@@ -213,6 +342,14 @@ def _entity_candidates(*, file_name: str, title: str, text: str) -> list[str]:
     sample_lines.extend(line.strip().strip("# ") for line in str(text or "").splitlines()[:40])
     candidates: list[str] = []
     for line in sample_lines:
+        official = _parse_official_name_line(line)
+        if official:
+            candidates.append(official)
+        if _is_catalog_orientation_line(line):
+            product = _parse_catalog_orientation_product(line)
+            if product:
+                candidates.append(product)
+            continue
         clean = _clean_title(line)
         if clean and _looks_like_product_name(clean):
             candidates.append(clean)
@@ -226,7 +363,9 @@ def _looks_like_product_name(value: str) -> bool:
     raw = str(value or "").strip()
     if not n or n in _GENERIC_TITLE_WORDS or n in _STOP_UPPER_PHRASES:
         return False
-    if ":" in raw:
+    if _is_catalog_orientation_line(raw):
+        return False
+    if ":" in raw and not _OFFICIAL_NAME_RE.match(raw):
         return False
     if any(word in n.split() for word in ("autonomia", "nominal", "alimentacao", "alimentação", "estacao", "estação", "peso", "operacional", "horas")):
         return False
@@ -246,12 +385,103 @@ def _looks_like_model_name(value: str) -> bool:
 
 def _canonicalize_name(value: str) -> str:
     cleaned = _clean_title(value)
-    if not cleaned:
+    if not cleaned or _is_catalog_orientation_canonical(cleaned):
         return ""
+    if "/" in cleaned:
+        product = re.split(r"\s[—–-]\s", cleaned, maxsplit=1)[0].strip()
+        words = [w for w in product.split() if normalize_entity_text(w) not in _GENERIC_TITLE_WORDS]
+        if words:
+            return " ".join(words[:6]).strip()
     words = [w for w in cleaned.split() if normalize_entity_text(w) not in _GENERIC_TITLE_WORDS]
     if not words:
         return ""
     return " ".join(words[:4]).strip()
+
+
+def _is_catalog_orientation_line(value: str) -> bool:
+    raw = str(value or "").strip()
+    return bool(_CATALOG_ORIENTATION_RE.search(raw))
+
+
+def _is_catalog_orientation_canonical(value: str) -> bool:
+    return _is_catalog_orientation_line(value)
+
+
+def _parse_catalog_orientation_product(value: str) -> str:
+    raw = str(value or "").strip().lstrip("- ").strip()
+    for sep in ("→", "->"):
+        if sep in raw:
+            product = raw.split(sep, 1)[1].strip()
+            product = re.split(r"\s[—–-]\s", product, maxsplit=1)[0].strip()
+            return _clean_title(product)
+    return ""
+
+
+def _parse_official_name_line(value: str) -> str:
+    match = _OFFICIAL_NAME_RE.match(str(value or "").strip())
+    if match:
+        return _clean_title(match.group(1))
+    return ""
+
+
+def _product_name_from_heading(title: str) -> str:
+    match = _PRODUCT_HEADING_RE.match(str(title or "").strip())
+    if match:
+        return _clean_title(match.group(1))
+    return ""
+
+
+def _document_scope(*, file_name: str, relative_path: str, text: str, product_names: list[str]) -> str:
+    blob = normalize_entity_text(f"{file_name} {relative_path} {str(text or '')[:800]}")
+    if any(token in blob for token in (
+        "visao geral", "visão geral", "produtos oficiais", "orientacao rapida",
+        "orientação rápida", "linha xyron", "nomenclatura institucional",
+    )):
+        return "catalog_overview"
+    if len(product_names) >= 4:
+        return "catalog_overview"
+    if product_names and len(product_names) <= 2:
+        return "product_dedicated"
+    return "general"
+
+
+def _entity_group_key(canonical: str, raw_name: str) -> str:
+    canonical_n = normalize_entity_text(canonical)
+    return canonical_n
+
+
+def _entity_specificity(entity: KnowledgeEntity) -> float:
+    scores = list((entity.metadata or {}).get("doc_specificity", {}).values())
+    return max(scores) if scores else 0.0
+
+
+def _entity_text_blob(entity: KnowledgeEntity) -> str:
+    return normalize_entity_text(" ".join([entity.canonical_name, *entity.aliases]))
+
+
+def _score_application_family_entity(
+    entity: KnowledgeEntity,
+    *,
+    active_application: str,
+    active_topic: str,
+    msg_n: str,
+) -> tuple[float, str]:
+    application = active_application or {
+        "cleaning_robot": "cleaning_robotics",
+        "security_robot": "security_robotics",
+        "educational_robot": "educational_robotics",
+    }.get(active_topic, "")
+    if not application:
+        return 0.0, "none"
+    query_markers = _APPLICATION_QUERY_MARKERS.get(application, ())
+    entity_hints = _APPLICATION_ENTITY_HINTS.get(application, ())
+    if not any(marker in msg_n for marker in query_markers):
+        return 0.0, "none"
+    blob = _entity_text_blob(entity)
+    if not any(hint in blob for hint in entity_hints):
+        return 0.0, "none"
+    specificity = _entity_specificity(entity)
+    return 0.78 + specificity * 0.15, "application_family"
 
 
 def _clean_title(value: str) -> str:

@@ -90,9 +90,13 @@ def apply_response_quality_gate(
     need_summary: str = "",
     history=None,
     append_followup: bool | None = None,
+    llm_primary: bool = False,
 ) -> tuple[str, dict]:
     """
-    Valida/repara resposta determinística.
+    Valida/repara resposta antes de devolver ao usuário.
+
+    Quando llm_primary=True, aplica apenas proteções de segurança/coerência
+    sem re-síntese determinística (OpenAI já produziu a linguagem).
 
     Retorna (reply_final, diagnostics).
     """
@@ -108,6 +112,7 @@ def apply_response_quality_gate(
         "meta_rag_stripped": False,
         "answer_shape": "",
         "active_application": getattr(memory, "active_application", "") or "",
+        "llm_primary": bool(llm_primary),
     }
     ambiguity_options = list((getattr(memory, "notes", {}) or {}).get("entity_ambiguity_options") or [])
     if ambiguity_options:
@@ -122,18 +127,21 @@ def apply_response_quality_gate(
     # A) Policy leak
     if is_policy_leak_text(text):
         diagnostics["policy_leak_blocked"] = True
-        regenerated = synthesize_deterministic_reply(
-            knowledge_context,
-            base_reply="",
-            current_message=current_message,
-            active_domain=memory.active_domain,
-            active_application=getattr(memory, "active_application", "") or "",
-        )
-        if regenerated and not is_policy_leak_text(regenerated):
-            text = regenerated
-            diagnostics["regrounded"] = True
-        else:
+        if llm_primary:
             text = _safe_entity_fallback(memory, current_message)
+        else:
+            regenerated = synthesize_deterministic_reply(
+                knowledge_context,
+                base_reply="",
+                current_message=current_message,
+                active_domain=memory.active_domain,
+                active_application=getattr(memory, "active_application", "") or "",
+            )
+            if regenerated and not is_policy_leak_text(regenerated):
+                text = regenerated
+                diagnostics["regrounded"] = True
+            else:
+                text = _safe_entity_fallback(memory, current_message)
 
     # B/D) Cross-domain noise
     cleaned, removed = _strip_incompatible_sentences(
@@ -141,6 +149,12 @@ def apply_response_quality_gate(
     )
     diagnostics["coherence_filtered_count"] = removed
     text = cleaned or text
+
+    if llm_primary:
+        text = strip_meta_rag_phrasing(text)
+        if text != str(reply or "").strip():
+            diagnostics["meta_rag_stripped"] = True
+        return text.strip() or _safe_entity_fallback(memory, current_message), diagnostics
 
     # C) Entity mentioned but missing from reply → try re-synthesize from KB
     # Não sobrescrever resposta de preço conceitual / policy comercial.
@@ -223,6 +237,14 @@ def apply_response_quality_gate(
             text = " ".join(parts).strip()
             diagnostics["regrounded"] = True
             diagnostics["followup_strategy"] = follow_diag.get("followup_strategy", diagnostics["followup_strategy"])
+    elif is_acknowledgement_only_reply(text):
+        from assistant_core.consultative_policy import build_consultative_commercial_reply
+
+        repaired = build_consultative_commercial_reply(current_message=current_message, history=history)
+        if repaired and not is_acknowledgement_only_reply(repaired):
+            text = repaired
+            diagnostics["regrounded"] = True
+            diagnostics["followup_strategy"] = "commercial_repair"
 
     return strip_meta_rag_phrasing(text).strip(), diagnostics
 

@@ -145,6 +145,8 @@ def infer_robotics_family(*, text: str = "", application: str = "", topic: str =
         return "cleaning"
     if application == "educational_robotics" or topic == "educational_robot":
         return "educational"
+    if application == "security_robotics" or topic == "security_robot":
+        return "security"
     best = ""
     best_hits = 0
     for family, markers in ROBOTICS_FAMILY_MARKERS:

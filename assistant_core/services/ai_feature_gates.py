@@ -21,6 +21,30 @@ def is_rag_semantic_context_active(*, tenant_slug: str) -> bool:
     return str(tenant_slug or "").strip() in allowlist
 
 
+def is_openai_conversation_configured() -> bool:
+    """True quando OpenAI está habilitada e com credencial (sem expor valor)."""
+    if not bool(getattr(settings, "LIVIA_AI_ENABLED", False)):
+        return False
+    if bool(getattr(settings, "LIVIA_AI_DRY_RUN", True)):
+        return False
+    api_key = str(getattr(settings, "LIVIA_OPENAI_API_KEY", "") or "").strip()
+    return bool(api_key)
+
+
+def is_openai_conversation_allowed(*, assistant_profile) -> bool:
+    """
+    Gate para conversação OpenAI como camada principal de linguagem.
+
+    Requer LIVIA_AI_ENABLED + profile.use_ai + cliente configurado.
+    Não exige grounded_synthesis_enabled (path legado separado).
+    """
+    if not bool(getattr(settings, "LIVIA_AI_ENABLED", False)):
+        return False
+    if assistant_profile is None or not bool(getattr(assistant_profile, "use_ai", False)):
+        return False
+    return is_openai_conversation_configured()
+
+
 def is_grounded_synthesis_allowed(*, tenant_slug: str, assistant_profile) -> bool:
     """
     Gate tenant-scoped para síntese grounded.

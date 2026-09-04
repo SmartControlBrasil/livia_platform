@@ -93,7 +93,9 @@ def next_state_after_message(conversation, lead_draft, intent: str = "", extract
     if getattr(lead_draft, "status", "") in {"sent_to_crm", "qualified"} or getattr(conversation, "is_qualified", False):
         return LeadStateSnapshot(state=LeadState.QUALIFIED, is_terminal=True)
     if not str(getattr(lead_draft, "need_summary", "") or "").strip():
-        return LeadStateSnapshot(state=LeadState.COLLECT_NEED, next_field="need_summary")
+        if _commercial_capture_active(conversation, lead_draft, intent):
+            return LeadStateSnapshot(state=LeadState.COLLECT_NEED, next_field="need_summary")
+        return LeadStateSnapshot(state=LeadState.DISCOVERY)
     if not _commercial_capture_active(conversation, lead_draft, intent):
         return LeadStateSnapshot(state=LeadState.DISCOVERY)
     if not (

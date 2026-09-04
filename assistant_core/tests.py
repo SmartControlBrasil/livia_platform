@@ -1178,15 +1178,55 @@ class LiviaOptionalAIResponseTests(TestCase):
 
     @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
     def test_valid_ai_response_replaces_only_reply_text(self):
+        from assistant_core.services.chat_processing import _DeterministicChatResult, _refine_response_with_ai_if_enabled
+        from assistant_core.services.livia_decision import LiviaReply
+        from assistant_core.services.openai_grounded_conversation import OpenAIConversationResult
+        from conversations.models import ChatRequest, Message
+
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-valid")
-        ai_client = FakeAIClient(OpenAIChatResult(text="Resposta mais natural da IA.", success=True, dry_run=False))
-        service = LiviaDecisionService(ai_client=ai_client)
+        assistant_message = Message.objects.create(
+            conversation=conversation,
+            role=Message.Role.ASSISTANT,
+            content="Resposta determinística de coleta.",
+        )
+        chat_request = ChatRequest.objects.create(
+            tenant=self.tenant,
+            conversation=conversation,
+            session_id="ai-valid",
+            request_id=uuid.uuid4(),
+            request_fingerprint="e" * 64,
+            status=ChatRequest.Status.COMPLETED,
+            response_payload={"reply": "Resposta determinística de coleta.", "intent": "quote_request"},
+            response_status_code=200,
+        )
+        decision = LiviaReply(intent="quote_request", reply="Resposta determinística de coleta.")
+        deterministic_result = _DeterministicChatResult(
+            chat_request=chat_request,
+            tenant=self.tenant,
+            conversation=conversation,
+            assistant_profile=self.profile,
+            history=[],
+            user_message="Quero orçamento para um sistema",
+            decision=decision,
+            assistant_message=assistant_message,
+            response_payload={"reply": decision.reply, "intent": decision.intent},
+        )
+        with patch("assistant_core.services.chat_processing._can_refine_with_ai", return_value=True), patch(
+            "assistant_core.services.openai_grounded_conversation.OpenAIGroundedConversationService.generate",
+            return_value=OpenAIConversationResult(
+                text="Resposta mais natural da IA.",
+                used=True,
+                status="completed",
+            ),
+        ):
+            payload = _refine_response_with_ai_if_enabled(
+                deterministic_result=deterministic_result,
+                decision_service=LiviaDecisionService(),
+            )
 
-        decision = service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
-
-        self.assertEqual(decision.intent, "quote_request")
-        self.assertEqual(decision.reply, "Resposta mais natural da IA.")
-        self.assertEqual(LeadDraft.objects.count(), 1)
+        self.assertEqual(payload["intent"], "quote_request")
+        self.assertEqual(payload["reply"], "Resposta mais natural da IA.")
+        self.assertEqual(LeadDraft.objects.filter(conversation=conversation).count(), 0)
 
     @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
     def test_lead_state_is_not_changed_by_ai(self):
@@ -1206,30 +1246,35 @@ class LiviaOptionalAIResponseTests(TestCase):
     @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
     def test_handoff_does_not_depend_on_ai(self):
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-handoff")
-        ai_client = FakeAIClient(OpenAIChatResult(text="Vou te conectar com o time.", success=True, dry_run=False))
-        service = LiviaDecisionService(ai_client=ai_client)
+        service = LiviaDecisionService()
 
         decision = service.generate_reply([], "quero falar com um vendedor", conversation=conversation, assistant_profile=self.profile)
 
-        self.assertEqual(decision.reply, "Vou te conectar com o time.")
         self.assertTrue(HandoffRequest.objects.filter(conversation=conversation).exists())
+        self.assertIn("contato", decision.reply.lower())
 
     @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
     def test_knowledge_context_and_profile_enter_prompt(self):
-        from knowledge_base.models import KnowledgeDocument
+        from assistant_core.discovery import analyze_message
+        from assistant_core.services.livia_decision import LiviaReply
+        from assistant_core.services.openai_grounded_conversation import OpenAIGroundedConversationService
 
-        KnowledgeDocument.objects.create(
-            tenant=self.tenant,
-            title="HygiBot",
-            slug="hygibot-ai",
-            content="HygiBot atende limpeza profissional em grandes áreas.",
-            tags=["hygibot", "limpeza"],
-        )
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-prompt")
+        knowledge = "[KNOWLEDGE_BASE]\nHygiBot atende limpeza profissional em grandes áreas.\n[/KNOWLEDGE_BASE]"
         ai_client = FakeAIClient(OpenAIChatResult(text="HygiBot pode ajudar nesse cenário.", success=True, dry_run=False))
-        service = LiviaDecisionService(ai_client=ai_client)
+        service = OpenAIGroundedConversationService(ai_client=ai_client)
+        discovery = analyze_message("Vocês têm robô de limpeza HygiBot?")
+        decision = LiviaReply(intent="commercial_interest", reply="Resposta determinística.")
 
-        service.generate_reply([], "Vocês têm robô de limpeza HygiBot?", conversation=conversation, assistant_profile=self.profile)
+        service.generate(
+            tenant=self.tenant,
+            assistant_profile=self.profile,
+            message="Vocês têm robô de limpeza HygiBot?",
+            conversation=conversation,
+            discovery=discovery,
+            decision=decision,
+            knowledge_context=knowledge,
+        )
 
         prompt_text = "\n".join(message["content"] for message in ai_client.calls[0])
         self.assertIn("HygiBot", prompt_text)
@@ -1251,22 +1296,31 @@ class LiviaOptionalAIResponseTests(TestCase):
 
     @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="key-test")
     def test_profile_use_ai_true_allows_ai_attempt(self):
-        conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-profile-on")
-        ai_client = FakeAIClient(OpenAIChatResult(text="Texto refinado.", success=True, dry_run=False))
-        service = LiviaDecisionService(ai_client=ai_client)
+        from assistant_core.services.ai_feature_gates import is_openai_conversation_allowed
 
-        decision = service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
-
-        self.assertEqual(len(ai_client.calls), 1)
-        self.assertEqual(decision.reply, "Texto refinado.")
+        self.assertTrue(is_openai_conversation_allowed(assistant_profile=self.profile))
 
     @override_settings(LIVIA_AI_ENABLED=True, LIVIA_AI_DRY_RUN=False, LIVIA_OPENAI_API_KEY="secret-key-123")
     def test_prompt_does_not_contain_api_key(self):
+        from assistant_core.discovery import analyze_message
+        from assistant_core.services.livia_decision import LiviaReply
+        from assistant_core.services.openai_grounded_conversation import OpenAIGroundedConversationService
+
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-no-secret")
         ai_client = FakeAIClient(OpenAIChatResult(text="Texto refinado.", success=True, dry_run=False))
-        service = LiviaDecisionService(ai_client=ai_client)
+        service = OpenAIGroundedConversationService(ai_client=ai_client)
+        discovery = analyze_message("Quero orçamento para um sistema")
+        decision = LiviaReply(intent="quote_request", reply="Resposta determinística.")
 
-        service.generate_reply([], "Quero orçamento para um sistema", conversation=conversation, assistant_profile=self.profile)
+        service.generate(
+            tenant=self.tenant,
+            assistant_profile=self.profile,
+            message="Quero orçamento para um sistema",
+            conversation=conversation,
+            discovery=discovery,
+            decision=decision,
+            knowledge_context="",
+        )
 
         prompt_text = "\n".join(message["content"] for message in ai_client.calls[0])
         self.assertNotIn("secret-key-123", prompt_text)
@@ -1501,6 +1555,7 @@ class ChatIdempotencyApiTests(TestCase):
             _refine_response_with_ai_if_enabled,
         )
         from assistant_core.services.livia_decision import LiviaReply
+        from assistant_core.services.openai_grounded_conversation import OpenAIConversationResult
 
         profile = AssistantProfile.objects.create(tenant=self.tenant, use_ai=True, is_active=True)
         conversation = Conversation.objects.create(tenant=self.tenant, session_id="ai-replay")
@@ -1530,18 +1585,17 @@ class ChatIdempotencyApiTests(TestCase):
             assistant_message=assistant_message,
             response_payload={"reply": "Resposta determinística", "intent": "quote_request"},
         )
-        def fake_finalize(*args, **kwargs):
-            decision = kwargs["decision"]
-            return LiviaReply(
-                intent=decision.intent,
-                reply="Resposta refinada por IA.",
-                handoff_request_id=decision.handoff_request_id,
-                handoff_reason=decision.handoff_reason,
+
+        def fake_generate(*args, **kwargs):
+            return OpenAIConversationResult(
+                text="Resposta refinada por IA.",
+                used=True,
+                status="completed",
             )
 
         with patch("assistant_core.services.chat_processing._can_refine_with_ai", return_value=True), patch(
-            "assistant_core.services.chat_processing.LiviaDecisionService._finalize_ai_response",
-            side_effect=fake_finalize,
+            "assistant_core.services.openai_grounded_conversation.OpenAIGroundedConversationService.generate",
+            side_effect=fake_generate,
         ):
             payload = _refine_response_with_ai_if_enabled(
                 deterministic_result=deterministic_result,
@@ -1549,6 +1603,7 @@ class ChatIdempotencyApiTests(TestCase):
             )
 
         self.assertEqual(payload["reply"], "Resposta refinada por IA.")
+        self.assertEqual(payload.get("ai_mode"), "openai_conversation")
         assistant_message.refresh_from_db()
         self.assertEqual(assistant_message.content, "Resposta refinada por IA.")
         chat_request.refresh_from_db()
@@ -1592,7 +1647,7 @@ class ChatIdempotencyApiTests(TestCase):
         )
 
         with patch("assistant_core.services.chat_processing._can_refine_with_ai", return_value=True), patch(
-            "assistant_core.services.chat_processing.LiviaDecisionService._finalize_ai_response",
+            "assistant_core.services.openai_grounded_conversation.OpenAIGroundedConversationService.generate",
             side_effect=RuntimeError("ai failure"),
         ):
             payload = _refine_response_with_ai_if_enabled(
@@ -1601,6 +1656,7 @@ class ChatIdempotencyApiTests(TestCase):
             )
 
         self.assertEqual(payload["reply"], "Resposta determinística")
+        self.assertTrue(payload.get("observability", {}).get("ai_fallback_used"))
         assistant_message.refresh_from_db()
         self.assertEqual(assistant_message.content, "Resposta determinística")
         chat_request.refresh_from_db()
@@ -1647,19 +1703,19 @@ class ChatProcessingTransactionBoundaryTests(TransactionTestCase):
         )
         atomic_flags: list[bool] = []
 
-        def fake_finalize(*args, **kwargs):
+        def fake_generate(*args, **kwargs):
+            from assistant_core.services.openai_grounded_conversation import OpenAIConversationResult
+
             atomic_flags.append(connection.in_atomic_block)
-            decision = kwargs["decision"]
-            return LiviaReply(
-                intent=decision.intent,
-                reply="Resposta refinada por IA.",
-                handoff_request_id=decision.handoff_request_id,
-                handoff_reason=decision.handoff_reason,
+            return OpenAIConversationResult(
+                text="Resposta refinada por IA.",
+                used=True,
+                status="completed",
             )
 
         with patch("assistant_core.services.chat_processing._can_refine_with_ai", return_value=True), patch(
-            "assistant_core.services.chat_processing.LiviaDecisionService._finalize_ai_response",
-            side_effect=fake_finalize,
+            "assistant_core.services.openai_grounded_conversation.OpenAIGroundedConversationService.generate",
+            side_effect=fake_generate,
         ):
             _refine_response_with_ai_if_enabled(
                 deterministic_result=deterministic_result,
