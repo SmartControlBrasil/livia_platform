@@ -47,6 +47,7 @@ PEOPLE_ACTIONS = (
 
 EVALUATION_ONLY_LEADS = (
     "precisamos avaliar",
+    "precisamos considerar",
     "a avaliacao ajuda",
     "avaliacao ajuda",
     "deve ser avaliad",
@@ -57,6 +58,49 @@ EVALUATION_ONLY_LEADS = (
     "fatores da avaliacao",
     "avaliar para melhorar",
     "buscar eficiencia",
+    "vale avaliar",
+    "sera um fator",
+    "sera fator",
+    "entendi",
+    "considerar piso",
+    "considerar tipo de piso",
+    "rotina de limpeza",
+)
+
+CONSULTATIVE_SOFT_MODAL_PATTERN = re.compile(
+    r"\bpode ser (?:avaliad|planejad|considerad|ajustad|adaptad|organizad)\b|"
+    r"\bpode variar\b",
+)
+
+CAPABILITY_QUESTION_MARKERS = (
+    "consegue trabalhar",
+    "consegue operar",
+    "consegue superar",
+    "pode trabalhar",
+    "pode operar",
+    "pode apoiar",
+    "pessoas circulando",
+    "circulacao de pessoas",
+    "circulação de pessoas",
+    "com pessoas circul",
+    "fluxo de pessoas",
+    "e seguro oper",
+    "e seguro trabalh",
+    "e adequado para",
+    "funciona com",
+    "da conta de",
+    "e capaz de",
+    "autonomia",
+    "quantas horas",
+    "supera obstacul",
+    "obstacul",
+    "obstácul",
+)
+
+METADATA_LINE_PATTERN = re.compile(
+    r"^(?:#+\s|tags\s*:|nome oficial\s*:|categoria\s*:|fonte\s*:|score\s*:|"
+    r"chunk\s*:|document_id\s*:|source\s*:|referencia\s*:|referência\s*:|\[)",
+    re.IGNORECASE,
 )
 
 LIMITATION_MARKERS = (
@@ -189,6 +233,9 @@ def assess_capability_entailment(
     if not reply_norm or _is_primarily_limitation_reply(reply_norm):
         return CapabilityEntailmentResult()
 
+    if not _should_assess_entailment(message_norm, reply_norm):
+        return CapabilityEntailmentResult()
+
     for spec in TOPIC_SPECS:
         if not _reply_claims_topic(reply_norm, spec):
             continue
@@ -236,9 +283,7 @@ def build_grounded_limitation_reply(
 
     snippet = _relevant_kb_snippet(kb, message_norm)
     if snippet:
-        lead = "A documentação disponível não confirma diretamente isso."
-        if product:
-            lead = f"A documentação disponível não confirma diretamente isso sobre {product}."
+        lead = _limitation_lead(product, message_norm)
         body = snippet.rstrip(".")
         if any(marker in _normalize(snippet) for marker in CONDITIONAL_KB_MARKERS):
             tail = "então esse ponto precisa ser avaliado conforme o ambiente."
@@ -254,11 +299,44 @@ def build_grounded_limitation_reply(
     return "Não encontrei confirmação suficiente na documentação disponível para responder isso com segurança."
 
 
-def _relevant_kb_snippet(kb: str, message_norm: str) -> str:
-    for sentence in re.split(r"(?<=[.!?])\s+|\n+", str(kb or "")):
-        cleaned = str(sentence or "").strip()
-        if not cleaned:
+def sanitize_knowledge_snippet(text: str) -> str:
+    """Remove headings, tags e metadata interna do RAG antes de citar ao visitante."""
+    clean_lines: list[str] = []
+    for raw_line in str(text or "").splitlines():
+        line = re.sub(r"^#+\s*", "", str(raw_line or "").strip())
+        if not line:
             continue
+        if METADATA_LINE_PATTERN.match(line):
+            continue
+        lower = line.lower()
+        if lower in {"curated", "smart-control"} or lower.startswith("tags:"):
+            continue
+        if "curated" in lower and len(line) < 80 and ":" not in line:
+            continue
+        clean_lines.append(line)
+    return "\n".join(clean_lines).strip()
+
+
+def _relevant_kb_snippet(kb: str, message_norm: str) -> str:
+    sanitized = sanitize_knowledge_snippet(kb)
+    if not sanitized:
+        return ""
+
+    sentences: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", sanitized):
+        cleaned = str(sentence or "").strip()
+        if not cleaned or METADATA_LINE_PATTERN.match(cleaned):
+            continue
+        if cleaned.startswith("#"):
+            continue
+        sent_norm = _normalize(cleaned)
+        if len(sent_norm) < 20:
+            continue
+        if any(marker in sent_norm for marker in ("tags:", "nome oficial:", "categoria:", "curated")):
+            continue
+        sentences.append(cleaned)
+
+    for cleaned in sentences:
         sent_norm = _normalize(cleaned)
         for spec in TOPIC_SPECS:
             if not _question_targets_topic(message_norm, spec):
@@ -267,8 +345,8 @@ def _relevant_kb_snippet(kb: str, message_norm: str) -> str:
                 return cleaned[:280]
         if any(marker in sent_norm for marker in CONDITIONAL_KB_MARKERS):
             return cleaned[:280]
-    first = str(kb or "").strip().split(".")[0].strip()
-    return first[:280] if first else ""
+
+    return ""
 
 
 def _normalize(text: str) -> str:
@@ -303,7 +381,56 @@ def _reply_claims_topic(reply_norm: str, spec: dict) -> bool:
     return any(re.search(pattern, reply_norm) for pattern in spec.get("reply_claim_patterns", ()))
 
 
+def _should_assess_entailment(message_norm: str, reply_norm: str) -> bool:
+    """Só avalia entailment em pergunta técnica ou resposta com afirmação forte."""
+    if _is_capability_question(message_norm):
+        return _reply_has_actionable_capability_signal(reply_norm)
+    return False
+
+
+def _is_capability_question(message_norm: str) -> bool:
+    if any(marker in message_norm for marker in CAPABILITY_QUESTION_MARKERS):
+        return True
+    if "?" not in message_norm:
+        return False
+    return bool(
+        re.search(
+            r"\b(?:consegue|pode|suporta|funciona|e seguro|e adequado)\b",
+            message_norm,
+        )
+    )
+
+
+def _reply_has_actionable_capability_signal(reply_norm: str) -> bool:
+    if _is_consultative_soft_reply(reply_norm):
+        return False
+    if _reply_has_strong_positive_claim(reply_norm):
+        return True
+    return False
+
+
+def _is_consultative_soft_reply(reply_norm: str) -> bool:
+    if CONSULTATIVE_SOFT_MODAL_PATTERN.search(reply_norm):
+        return True
+    return _is_evaluation_only_reply(reply_norm)
+
+
+def _limitation_lead(product: str, message_norm: str) -> str:
+    if product and _is_capability_question(message_norm):
+        if any(marker in message_norm for marker in ("pessoas circul", "circulacao de pessoas", "consegue trabalhar", "pode trabalhar")):
+            return (
+                f"A documentação disponível não confirma diretamente se {product} "
+                "pode trabalhar com pessoas circulando."
+            )
+        return f"A documentação disponível não confirma diretamente isso sobre {product}."
+    if product:
+        return f"A documentação disponível não confirma diretamente isso sobre {product}."
+    return "A documentação disponível não confirma diretamente isso."
+
+
 def _reply_claims_people_circulation(reply_norm: str) -> bool:
+    if _is_consultative_soft_reply(reply_norm):
+        return False
     has_condition = any(marker in reply_norm for marker in PEOPLE_CONDITIONS)
     if not has_condition:
         return False
@@ -311,12 +438,11 @@ def _reply_claims_people_circulation(reply_norm: str) -> bool:
         return False
     has_modal = bool(PEOPLE_CAPABILITY_MODAL_PATTERN.search(reply_norm))
     has_action = any(marker in reply_norm for marker in PEOPLE_ACTIONS)
-    has_operational_context = any(
-        token in reply_norm for token in ("limpeza", "ambiente", "operacao", "trabalhar")
-    )
-    if has_modal and (has_action or has_operational_context or has_condition):
+    if has_modal and has_condition:
         return True
-    return has_action and has_condition
+    if has_modal and has_action:
+        return True
+    return has_action and has_condition and has_modal
 
 
 def _is_evaluation_only_reply(reply_norm: str) -> bool:

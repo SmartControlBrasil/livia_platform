@@ -8,6 +8,7 @@ from assistant_core.dialogue_memory import DialogueMemory
 from assistant_core.eval.capability_entailment import (
     assess_capability_entailment,
     build_grounded_limitation_reply,
+    sanitize_knowledge_snippet,
 )
 from assistant_core.services.response_quality_gate import apply_response_quality_gate
 
@@ -302,3 +303,211 @@ class CapabilityEntailmentTests(SimpleTestCase):
                 )
                 self.assertTrue(result.unsupported, msg=llm)
                 self.assertEqual(result.topic, topic, msg=llm)
+
+    def test_contextual_turn_a_galpao_not_blocked(self):
+        kb = _kb("A escolha depende de tipo de piso, fluxo de pessoas, horários e obstáculos.")
+        llm = "Entendi. Precisamos considerar piso e fluxo de pessoas."
+        result = assess_capability_entailment(
+            reply=llm,
+            knowledge_context=kb,
+            current_message="um galpão",
+        )
+        self.assertFalse(result.unsupported)
+        _, diag = apply_response_quality_gate(
+            reply=llm,
+            knowledge_context=kb,
+            current_message="um galpão",
+            memory=DialogueMemory(active_entity="Hygibot Dune"),
+            llm_primary=True,
+        )
+        self.assertFalse(diag.get("capability_claim_blocked"))
+
+    def test_contextual_turn_b_area_piso_not_blocked(self):
+        kb = _kb("A escolha depende de tipo de piso, fluxo de pessoas, horários e obstáculos.")
+        llm = "Vale avaliar fluxo de pessoas e obstáculos."
+        result = assess_capability_entailment(
+            reply=llm,
+            knowledge_context=kb,
+            current_message="3000 m2, piso de concreto",
+        )
+        self.assertFalse(result.unsupported)
+
+    def test_contextual_turn_c_people_fact_not_blocked(self):
+        kb = _kb("A escolha depende do fluxo de pessoas.")
+        llm = "Entendi. O fluxo de pessoas será um fator da avaliação."
+        result = assess_capability_entailment(
+            reply=llm,
+            knowledge_context=kb,
+            current_message="tem muita gente circulando",
+        )
+        self.assertFalse(result.unsupported)
+
+    def test_contextual_llm_with_soft_modal_not_blocked(self):
+        kb = _kb("A escolha depende do fluxo de pessoas.")
+        llm = "Para um galpão, a limpeza pode ser planejada considerando o fluxo de pessoas."
+        result = assess_capability_entailment(
+            reply=llm,
+            knowledge_context=kb,
+            current_message="um galpão",
+        )
+        self.assertFalse(result.unsupported)
+
+    def test_capability_turn_d_still_blocks(self):
+        kb = _kb("A escolha depende do fluxo de pessoas.")
+        llm = "Sim, pode apoiar a limpeza com pessoas circulando."
+        repaired, diag = apply_response_quality_gate(
+            reply=llm,
+            knowledge_context=kb,
+            current_message="ele consegue trabalhar com pessoas circulando?",
+            memory=DialogueMemory(active_entity="Hygibot Dune"),
+            llm_primary=True,
+        )
+        self.assertTrue(diag.get("capability_claim_blocked"))
+        for leak in ("#", "Tags:", "curated", "Nome oficial:", "Categoria:", "source", "document_id", "RAG"):
+            self.assertNotIn(leak.lower(), repaired.lower())
+        self.assertIn("fluxo de pessoas", repaired.lower())
+
+    def test_sanitize_knowledge_snippet_removes_metadata(self):
+        raw = (
+            "# Hygibot Dune\n"
+            "Tags: smart-control, curated\n"
+            "Nome oficial: HygiBot / Dune Bot\n"
+            "Categoria: limpeza profissional\n"
+            "A escolha depende de tipo de piso, fluxo de pessoas, horários e obstáculos."
+        )
+        cleaned = sanitize_knowledge_snippet(raw)
+        self.assertNotIn("#", cleaned)
+        self.assertNotIn("Tags:", cleaned)
+        self.assertNotIn("curated", cleaned.lower())
+        self.assertIn("fluxo de pessoas", cleaned.lower())
+
+    def test_fallback_when_no_clean_snippet_uses_generic_reply(self):
+        kb = _kb(
+            "# Produto X\n"
+            "Tags: smart-control, curated\n"
+            "Nome oficial: Produto X\n"
+            "Categoria: robótica\n"
+            "source: internal\n"
+            "document_id: 17"
+        )
+        repaired = build_grounded_limitation_reply(
+            knowledge_context=kb,
+            current_message="ele consegue trabalhar com pessoas circulando?",
+            active_entity="Produto X",
+        )
+        self.assertIn("confirma", repaired.lower().replace("ã", "a"))
+        self.assertNotIn("ela informa que", repaired.lower())
+        for leak in ("#", "tags:", "curated", "nome oficial:", "categoria:", "source", "document_id", "rag"):
+            self.assertNotIn(leak, repaired.lower())
+
+    def test_scope_contextual_messages_not_blocked(self):
+        kb = _kb("A escolha depende do fluxo de pessoas, horários e obstáculos.")
+        cases = (
+            ("um galpão", "Entendi. Precisamos considerar piso e fluxo de pessoas."),
+            ("3000 m2, piso de concreto", "Vale avaliar fluxo de pessoas e obstáculos."),
+            ("tem muita gente circulando", "Entendi. O fluxo de pessoas será um fator da avaliação."),
+            ("trabalhamos durante a noite", "Os horários de operação precisam entrar na avaliação."),
+            ("há obstáculos", "Vale mapear os obstáculos antes de definir a operação."),
+        )
+        for message, llm in cases:
+            with self.subTest(message=message):
+                result = assess_capability_entailment(
+                    reply=llm,
+                    knowledge_context=kb,
+                    current_message=message,
+                )
+                self.assertFalse(result.unsupported, msg=message)
+
+    def test_soft_modals_allowed_vs_capability_claims_blocked(self):
+        kb = _kb("A escolha depende do fluxo de pessoas.")
+        allowed = (
+            "Isso pode ser avaliado conforme o ambiente.",
+            "A operação pode ser planejada considerando o fluxo.",
+            "Vale considerar o fluxo de pessoas na definição.",
+            "Precisamos avaliar o fluxo de pessoas.",
+        )
+        for llm in allowed:
+            with self.subTest(llm=llm):
+                result = assess_capability_entailment(
+                    reply=llm,
+                    knowledge_context=kb,
+                    current_message="um galpão",
+                )
+                self.assertFalse(result.unsupported, msg=llm)
+
+        blocked = (
+            "Ele pode operar com pessoas circulando.",
+            "Consegue trabalhar com fluxo de pessoas.",
+            "Suporta operação com pessoas no local.",
+            "É adequado para ambientes ocupados.",
+            "É seguro operar com pessoas no local.",
+        )
+        question = "ele consegue trabalhar com pessoas circulando?"
+        for llm in blocked:
+            with self.subTest(llm=llm):
+                result = assess_capability_entailment(
+                    reply=llm,
+                    knowledge_context=kb,
+                    current_message=question,
+                )
+                self.assertTrue(result.unsupported, msg=llm)
+
+    def test_repaired_reply_uses_clean_conditional_not_headings(self):
+        kb = _kb(
+            "# Hygibot Dune\n"
+            "Tags: smart-control, curated\n"
+            "Nome oficial: HygiBot / Dune Bot\n"
+            "Categoria: limpeza profissional\n"
+            "A escolha depende de tipo de piso, fluxo de pessoas, horários, obstáculos e responsáveis operacionais."
+        )
+        repaired = build_grounded_limitation_reply(
+            knowledge_context=kb,
+            current_message="ele consegue trabalhar com pessoas circulando?",
+            active_entity="Hygibot Dune",
+        )
+        self.assertNotIn("#", repaired)
+        self.assertNotIn("Tags:", repaired)
+        self.assertNotIn("curated", repaired.lower())
+        self.assertIn("fluxo de pessoas", repaired.lower())
+
+    def test_smoke_four_turn_sequence(self):
+        kb = _kb(
+            "# Hygibot Dune\n"
+            "Tags: smart-control, curated\n"
+            "A escolha depende de tipo de piso, fluxo de pessoas, "
+            "horários, obstáculos e responsáveis operacionais."
+        )
+        memory = DialogueMemory(active_entity="Hygibot Dune")
+        turns = (
+            (
+                "preciso de um robo de limpeza",
+                "Posso te ajudar a entender opções de robôs de limpeza para o seu cenário.",
+                False,
+            ),
+            (
+                "um galpão",
+                "Entendi. Para um galpão, precisamos considerar piso, área e fluxo de pessoas.",
+                False,
+            ),
+            (
+                "3000 m2, piso de concreto",
+                "Com 3000 m² e piso de concreto, vale avaliar fluxo, obstáculos e rotina de limpeza.",
+                False,
+            ),
+            (
+                "ele consegue trabalhar com pessoas circulando?",
+                "O Hygibot Dune pode apoiar a limpeza em ambientes com circulação de pessoas.",
+                True,
+            ),
+        )
+        for message, llm, should_block in turns:
+            with self.subTest(message=message):
+                _, diag = apply_response_quality_gate(
+                    reply=llm,
+                    knowledge_context=kb,
+                    current_message=message,
+                    memory=memory,
+                    llm_primary=True,
+                )
+                blocked = bool(diag.get("capability_claim_blocked"))
+                self.assertEqual(blocked, should_block, msg=message)
