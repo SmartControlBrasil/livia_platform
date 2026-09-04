@@ -16,6 +16,7 @@ from knowledge_base.models import (
     TenantRagDriveTextStaging,
 )
 from knowledge_base.rag.chunking import RagChunkingError, build_deterministic_chunks, load_chunk_config
+from knowledge_base.rag.entity_catalog import build_chunk_metadata, extract_document_metadata
 from knowledge_base.rag.google_drive_inventory import (
     GOOGLE_DRIVE_SHORTCUT_MIME,
     GoogleDriveApiError,
@@ -413,6 +414,14 @@ def _process_inventory_item(
 
 
 def _persist_exported_document(*, manifest: TenantRagDriveFileManifest, normalized_text: str, text_hash: str, exported_at):
+    document_metadata = extract_document_metadata(
+        file_name=manifest.name,
+        mime_type=manifest.mime_type,
+        relative_path=manifest.relative_path,
+        text=normalized_text,
+        source_modified_time=manifest.drive_modified_time,
+    )
+    document_metadata["source_document_id"] = manifest.drive_file_id
     with transaction.atomic():
         locked = TenantRagDriveFileManifest.objects.select_for_update().get(pk=manifest.pk)
         staging, _ = TenantRagDriveTextStaging.objects.select_for_update().get_or_create(
@@ -442,6 +451,7 @@ def _persist_exported_document(*, manifest: TenantRagDriveFileManifest, normaliz
             ]
         )
 
+        locked.document_metadata = document_metadata
         locked.normalized_text_sha256 = text_hash
         locked.status = (
             TenantRagDriveFileManifest.Status.EXPORTED
@@ -452,6 +462,7 @@ def _persist_exported_document(*, manifest: TenantRagDriveFileManifest, normaliz
         locked.last_error = ""
         locked.save(
             update_fields=[
+                "document_metadata",
                 "normalized_text_sha256",
                 "status",
                 "last_exported_at",
@@ -459,6 +470,7 @@ def _persist_exported_document(*, manifest: TenantRagDriveFileManifest, normaliz
                 "updated_at",
             ]
         )
+        manifest.document_metadata = locked.document_metadata
         manifest.normalized_text_sha256 = locked.normalized_text_sha256
         manifest.status = locked.status
         manifest.last_exported_at = locked.last_exported_at
@@ -558,6 +570,11 @@ def _process_staging_for_chunks(*, staging: TenantRagDriveTextStaging, chunk_con
                         byte_count=record.byte_count,
                         start_char=record.start_char,
                         end_char=record.end_char,
+                        chunk_metadata=build_chunk_metadata(
+                            document_metadata=manifest.document_metadata,
+                            text=record.text,
+                            start_char=record.start_char,
+                        ),
                         status=TenantRagDocumentChunk.Status.ACTIVE,
                         is_active=True,
                     )

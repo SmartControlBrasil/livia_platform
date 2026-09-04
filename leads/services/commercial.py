@@ -8,6 +8,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from assistant_core.conversation_turns import (
+    is_consultative_context_answer,
     is_direct_question,
     is_name_deferred,
     is_need_enrichment,
@@ -222,7 +223,7 @@ class QualificationService:
 
         pending = self.missing_fields(lead, policy=policy)
         collection_active = bool((lead.qualification_data or {}).get(COLLECTION_ACTIVE_KEY))
-        if pending and collection_active:
+        if pending and collection_active and not is_consultative_context_answer(message):
             inferred = infer_pending_field_values(message, pending[0])
             validators = {
                 "name": (normalize_name, is_valid_name),

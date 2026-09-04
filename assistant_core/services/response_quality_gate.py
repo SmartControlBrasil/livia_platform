@@ -70,6 +70,12 @@ def apply_response_quality_gate(
         "answer_shape": "",
         "active_application": getattr(memory, "active_application", "") or "",
     }
+    ambiguity_options = list((getattr(memory, "notes", {}) or {}).get("entity_ambiguity_options") or [])
+    if ambiguity_options:
+        options = ", ".join(str(item) for item in ambiguity_options[:5] if str(item).strip())
+        if options:
+            return f"Você está se referindo a qual modelo: {options}?", {**diagnostics, "followup_strategy": "entity_disambiguation"}
+
     text = strip_meta_rag_phrasing(str(reply or "").strip())
     if text != str(reply or "").strip():
         diagnostics["meta_rag_stripped"] = True
@@ -133,7 +139,7 @@ def apply_response_quality_gate(
     # Follow-up strategy centralizada
     if append_followup is False or should_skip_consultative_followup(current_message=current_message, memory=memory):
         diagnostics["followup_strategy"] = "skipped_direct_ask"
-        text = _strip_known_bad_followups(text, active_domain=memory.active_domain)
+        text = _strip_known_bad_followups(text, active_domain=memory.active_domain, active_topic=memory.active_topic, active_application=getattr(memory, "active_application", "") or "")
     elif append_followup is True:
         follow, follow_diag = select_followup(
             memory=memory,
@@ -146,10 +152,10 @@ def apply_response_quality_gate(
         if follow:
             text = f"{text} {follow}".strip()
         else:
-            text = _strip_known_bad_followups(text, active_domain=memory.active_domain)
+            text = _strip_known_bad_followups(text, active_domain=memory.active_domain, active_topic=memory.active_topic, active_application=getattr(memory, "active_application", "") or "")
     else:
         # Default: sanitiza follow-ups incompatíveis já presentes; não inventa pergunta nova.
-        text = _strip_known_bad_followups(text, active_domain=memory.active_domain)
+        text = _strip_known_bad_followups(text, active_domain=memory.active_domain, active_topic=memory.active_topic, active_application=getattr(memory, "active_application", "") or "")
         diagnostics["followup_strategy"] = "sanitize_existing"
 
     if is_policy_leak_text(text):
@@ -242,7 +248,13 @@ def _strip_incompatible_sentences(
     return " ".join(kept).strip(), removed
 
 
-def _strip_known_bad_followups(text: str, *, active_domain: str = "") -> str:
+def _strip_known_bad_followups(
+    text: str,
+    *,
+    active_domain: str = "",
+    active_topic: str = "",
+    active_application: str = "",
+) -> str:
     bad = (
         "Você pretende começar com poucos produtos ou já tem um catálogo maior?",
         "voce pretende comecar com poucos produtos ou ja tem um catalogo maior?",
@@ -257,18 +269,35 @@ def _strip_known_bad_followups(text: str, *, active_domain: str = "") -> str:
             cleaned,
             flags=re.IGNORECASE,
         )
-        cleaned = re.sub(
-            r"\s*Robô interativo para aproximar crianças e jovens da tecnologia[^.]*\.\s*",
-            " ",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
-        cleaned = re.sub(
-            r"\s*Robo interativo para aproximar criancas e jovens da tecnologia[^.]*\.\s*",
-            " ",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
+        if active_topic == "cleaning_robot" or active_application == "cleaning_robotics":
+            cleaned = re.sub(
+                r"\s*Robô interativo para aproximar crianças e jovens da tecnologia[^.]*\.\s*",
+                " ",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
+            cleaned = re.sub(
+                r"\s*Robo interativo para aproximar criancas e jovens da tecnologia[^.]*\.\s*",
+                " ",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
+        if active_topic == "educational_robot" or active_application == "educational_robotics":
+            cleaned = re.sub(
+                r"(?i)\s*Entendi, isso ajuda a detalhar a necessidade\. Qual é o ambiente e o tipo de piso onde a limpeza acontece\?\s*",
+                " ",
+                cleaned,
+            )
+            cleaned = re.sub(
+                r"(?i)\s*Qual é o ambiente e o tipo de piso onde a limpeza acontece\?\s*",
+                " ",
+                cleaned,
+            )
+            cleaned = re.sub(
+                r"(?i)\s*Entendi, isso ajuda a detalhar a necessidade\.\s*$",
+                " ",
+                cleaned,
+            )
     if active_domain == "automation":
         cleaned = re.sub(
             r"(?i)\s*Trabalhamos com rob[oó]tica de servi[cç]o[^.]*\.\s*",

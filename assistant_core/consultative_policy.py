@@ -238,7 +238,19 @@ def decide_collection(*, current_message: str, conversation=None, lead_draft=Non
 
     trigger = detect_collection_trigger(current_message)
     if collection_already_active(conversation, lead_draft=lead_draft):
-        return CollectionDecision(True, trigger=trigger if trigger != CollectionTrigger.NONE else CollectionTrigger.BUDGET, reason="collection_already_active")
+        from assistant_core.conversation_turns import is_consultative_context_answer
+
+        if trigger != CollectionTrigger.NONE:
+            return CollectionDecision(True, trigger=trigger, reason="collection_already_active")
+        from assistant_core.conversation_turns import is_direct_question, is_need_enrichment
+
+        if (
+            is_consultative_context_answer(current_message)
+            or is_need_enrichment(current_message)
+            or is_direct_question(current_message)
+        ):
+            return CollectionDecision(False, reason="consultative_context_during_collection")
+        return CollectionDecision(True, trigger=CollectionTrigger.BUDGET, reason="collection_already_active")
     if trigger != CollectionTrigger.NONE:
         return CollectionDecision(True, trigger=trigger, reason=f"explicit_{trigger.value}")
     # Visitor volunteered contact data together with commercial/need context.

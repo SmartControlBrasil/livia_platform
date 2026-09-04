@@ -57,6 +57,7 @@ def build_knowledge_context_result(
     active_domain: str = "",
     active_entity: str = "",
     active_application: str = "",
+    active_subject: dict | None = None,
     retrieval_query_original: str = "",
 ) -> KnowledgeContextResult:
     semantic = _build_semantic_context_result(
@@ -68,6 +69,7 @@ def build_knowledge_context_result(
         active_domain=active_domain,
         active_entity=active_entity,
         active_application=active_application,
+        active_subject=active_subject,
         retrieval_query_original=retrieval_query_original or str(message or ""),
     )
     if semantic.text:
@@ -79,6 +81,7 @@ def build_knowledge_context_result(
         limit=limit,
         active_domain=active_domain,
         active_entity=active_entity,
+        active_application=active_application,
     )
     if keyword_text:
         return KnowledgeContextResult(
@@ -125,7 +128,8 @@ def _build_semantic_context_result(
     active_domain: str,
     active_entity: str,
     active_application: str = "",
-    retrieval_query_original: str,
+    active_subject: dict | None = None,
+    retrieval_query_original: str = "",
 ) -> KnowledgeContextResult:
     try:
         result = retrieve_context(
@@ -137,6 +141,7 @@ def _build_semantic_context_result(
             active_domain=active_domain,
             active_entity=active_entity,
             active_application=active_application,
+            active_subject=active_subject,
         )
     except Exception:  # noqa: BLE001 - chat nunca quebra por RAG
         logger.exception(
@@ -207,8 +212,15 @@ def _build_semantic_context_result(
         mode="semantic",
         retrieval_query_original=retrieval_query_original,
         retrieval_query_contextual=str(contextual_query or message or ""),
-        entity_match=bool(active_entity),
+        entity_match=bool(active_entity or active_subject),
         domain_match=bool(active_domain),
+        extras={
+            "active_subject": getattr(result, "active_subject", None) or {},
+            "document_ids_considered": list(getattr(result, "document_ids_considered", ()) or ()),
+            "document_ids_used": list(getattr(result, "document_ids_used", ()) or ()),
+            "retrieval_method": getattr(result, "retrieval_method", "") or "semantic",
+            "evidence_status": getattr(result, "evidence_status", "") or getattr(result, "status", ""),
+        },
     )
 
 
@@ -220,6 +232,7 @@ def _build_keyword_context(
     limit,
     active_domain: str = "",
     active_entity: str = "",
+    active_application: str = "",
 ) -> tuple[str, dict]:
     if tenant is None:
         return "", {}
@@ -256,7 +269,11 @@ def _build_keyword_context(
                     continue
         excerpt_n = excerpt.lower()
         title_n = title.lower()
-        cleaning_focus = entity_n in {"duno", "dune", "hygibot"} or "limpeza" in f"{message} {active_entity}".lower()
+        cleaning_focus = (
+            entity_n in {"duno", "dune", "hygibot"}
+            or "limpeza" in f"{message} {active_entity}".lower()
+            or active_application == "cleaning_robotics"
+        )
         if cleaning_focus:
             educational = any(token in f"{title_n} {excerpt_n}" for token in ("crianças", "criancas", "educacional", "little bot", "liro"))
             cleaning_signal = any(token in f"{title_n} {excerpt_n}" for token in ("limpeza", "lavar", "varrer", "aspirar", "duno", "dune", "hygibot"))

@@ -55,6 +55,44 @@ INVALID_NAME_SNIPPETS = (
     "automação",
     "manutencao",
     "manutenção",
+    "limpeza",
+    "robo",
+    "robô",
+    "galpao",
+    "galpão",
+    "concreto",
+    "porcelanato",
+)
+
+NEED_STATEMENT_MARKERS = (
+    "preciso",
+    "quero",
+    "gostaria",
+    "tenho interesse",
+    "estou procurando",
+)
+
+PRODUCT_CONTEXT_SNIPPETS = (
+    "robo",
+    "robô",
+    "robotica",
+    "robótica",
+    "limpeza",
+    "educacional",
+    "escola",
+    "automacao",
+    "automação",
+    "orcamento",
+    "orçamento",
+    "cotacao",
+    "cotação",
+    "proposta",
+    "site",
+    "sistema",
+    "depósito",
+    "deposito",
+    "galpao",
+    "galpão",
 )
 
 INVALID_COMPANY_OR_CITY_SNIPPETS = (
@@ -261,13 +299,31 @@ def is_valid_name(value) -> bool:
         return False
     if any(snippet in normalized for snippet in INVALID_NAME_SNIPPETS):
         return False
+    if any(marker in normalized for marker in NEED_STATEMENT_MARKERS):
+        return False
+    from assistant_core.conversation_turns import looks_like_environment_answer
+
+    if looks_like_environment_answer(normalized):
+        return False
     if re.search(r"\d", cleaned):
+        return False
+    if len(normalized.split()) > 4:
         return False
     return bool(re.fullmatch(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .'-]{1,119}", cleaned))
 
 
 def is_valid_company(value) -> bool:
-    return _is_valid_company_or_city(value, allow_numbers=True, invalid_values={"empresa", "minha empresa", "teste"})
+    cleaned = strip_repetition_noise(value)
+    normalized = normalize_text(cleaned)
+    from assistant_core.conversation_turns import looks_like_environment_answer
+
+    if looks_like_environment_answer(normalized):
+        return False
+    if any(marker in normalized for marker in NEED_STATEMENT_MARKERS):
+        return False
+    if any(snippet in normalized for snippet in PRODUCT_CONTEXT_SNIPPETS):
+        return False
+    return _is_valid_company_or_city(cleaned, allow_numbers=True, invalid_values={"empresa", "minha empresa", "teste"})
 
 
 def is_valid_city(value) -> bool:
@@ -327,6 +383,11 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
     if not text or not pending or "?" in text or len(text) > 80:
         return {}
 
+    from assistant_core.conversation_turns import is_consultative_context_answer
+
+    if is_consultative_context_answer(text):
+        return {}
+
     normalized = normalize_text(text)
     reject_markers = (
         "preciso",
@@ -372,6 +433,9 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
             if is_valid_company(company_candidate) and len(company_candidate.split()) <= 6:
                 return {"company": company_candidate}
             return {}
+        company_from_pattern = _normalize_company_candidate(text)
+        if company_from_pattern and is_valid_company(company_from_pattern):
+            return {"company": company_from_pattern}
         if is_valid_name(name_candidate) and 1 <= len(name_candidate.split()) <= 4:
             return {"name": name_candidate}
         # Resposta nua curta sem marcadores comerciais: pode ser empresa (ex.: "Ferragens Silva").
@@ -453,6 +517,22 @@ def _extract_phone(text: str) -> str:
     if len(digits) in {12, 13} and digits.startswith("55"):
         digits = digits[2:]
     return digits
+
+
+def _normalize_company_candidate(text: str) -> str:
+    raw = " ".join(str(text or "").strip().split())
+    normalized = normalize_text(raw)
+    if not normalized:
+        return ""
+    if normalized.startswith("grupo") and len(normalized) > 5:
+        if " " in raw:
+            return raw
+        suffix = normalized[5:].strip()
+        if len(suffix) >= 3:
+            return f"Grupo {suffix.title()}"
+    if re.search(r"\b(ltda|s\.?a\.?|me|epp|industria|indústria)\b", normalized):
+        return raw[:120]
+    return ""
 
 
 def _extract_name(text: str) -> str:

@@ -76,6 +76,7 @@ CONTEXT_TOKEN_ENRICHMENTS = (
     "churrasqueira", "pia", "ilha", "frontao", "frontão", "cuba", "lavabo",
     "banheiro", "cozinha", "escola", "clp", "ihm", "mitsubishi", "xyron",
     "python", "site", "loja", "orcamento", "orçamento", "sim", "nao", "não",
+    "galpao", "galpão", "armazem", "armazém", "concreto", "porcelanato", "epoxi", "epóxi",
 )
 
 
@@ -84,6 +85,142 @@ def normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", normalized)
     normalized = "".join(char for char in normalized if not unicodedata.combining(char))
     return re.sub(r"\s+", " ", normalized)
+
+
+TECHNICAL_REQUIREMENT_TERMS = (
+    ("bncc", "atendimento à BNCC"),
+    ("certificado", "certificação"),
+    ("certificacao", "certificação"),
+    ("certificação", "certificação"),
+    ("nasa", "certificação ou relação com a NASA"),
+    ("autonomia", "autonomia"),
+    ("bateria", "bateria"),
+    ("recarga", "recarga"),
+    ("carrega", "recarga"),
+    ("carregar", "recarga"),
+    ("tomada", "alimentação/recarga"),
+    ("sensor", "sensores"),
+    ("capacidade", "capacidade"),
+    ("tensao", "tensão de alimentação"),
+    ("tensão", "tensão de alimentação"),
+    ("voltagem", "tensão de alimentação"),
+    ("garantia", "garantia"),
+    ("epoxi", "piso epóxi"),
+    ("epóxi", "piso epóxi"),
+    ("porcelanato", "porcelanato"),
+    ("ip67", "certificação IP67"),
+    ("peso", "peso operacional"),
+    ("pesa", "peso operacional"),
+)
+
+
+def _unsupported_requirement_reply(knowledge_context: str, *, current_message: str = "") -> str:
+    msg = normalize_text(current_message)
+    if not msg:
+        return ""
+    kb_content = _knowledge_content_text(knowledge_context)
+    kb = normalize_text(kb_content)
+    if not kb:
+        return ""
+    missing_labels = []
+    for term, label in TECHNICAL_REQUIREMENT_TERMS:
+        if "nasa" in msg and label == "certificação":
+            continue
+        if term in msg and (_term_missing_from_kb(term, kb) or _term_marked_not_documented(kb_content, term)) and label not in missing_labels:
+            missing_labels.append(label)
+    if not missing_labels:
+        return ""
+
+    supported = synthesize_deterministic_reply(
+        knowledge_context,
+        base_reply="",
+        max_sentences=1,
+        current_message="visão geral do item mencionado",
+        active_application="",
+    )
+    missing = ", ".join(missing_labels[:2])
+    if supported:
+        return f"A documentação disponível confirma: {supported} Mas não encontrei confirmação sobre {missing} na documentação recuperada."
+    return f"Não encontrei confirmação sobre {missing} na documentação disponível."
+
+
+def _direct_technical_fact_reply(knowledge_context: str, *, current_message: str = "") -> str:
+    msg_n = normalize_text(current_message)
+    kb_text = _knowledge_content_text(knowledge_context)
+    if not msg_n or not kb_text.strip():
+        return ""
+    wanted: tuple[str, ...] = ()
+    if any(token in msg_n for token in ("autonomia", "bateria", "dura", "duracao", "duração")):
+        wanted = ("autonomia", "bateria", "horas")
+    elif any(token in msg_n for token in ("tensao", "tensão", "voltagem", "carrega", "carregar", "estacao", "estação")):
+        wanted = ("tensao", "tensão", "voltagem", "alimentacao", "alimentação", " v")
+    elif any(token in msg_n for token in ("peso", "pesa")):
+        wanted = ("peso", " kg")
+    if not wanted:
+        return ""
+    candidates = []
+    cleaned = re.sub(r"#+\s*", " ", kb_text)
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", cleaned):
+        sentence = " ".join(sentence.split()).strip(" -•#")
+        if len(sentence) < 8:
+            continue
+        sentence_n = normalize_text(sentence)
+        weight = sum(1 for token in wanted if token.strip() and token in sentence_n)
+        if weight:
+            candidates.append((weight, sentence))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: (-item[0], len(item[1])))
+    return strip_meta_rag_phrasing(candidates[0][1])
+
+
+def _term_missing_from_kb(term: str, kb: str) -> bool:
+    term_n = normalize_text(term)
+    if term_n in {"bateria", "dura", "duração", "duracao"} and "autonomia" in kb:
+        return False
+    if term_n in {"pesa", "peso"} and "peso" in kb:
+        return False
+    if term_n in {"tensao", "tensão", "voltagem", "carrega", "carregar", "tomada"} and any(token in kb for token in ("tensao", "tensão", "voltagem", "alimentacao", "alimentação", "220 v", "110 v", "380 v")):
+        return False
+    return term_n not in kb
+
+
+def _term_marked_not_documented(kb_content: str, term: str) -> bool:
+    term_n = normalize_text(term)
+    for line in str(kb_content or "").splitlines():
+        line_n = normalize_text(line)
+        if term_n not in line_n:
+            continue
+        if any(marker in line_n for marker in ("nao documentado", "não documentado", "nao afirmar", "não afirmar", "sem documentacao", "sem documentação")):
+            return True
+    return False
+
+
+def _knowledge_content_text(knowledge_context: str) -> str:
+    text = str(knowledge_context or "")
+    if "[KNOWLEDGE_BASE]" not in text.upper():
+        return text
+    parts: list[str] = []
+    capture = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        lowered = line.lower()
+        upper = line.upper()
+        if upper.startswith(("[KNOWLEDGE_BASE]", "[/KNOWLEDGE_BASE]")):
+            capture = False
+            continue
+        if lowered.startswith(("fonte:", "referência:", "referencia:", "score:")):
+            capture = False
+            continue
+        if lowered.startswith(("conteúdo:", "conteudo:")):
+            capture = True
+            remainder = line.split(":", 1)[1].strip()
+            if remainder:
+                parts.append(remainder)
+            continue
+        if capture and line:
+            parts.append(line)
+    return chr(10).join(parts) if parts else text
 
 
 def is_generic_fallback_reply(reply: str) -> bool:
@@ -110,6 +247,12 @@ def synthesize_deterministic_reply(
     active_application: str = "",
 ) -> str:
     shape = detect_answer_shape(current_message)
+    unsupported_reply = _unsupported_requirement_reply(knowledge_context, current_message=current_message)
+    if unsupported_reply:
+        return unsupported_reply
+    direct_fact = _direct_technical_fact_reply(knowledge_context, current_message=current_message)
+    if direct_fact:
+        return direct_fact
     hints = _extract_safe_bits(knowledge_context)
     hints = _select_primary_bits(
         hints,
@@ -117,6 +260,7 @@ def synthesize_deterministic_reply(
         active_domain=active_domain,
         active_application=active_application,
     )
+    hints = _prioritize_answer_sentences(hints, current_message=current_message)
     synthesized = _sentences_from_bits(hints, max_sentences=max_sentences, max_chars=max_chars)
     synthesized = strip_meta_rag_phrasing(synthesized)
     synthesized = _apply_answer_shape(synthesized, shape=shape, current_message=current_message, active_application=active_application)
@@ -203,11 +347,16 @@ def _select_primary_bits(
                 weight += 3
             if "gourmet" in hint_n and "cozinha" not in hint_n:
                 weight -= 3
-        if app == "educational_robotics" or "escola" in msg_n:
+        if app == "educational_robotics" or ("escola" in msg_n and "limpeza" not in msg_n):
             if any(token in hint_n for token in ("liro", "educacional", "escola")):
                 weight += 3
             if any(token in hint_n for token in ("limpeza", "duno", "mitsubishi")):
                 weight -= 3
+        if app == "cleaning_robotics" or ("limpeza" in msg_n and "escola" not in msg_n):
+            if any(token in hint_n for token in ("limpeza", "duno", "dune", "hygibot", "lavar", "varrer", "aspirar", "galpao", "galpão", "facilities")):
+                weight += 3
+            if any(token in hint_n for token in ("liro", "educacional", "escola", "crianca", "criança")):
+                weight -= 4
         # lexical overlap
         overlap = sum(1 for token in msg_n.split() if len(token) > 3 and token in hint_n)
         weight += min(overlap, 3)
@@ -215,6 +364,32 @@ def _select_primary_bits(
     scored.sort(key=lambda item: item[0], reverse=True)
     primary = [hint for weight, hint in scored if weight >= 0][:2]
     return primary or [scored[0][1]]
+
+
+def _prioritize_answer_sentences(hints: list[str], *, current_message: str = "") -> list[str]:
+    msg_n = normalize_text(current_message)
+    if not hints or not msg_n:
+        return hints
+    wanted: tuple[str, ...] = ()
+    if any(token in msg_n for token in ("autonomia", "bateria", "dura", "duracao", "duração")):
+        wanted = ("autonomia", "bateria", "horas")
+    elif any(token in msg_n for token in ("tensao", "tensão", "voltagem", "carrega", "carregar", "estacao", "estação")):
+        wanted = ("tensao", "tensão", "voltagem", "alimentacao", "alimentação", "220 v", "380 v")
+    elif any(token in msg_n for token in ("peso", "pesa")):
+        wanted = ("peso", "kg")
+    elif any(token in msg_n for token in ("garantia", "certificacao", "certificação", "ip67")):
+        wanted = ("garantia", "certificacao", "certificação", "ip67")
+    if not wanted:
+        return hints
+    sentences: list[str] = []
+    for hint in hints:
+        sentences.extend(part.strip() for part in re.split(r"(?<=[.!?])\s+", hint) if part.strip())
+    ranked = sorted(
+        sentences,
+        key=lambda sentence: sum(1 for token in wanted if token in normalize_text(sentence)),
+        reverse=True,
+    )
+    return ranked or hints
 
 
 def _apply_answer_shape(
@@ -421,24 +596,17 @@ def _clean_bit(item: str) -> str:
         if lowered_full.startswith(prefix):
             clipped = clipped[len(prefix) :].strip(" :-•#")
             break
-    body_match = re.search(
-        r"((?:A|O|Os|As|Um|Uma|Este|Esta|A\s+Grani|A\s+Smart|Granimármores|Granimarmores|Smart\s+Control|Robô|Robo|O\s+Duno|O\s+HygiBot)[^.]{25,}[.!?]?)",
-        clipped,
-    )
-    if body_match:
-        clipped = body_match.group(1).strip()
-    else:
-        capital = re.search(r"[A-ZÁÉÍÓÚÂÊÔÃÕÇ][^.]{39,}[.!]?", clipped)
-        if capital:
-            clipped = capital.group(0).strip()
+    capital = re.search(r"[A-ZÁÉÍÓÚÂÊÔÃÕÇ].{11,}", clipped)
+    if capital:
+        clipped = capital.group(0).strip()
     clipped = re.sub(r"`?templates/institutional/[^`\s]+`?", "", clipped)
     clipped = re.sub(r"\s+", " ", clipped).strip()
-    # Descarta cortes de título tipo "O / Little Bot Categoria:"
+    # Descarta cortes de título com barra/categoria antes do corpo público.
     if re.match(r"^[A-Za-zÀ-ÿ]?\s*/\s*[A-Za-z]", clipped) or "categoria:" in clipped.lower()[:40]:
-        body = re.search(r"\b((?:Robô|Robo|Indicar|Atendemos|Desenvolvemos|Integra|Apoia|Apoiar)\b.+)$", clipped)
+        body = re.search(r"\b((?:Robô|Robo|Indicar|Atendemos|Desenvolvemos|Integra|Apoia|Apoiar|[A-ZÁÉÍÓÚÂÊÔÃÕÇ][A-Za-zÀ-ÿ0-9-]+(?:\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ]?[A-Za-zÀ-ÿ0-9-]+){0,4})\b.+)$", clipped)
         clipped = body.group(1).strip() if body else ""
     clipped = clipped[:280].strip(" -•#")
-    if len(clipped) < 40:
+    if len(clipped) < 12:
         return ""
     if clipped and clipped[0].islower():
         capital = re.search(r"[A-ZÁÉÍÓÚÂÊÔÃÕÇ].{39,}", clipped)
@@ -462,7 +630,7 @@ def _sentences_from_bits(bits: list[str], *, max_sentences: int, max_chars: int)
         for part in re.split(r"(?<=[.!?])\s+", hints):
             clean = " ".join(part.split()).strip(" -•#")
             clean = re.sub(r"^#+\s*", "", clean).strip()
-            if len(clean) < 35:
+            if len(clean) < 12:
                 continue
             lowered = clean.lower()
             if lowered.startswith(("tags:", "fonte:", "score:", "##", "nome oficial:", "categoria:", "documento:")):
@@ -477,7 +645,7 @@ def _sentences_from_bits(bits: list[str], *, max_sentences: int, max_chars: int)
                     if len(left.split()) <= 6 and not after.endswith((".", "!", "?")):
                         continue
                     clean = after
-            if len(clean) < 35:
+            if len(clean) < 12:
                 continue
             lowered = clean.lower()
             if lowered.startswith(TITLE_PREFIXES) or any(marker in lowered for marker in META_MARKERS):

@@ -43,6 +43,18 @@ class DialogueMemoryGapCuradoriaTests(SimpleTestCase):
         self.assertEqual(memory.active_domain, "robotics")
         self.assertEqual(memory.active_topic, "educational_robot")
 
+    def test_bncc_keeps_liro_context_educational(self):
+        memory = DialogueMemory(active_entity="LIRO", active_domain="robotics", active_topic="educational_robot")
+        update_dialogue_memory_from_turn(memory=memory, current_message="ele atende a BNCC robótica?")
+        self.assertEqual(memory.active_entity, "LIRO")
+        self.assertEqual(memory.active_domain, "robotics")
+        self.assertEqual(memory.active_topic, "educational_robot")
+        self.assertEqual(memory.active_application, "educational_robotics")
+        _, contextual = build_contextual_retrieval_query(current_message="ele atende a BNCC robótica?", memory=memory)
+        self.assertIn("LIRO", contextual)
+        self.assertIn("robótica educacional", contextual)
+        self.assertNotIn("robô de limpeza", contextual)
+
     def test_duno_price_is_policy_not_invention(self):
         self.assertTrue(is_conceptual_price_question("quanto custa o Duno?"))
         reply = build_conceptual_price_reply(current_message="quanto custa o Duno?")

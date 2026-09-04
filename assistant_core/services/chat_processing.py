@@ -59,6 +59,7 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
         history=history_preview,
         need_summary=memory.active_need,
         commercial_trigger=commercial,
+        tenant=tenant,
     )
     original_query, contextual_query = build_contextual_retrieval_query(
         current_message=user_message,
@@ -80,6 +81,7 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
         active_domain=memory.active_domain,
         active_entity=memory.active_entity,
         active_application=memory.active_application,
+        active_subject=memory.active_knowledge_subject,
         retrieval_query_original=original_query,
     )
     knowledge_context = knowledge_result.text
@@ -221,6 +223,7 @@ def _persist_chat_processing_state(
             "followup_strategy": gate_diagnostics.get("followup_strategy", ""),
             "policy_leak_blocked": bool(gate_diagnostics.get("policy_leak_blocked")),
             "policy_chunk_selected": 0,
+            "active_subject": getattr(dialogue_memory, "active_knowledge_subject", {}) if dialogue_memory is not None else {},
             "contextual_query_used": bool(
                 dialogue_memory
                 and dialogue_memory.retrieval_query_contextual

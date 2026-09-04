@@ -75,6 +75,51 @@ REGION_QUESTION_MARKERS = (
     "cidade",
 )
 
+TECHNICAL_REQUIREMENT_TERMS = (
+    "bncc",
+    "certificado",
+    "certificacao",
+    "certificação",
+    "nasa",
+    "autonomia",
+    "bateria",
+    "recarga",
+    "carrega",
+    "carregar",
+    "tomada",
+    "sensor",
+    "sensores",
+    "capacidade",
+    "tensao",
+    "tensão",
+    "voltagem",
+    "garantia",
+    "epoxi",
+    "epóxi",
+    "porcelanato",
+    "ip67",
+    "peso",
+    "pesa",
+)
+
+PRODUCT_OR_APPLICATION_TERMS = (
+    "liro",
+    "little bot",
+    "littlebot",
+    "duno",
+    "dune",
+    "hygibot",
+    "orbit",
+    "patrol",
+    "neobot",
+    "buddy",
+    "xyron",
+    "educacional",
+    "escola",
+    "limpeza",
+    "patrulhamento",
+)
+
 
 def assess_evidence_sufficiency(
     *,
@@ -139,6 +184,21 @@ def assess_evidence_sufficiency(
             status=EvidenceSufficiency.INSUFFICIENT,
             reason="topic_not_in_knowledge_base",
             category="missing_topic",
+            retrieval_score=max_score,
+            chunk_ids=ids,
+        )
+
+    requirement_gap = _technical_requirement_gap(msg, kb)
+    if requirement_gap:
+        status = (
+            EvidenceSufficiency.INSUFFICIENT
+            if "nasa" in requirement_gap
+            else EvidenceSufficiency.PARTIAL if _has_product_or_application_overlap(msg, kb) else EvidenceSufficiency.INSUFFICIENT
+        )
+        return EvidenceAssessment(
+            status=status,
+            reason=requirement_gap,
+            category="missing_technical_requirement",
             retrieval_score=max_score,
             chunk_ids=ids,
         )
@@ -301,3 +361,43 @@ def effective_synthesis_mode(*, base_mode: str, assessment: EvidenceAssessment) 
     if assessment.status == EvidenceSufficiency.INSUFFICIENT:
         return "insufficient_safe"
     return base_mode
+
+
+def _technical_requirement_gap(message: str, kb: str) -> str:
+    missing = [
+        term
+        for term in TECHNICAL_REQUIREMENT_TERMS
+        if term in message and (term not in kb or _term_marked_not_documented(kb, term))
+    ]
+    missing = [term for term in missing if not _term_supported_by_synonym(term, kb)]
+    if not missing:
+        return ""
+    if "nasa" in missing:
+        return "technical_requirement_not_in_knowledge_base:nasa"
+    return "technical_requirement_not_in_knowledge_base:" + ",".join(missing[:3])
+
+
+def _term_supported_by_synonym(term: str, kb: str) -> bool:
+    if term in {"bateria"} and "autonomia" in kb:
+        return True
+    if term in {"peso", "pesa"} and "peso" in kb:
+        return True
+    if term in {"tensao", "tensão", "voltagem", "carrega", "carregar", "tomada"} and any(token in kb for token in ("tensao", "tensão", "voltagem", "alimentacao", "alimentação", "220 v", "110 v", "380 v")):
+        return True
+    return False
+
+
+def _has_product_or_application_overlap(message: str, kb: str) -> bool:
+    if any(term in message and term in kb for term in PRODUCT_OR_APPLICATION_TERMS):
+        return True
+    has_pronoun_reference = any(term in message for term in ("ele", "esse", "essa", "este", "esta", "modelo", "robo", "robô"))
+    return has_pronoun_reference and any(term in kb for term in PRODUCT_OR_APPLICATION_TERMS)
+
+
+def _term_marked_not_documented(kb: str, term: str) -> bool:
+    for sentence in re.split(r"(?<=[.!?;])\s+|" + chr(10) + r"+", kb):
+        if term not in sentence:
+            continue
+        if any(marker in sentence for marker in ("nao documentado", "não documentado", "nao afirmar", "não afirmar", "sem documentacao", "sem documentação")):
+            return True
+    return False

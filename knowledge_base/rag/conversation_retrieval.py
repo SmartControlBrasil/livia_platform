@@ -43,6 +43,8 @@ class RagRetrievedChunk:
     source_reference: str
     chunk_sha256: str
     embedding_id: int
+    document_metadata: dict | None = None
+    chunk_metadata: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,11 @@ class RagRetrievalResult:
     selected_chars: int = 0
     formatted_context_chars: int = 0
     chunks_discarded_by_budget: int = 0
+    active_subject: dict | None = None
+    document_ids_considered: tuple[int, ...] = ()
+    document_ids_used: tuple[int, ...] = ()
+    retrieval_method: str = "semantic"
+    evidence_status: str = ""
 
     @property
     def context_text(self) -> str:
@@ -251,6 +258,7 @@ def _dedupe_and_limit(
     active_domain: str = "",
     active_entity: str = "",
     active_application: str = "",
+    active_subject: dict | None = None,
     query: str = "",
     contextual_query: str = "",
 ) -> tuple[list[RagRetrievedChunk], _SelectionStats, dict]:
@@ -275,7 +283,8 @@ def _dedupe_and_limit(
         # Lightweight name hints from related objects when available later.
         boosted.append((embedding, score, boost))
 
-    chunk_ids = [embedding.chunk_id for embedding, score, _boost in boosted if score >= threshold]
+    preliminary_floor = -1.0 if active_subject else threshold
+    chunk_ids = [embedding.chunk_id for embedding, score, _boost in boosted if score >= preliminary_floor]
     chunks_by_id = {
         chunk.id: chunk
         for chunk in TenantRagDocumentChunk.objects.filter(
@@ -295,6 +304,11 @@ def _dedupe_and_limit(
     query_n = normalize_text(str(query or contextual_query or ""))
     wants_software = any(token in query_n for token in ("site", "website", "loja virtual", "ecommerce", "django", "python", "sistema web"))
     wants_school = any(token in query_n for token in ("escola", "educacional", "professor", "aluno", "liro"))
+    from knowledge_base.rag.content_classification import infer_robotics_family, robotics_families_compatible
+
+    requested_robotics_family = infer_robotics_family(text=query_n, application=application)
+    wants_cleaning = requested_robotics_family == "cleaning" or application == "cleaning_robotics"
+    wants_educational = requested_robotics_family == "educational" or application == "educational_robotics"
     wants_stairs = "escada" in query_n or application == "stairs"
     wants_gourmet = "gourmet" in query_n or application == "gourmet_countertop"
     wants_kitchen = application in {"kitchen_countertop", "cooktop_countertop"} or any(
@@ -306,6 +320,9 @@ def _dedupe_and_limit(
     wants_measurement = any(token in query_n for token in ("medicao", "medição", "medida", "fotos", "planta"))
     wants_lineup = any(token in query_n for token in ("quais robos", "quais robôs", "quais modelos", "linha xyron"))
     wants_automation = active_domain == "automation" or any(token in query_n for token in ("mitsubishi", "clp", "ihm", "automacao"))
+    subject_doc_ids = {int(item) for item in (active_subject or {}).get("source_document_ids", []) if str(item).isdigit() or isinstance(item, int)}
+    comparative = _is_comparative_query(query_n)
+    has_subject_candidate = bool(subject_doc_ids) and any(embedding.manifest_id in subject_doc_ids for embedding, _score, _b in boosted)
 
     for embedding, score, _ in boosted:
         chunk = chunks_by_id.get(embedding.chunk_id)
@@ -323,6 +340,11 @@ def _dedupe_and_limit(
         is_gourmet_doc = "gourmet" in blob_n and "perguntas frequentes" not in blob_n
         is_kitchen_doc = any(token in blob_n for token in ("cozinha", "cooktop", "bancada de cozinha", "perguntas frequentes", "materiais", "melhor pedra"))
         is_materials_faq = any(token in blob_n for token in ("perguntas frequentes", "melhor pedra", "marmores, granitos e materiais", "materiais"))
+        if subject_doc_ids and chunk is not None:
+            if chunk.manifest_id in subject_doc_ids:
+                adjusted += 0.75
+            elif has_subject_candidate and not comparative:
+                adjusted -= 0.45
         if entity_n and entity_n in blob:
             adjusted += 0.35
         if entity_n == "duno" and any(token in blob for token in ("dune", "hygibot", "limpeza")):
@@ -338,6 +360,16 @@ def _dedupe_and_limit(
                 adjusted -= 0.35
         if wants_school and any(token in blob_n for token in ("liro", "littlebot", "little bot", "educacional", "escola")):
             adjusted += 0.4
+        if wants_cleaning:
+            if any(token in blob_n for token in ("limpeza", "lavar", "varrer", "aspirar", "duno", "dune", "hygibot", "facilities", "galpao", "galpão", "piso")):
+                adjusted += 0.45
+            if any(token in blob_n for token in ("liro", "littlebot", "little bot", "educacional", "criancas", "crianças", "escola")):
+                adjusted -= 0.5
+        if wants_educational and not wants_cleaning:
+            if any(token in blob_n for token in ("liro", "littlebot", "little bot", "educacional", "escola")):
+                adjusted += 0.4
+            if any(token in blob_n for token in ("limpeza", "duno", "dune", "hygibot", "lavar", "varrer")):
+                adjusted -= 0.45
         if wants_automation:
             if any(token in blob_n for token in ("mitsubishi", "clp", "ihm", "automacao", "automação")):
                 adjusted += 0.45
@@ -381,6 +413,8 @@ def _dedupe_and_limit(
         chunk = chunks_by_id.get(embedding.chunk_id)
         if chunk is None or chunk.tenant_id != embedding.tenant_id:
             continue
+        if subject_doc_ids and has_subject_candidate and not comparative and chunk.manifest_id not in subject_doc_ids:
+            continue
 
         text = str(chunk.chunk_text or "").strip()
         if not text:
@@ -394,6 +428,9 @@ def _dedupe_and_limit(
         classification = classify_rag_source(source_name=source_name, source_reference=source_reference, text=text)
         if not classification.is_answerable:
             policy_filtered += 1
+            continue
+        if requested_robotics_family and not robotics_families_compatible(requested_robotics_family, blob):
+            coherence_filtered += 1
             continue
         if active_domain and not domains_compatible(active_domain, classification.domain):
             # Se entity explícita bate, ainda permite.
@@ -426,6 +463,8 @@ def _dedupe_and_limit(
                 source_reference=source_reference,
                 chunk_sha256=chunk.chunk_sha256,
                 embedding_id=embedding.id,
+                document_metadata=dict(getattr(manifest, "document_metadata", None) or {}),
+                chunk_metadata=dict(getattr(chunk, "chunk_metadata", None) or {}),
             )
         )
         seen_chunk_ids.add(chunk.id)
@@ -448,6 +487,9 @@ def _dedupe_and_limit(
         "coherence_filtered_count": coherence_filtered,
         "entity_match_count": entity_match_count,
         "domain_match_count": domain_match_count,
+        "document_ids_considered": sorted({chunk.manifest_id for chunk in chunks_by_id.values()}),
+        "document_ids_used": sorted({chunk.document_id for chunk in selected}),
+        "active_subject": dict(active_subject or {}),
     }
     return selected, stats, meta
 
@@ -471,7 +513,19 @@ def _emit_metric(*, tenant, conversation, result: RagRetrievalResult) -> None:
         threshold=result.threshold,
         threshold_source=result.threshold_source,
         dry_run=result.observe_only,
+        retrieval_metadata={
+            "active_subject": result.active_subject or {},
+            "document_ids_considered": list(result.document_ids_considered),
+            "document_ids_used": list(result.document_ids_used),
+            "retrieval_method": result.retrieval_method,
+            "top_score": result.max_score,
+            "evidence_status": result.evidence_status or result.status,
+        },
     )
+
+
+def _is_comparative_query(query_n: str) -> bool:
+    return any(token in query_n for token in ("compar", "diferenca entre", "diferença entre", " versus ", " vs "))
 
 
 def retrieve_context(
@@ -488,6 +542,7 @@ def retrieve_context(
     active_domain: str = "",
     active_entity: str = "",
     active_application: str = "",
+    active_subject: dict | None = None,
 ) -> RagRetrievalResult:
     started = time.monotonic()
     conversation_id = getattr(conversation, "id", None)
@@ -763,6 +818,7 @@ def retrieve_context(
             active_domain=active_domain,
             active_entity=active_entity,
             active_application=active_application,
+            active_subject=active_subject,
             query=query,
             contextual_query=retrieval_query,
         )
@@ -777,6 +833,7 @@ def retrieve_context(
                 active_domain=active_domain,
                 active_entity=active_entity,
                 active_application=active_application,
+                active_subject=active_subject,
                 query=query,
                 contextual_query=retrieval_query,
             )
@@ -818,6 +875,11 @@ def retrieve_context(
                 selected_raw_chars=selection_stats.selected_raw_chars,
                 selected_chars=selection_stats.selected_chars,
                 chunks_discarded_by_budget=selection_stats.chunks_discarded_by_budget,
+                active_subject=dict(active_subject or {}),
+                document_ids_considered=tuple(selection_meta.get("document_ids_considered", ())),
+                document_ids_used=tuple(selection_meta.get("document_ids_used", ())),
+                retrieval_method="semantic_metadata" if active_subject else "semantic",
+                evidence_status="empty",
             )
             _emit_metric(tenant=tenant, conversation=conversation, result=result)
             return result
@@ -860,6 +922,11 @@ def retrieve_context(
             selected_chars=selection_stats.selected_chars,
             formatted_context_chars=formatted_context_chars,
             chunks_discarded_by_budget=selection_stats.chunks_discarded_by_budget,
+            active_subject=dict(active_subject or {}),
+            document_ids_considered=tuple(selection_meta.get("document_ids_considered", ())),
+            document_ids_used=tuple(selection_meta.get("document_ids_used", ())),
+            retrieval_method="semantic_metadata" if active_subject else "semantic",
+            evidence_status="completed",
         )
         _emit_metric(tenant=tenant, conversation=conversation, result=result)
         return result

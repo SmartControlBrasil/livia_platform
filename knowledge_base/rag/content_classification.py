@@ -129,6 +129,49 @@ def is_policy_leak_text(text: str) -> bool:
     return any(marker in lowered for marker in leak_markers)
 
 
+ROBOTICS_FAMILY_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("cleaning", ("limpeza", "lavar", "varrer", "aspirar", "hygibot", "duno", "dune", "facilities", "galpao", "galpão", "piso")),
+    ("educational", ("educacional", "escola", "liro", "littlebot", "little bot", "crianca", "criança", "bncc", "professor", "aluno")),
+    ("service", ("recepcao", "recepção", "atendimento", "neobot", "orbit", "buddy", "hostbot")),
+    ("security", ("seguranca", "segurança", "patrulha", "vigilancia", "vigilância")),
+)
+
+
+def infer_robotics_family(*, text: str = "", application: str = "", topic: str = "") -> str:
+    blob = _norm(" ".join([text, application.replace("_", " "), topic.replace("_", " ")]))
+    if not blob:
+        return ""
+    if application == "cleaning_robotics" or topic == "cleaning_robot":
+        return "cleaning"
+    if application == "educational_robotics" or topic == "educational_robot":
+        return "educational"
+    best = ""
+    best_hits = 0
+    for family, markers in ROBOTICS_FAMILY_MARKERS:
+        hits = sum(1 for marker in markers if marker in blob)
+        if hits > best_hits:
+            best = family
+            best_hits = hits
+    return best if best_hits else ""
+
+
+def robotics_families_compatible(requested: str, chunk_text: str) -> bool:
+    requested_family = str(requested or "").strip()
+    if not requested_family:
+        return True
+    chunk_family = infer_robotics_family(text=chunk_text)
+    if not chunk_family:
+        return True
+    if requested_family == chunk_family:
+        return True
+    # Limpeza e educacional são famílias mutuamente exclusivas na prática.
+    incompatible = {
+        "cleaning": {"educational"},
+        "educational": {"cleaning"},
+    }
+    return chunk_family not in incompatible.get(requested_family, set())
+
+
 def domains_compatible(active_domain: str, chunk_domain: str) -> bool:
     active = str(active_domain or "").strip()
     chunk = str(chunk_domain or "").strip()

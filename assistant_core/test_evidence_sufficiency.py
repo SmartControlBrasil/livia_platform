@@ -54,6 +54,19 @@ MATERIAL_KB = (
 )
 
 
+LIRO_LIMITED_KB = chr(10).join(
+    [
+        "[KNOWLEDGE_BASE]",
+        "Fonte: liro_littlebot.md",
+        "Referência: chunk:404",
+        "Score: 0.66",
+        "Conteúdo:",
+        "LIRO / Little Bot é um robô educacional interativo para escolas. Atendimento à BNCC não documentado nesta fonte.",
+        "[/KNOWLEDGE_BASE]",
+    ]
+)
+
+
 class EvidenceSufficiencyTests(SimpleTestCase):
     def test_a_sufficient_quote_timeline(self):
         assessment = assess_evidence_sufficiency(
@@ -96,6 +109,23 @@ class EvidenceSufficiencyTests(SimpleTestCase):
             knowledge_context=REGION_KB,
         )
         self.assertEqual(assessment.status, EvidenceSufficiency.PARTIAL)
+
+    def test_f_technical_requirement_marked_not_documented_is_partial(self):
+        assessment = assess_evidence_sufficiency(
+            message="O LIRO atende à BNCC?",
+            knowledge_context=LIRO_LIMITED_KB,
+        )
+        self.assertEqual(assessment.status, EvidenceSufficiency.PARTIAL)
+        self.assertEqual(assessment.category, "missing_technical_requirement")
+        self.assertIn("bncc", assessment.reason)
+
+    def test_g_unsupported_external_certification_is_insufficient(self):
+        assessment = assess_evidence_sufficiency(
+            message="O LIRO é certificado pela NASA?",
+            knowledge_context=LIRO_LIMITED_KB,
+        )
+        self.assertEqual(assessment.status, EvidenceSufficiency.INSUFFICIENT)
+        self.assertEqual(assessment.category, "missing_technical_requirement")
 
 
 class FaithfulnessPhase15Tests(SimpleTestCase):

@@ -23,6 +23,7 @@ def record_retrieval_event(
     threshold: float = 0.0,
     threshold_source: str = "global_default",
     dry_run: bool = False,
+    retrieval_metadata: dict | None = None,
 ) -> RagRetrievalEvent | None:
     """
     Persiste metrica operacional de retrieval.
@@ -50,6 +51,7 @@ def record_retrieval_event(
             threshold_source=str(threshold_source or "global_default")[:30],
             dry_run=bool(dry_run),
             hit=hit,
+            retrieval_metadata=dict(retrieval_metadata or {}),
         )
     except Exception:  # noqa: BLE001
         logger.exception(

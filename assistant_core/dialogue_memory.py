@@ -11,6 +11,7 @@ ACTIVE_ENTITY_KEY = "active_entity"
 ACTIVE_DOMAIN_KEY = "active_domain"
 ACTIVE_TOPIC_KEY = "active_topic"
 ACTIVE_APPLICATION_KEY = "active_application"
+ACTIVE_KNOWLEDGE_SUBJECT_KEY = "active_knowledge_subject"
 ACTIVE_NEED_KEY = "active_need"
 CONTACT_DEFERRED_KEY = "contact_collection_deferred"
 COMMERCIAL_INTENT_KEY = "commercial_intent"
@@ -31,7 +32,7 @@ ENTITY_REGISTRY: tuple[dict, ...] = (
         "aliases": ("liro", "littlebot", "little bot"),
         "domain": "robotics",
         "topic": "educational_robot",
-        "keywords": ("educacional", "crianca", "criança", "escola"),
+        "keywords": ("educacional", "crianca", "criança", "escola", "bncc", "robotica educacional"),
     },
     {
         "canonical": "NeoBot",
@@ -68,7 +69,7 @@ DOMAIN_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("automation", ("automacao", "automação", "mitsubishi", "clp", "ihm")),
     ("maintenance", ("manutencao tecnica", "manutenção técnica", "tpm", "pecas", "peças", "suporte tecnico", "suporte técnico")),
     ("materials", ("bancada", "granito", "marmore", "mármore", "quartzito", "cooktop", "pia", "ilha", "nicho", "cuba", "escada", "gourmet", "cozinha", "banheiro", "lavabo", "medicao", "medição")),
-    ("robotics", ("robo", "robô", "robotica", "robótica", "limpeza", "xyron", "hygibot", "duno", "dune", "liro", "neobot", "escola", "educacional")),
+    ("robotics", ("robo", "robô", "robotica", "robótica", "limpeza", "xyron", "hygibot", "duno", "dune", "liro", "neobot", "escola", "educacional", "bncc")),
 )
 
 TOPIC_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -77,7 +78,7 @@ TOPIC_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("bathroom", ("banheiro", "lavabo", "nicho")),
     ("kitchen", ("cozinha", "bancada", "cooktop", "pia", "ilha")),
     ("quote_process", ("medicao", "medição", "medida", "fotos", "planta", "orcamento", "orçamento")),
-    ("educational_robot", ("escola", "educacional", "professor", "aluno", "liro")),
+    ("educational_robot", ("escola", "educacional", "professor", "aluno", "liro", "bncc")),
     ("cleaning_robot", ("limpeza", "duno", "dune", "hygibot")),
     ("websites", ("site", "website", "loja virtual", "ecommerce", "django", "python")),
     ("robot_lineup", ("quais robos", "quais robôs", "quais modelos", "que robos", "que robôs", "linha xyron")),
@@ -93,7 +94,7 @@ APPLICATION_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("cooktop_countertop", ("cooktop",)),
     ("kitchen_countertop", ("cozinha", "bancada", "pia", "ilha")),
     ("quote_process", ("medicao", "medição", "medida", "fotos", "planta")),
-    ("educational_robotics", ("escola", "educacional", "professor", "aluno")),
+    ("educational_robotics", ("escola", "educacional", "professor", "aluno", "bncc")),
     ("cleaning_robotics", ("limpeza", "duno", "dune", "hygibot")),
     ("industrial_automation", ("mitsubishi", "clp", "ihm")),
     ("websites", ("site", "website", "loja virtual", "django", "python")),
@@ -166,6 +167,7 @@ class DialogueMemory:
     active_domain: str = ""
     active_topic: str = ""
     active_application: str = ""
+    active_knowledge_subject: dict = field(default_factory=dict)
     active_need: str = ""
     contact_collection_deferred: bool = False
     commercial_intent: bool = False
@@ -182,6 +184,7 @@ class DialogueMemory:
             ACTIVE_DOMAIN_KEY: self.active_domain,
             ACTIVE_TOPIC_KEY: self.active_topic,
             ACTIVE_APPLICATION_KEY: self.active_application,
+            ACTIVE_KNOWLEDGE_SUBJECT_KEY: self.active_knowledge_subject,
             ACTIVE_NEED_KEY: self.active_need,
             CONTACT_DEFERRED_KEY: self.contact_collection_deferred,
             COMMERCIAL_INTENT_KEY: self.commercial_intent,
@@ -194,6 +197,7 @@ class DialogueMemory:
             "active_domain": self.active_domain,
             "active_topic": self.active_topic,
             "active_application": self.active_application,
+            "active_knowledge_subject": self.active_knowledge_subject,
             "entity_match": self.entity_match,
             "domain_match": self.domain_match,
             "contextual_query_used": bool(
@@ -224,6 +228,7 @@ def load_dialogue_memory(conversation=None, lead_draft=None) -> DialogueMemory:
         active_domain=str(data.get(ACTIVE_DOMAIN_KEY) or ""),
         active_topic=str(data.get(ACTIVE_TOPIC_KEY) or ""),
         active_application=str(data.get(ACTIVE_APPLICATION_KEY) or ""),
+        active_knowledge_subject=dict(data.get(ACTIVE_KNOWLEDGE_SUBJECT_KEY) or {}),
         active_need=str(data.get(ACTIVE_NEED_KEY) or getattr(lead, "need_summary", "") or ""),
         contact_collection_deferred=bool(data.get(CONTACT_DEFERRED_KEY)),
         commercial_intent=bool(data.get(COMMERCIAL_INTENT_KEY)),
@@ -354,6 +359,7 @@ def update_dialogue_memory_from_turn(
     history=None,
     need_summary: str = "",
     commercial_trigger: bool = False,
+    tenant=None,
 ) -> DialogueMemory:
     message = str(current_message or "")
     normalized = normalize_text(message)
@@ -363,6 +369,26 @@ def update_dialogue_memory_from_turn(
         if item.get("role") == "user"
     )
     context_blob = " ".join([memory.active_need, need_summary, history_blob, message]).strip()
+
+    if tenant is not None:
+        try:
+            from knowledge_base.rag.entity_catalog import resolve_knowledge_entity
+
+            resolution = resolve_knowledge_entity(
+                tenant=tenant,
+                message=message,
+                active_subject=memory.active_knowledge_subject or None,
+            )
+        except Exception:
+            resolution = None
+        if resolution is not None and getattr(resolution, "ambiguous", False):
+            memory.notes["entity_ambiguity_options"] = list(getattr(resolution, "ambiguity_options", ()) or ())
+        elif resolution is not None and getattr(resolution, "subject", None):
+            subject = dict(resolution.subject or {})
+            memory.active_knowledge_subject = subject
+            memory.active_entity = str(subject.get("canonical_name") or memory.active_entity)
+            memory.entity_match = True
+            memory.notes.pop("entity_ambiguity_options", None)
 
     entity = detect_entity_mention(message)
     if entity:
@@ -490,7 +516,10 @@ def build_contextual_retrieval_query(
     original_n = normalize_text(original)
     lineup = is_lineup_question(original)
 
-    if memory.active_entity and not lineup and memory.active_topic != "robot_lineup":
+    subject_name = str((memory.active_knowledge_subject or {}).get("canonical_name") or "").strip()
+    if subject_name and not lineup and memory.active_topic != "robot_lineup":
+        parts.append(subject_name)
+    if memory.active_entity and memory.active_entity != subject_name and not lineup and memory.active_topic != "robot_lineup":
         parts.append(memory.active_entity)
         entity = next((e for e in ENTITY_REGISTRY if e["canonical"] == memory.active_entity), None)
         if entity:

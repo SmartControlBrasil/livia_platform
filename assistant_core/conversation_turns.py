@@ -64,6 +64,61 @@ STOPWORDS = {
     "o", "os", "para", "por", "que", "um", "uma", "uns", "umas",
 }
 
+ENVIRONMENT_MARKERS = (
+    "galpao",
+    "galpão",
+    "armazem",
+    "armazém",
+    "deposito",
+    "depósito",
+    "shopping",
+    "supermercado",
+    "hospital",
+    "industria",
+    "indústria",
+    "fabrica",
+    "fábrica",
+    "concreto",
+    "porcelanato",
+    "epoxi",
+    "epóxi",
+    "ceramica",
+    "cerâmica",
+    "piso",
+    "metragem",
+    "metro quadrado",
+    "m2",
+    "m²",
+)
+
+
+def looks_like_environment_answer(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in ENVIRONMENT_MARKERS):
+        return True
+    return bool(re.search(r"\b\d+\s*m\b", normalized))
+
+
+def is_consultative_context_answer(text: str) -> bool:
+    """Resposta técnica/contextual — não preenche slot comercial de nome/contato."""
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+    if looks_like_environment_answer(normalized):
+        return True
+    if is_direct_question(text):
+        return True
+    from assistant_core.services.deterministic_synthesis import is_short_context_token
+
+    if is_short_context_token(normalized):
+        return True
+    content_words = [word for word in normalized.split() if word not in STOPWORDS and len(word) > 2]
+    if 1 <= len(content_words) <= 2 and looks_like_environment_answer(normalized):
+        return True
+    return False
+
 NAME_DEFERRED_KEY = "name_deferred"
 CONTACT_DEFERRED_KEY = "contact_collection_deferred"
 
@@ -104,7 +159,18 @@ def is_contact_deferred_message(text: str) -> bool:
 
 
 def is_direct_question(text: str) -> bool:
-    return bool(detect_question_type(text))
+    if detect_question_type(text):
+        return True
+    normalized = normalize_text(text)
+    if "?" not in str(text or ""):
+        return False
+    followup_markers = (
+        "ele ", "ela ", "esse ", "essa ", "este ", "esta ",
+        "consegue", "funciona", "trabalha", "limpa", "suporta",
+        "cabe", "da para", "dá para", "e possivel", "é possível",
+        "autonomia", "bateria", "circulando", "noite",
+    )
+    return any(marker in normalized for marker in followup_markers)
 
 
 def detect_question_type(text: str) -> str:
@@ -129,6 +195,8 @@ def is_need_enrichment(text: str) -> bool:
     normalized = normalize_text(text)
     if not normalized:
         return False
+    if looks_like_environment_answer(normalized):
+        return True
     if re.search(r"\b(?:meu nome|telefone|whatsapp|email|e-mail)\b", normalized):
         return False
     from assistant_core.services.deterministic_synthesis import is_short_context_token
@@ -276,7 +344,7 @@ def classify_conversation_turn(*, current_message: str, history, conversation, d
             question_type=question_type,
             continue_commercial_thread=True,
         )
-    if thread and is_need_enrichment(current_message):
+    if thread and (is_need_enrichment(current_message) or is_consultative_context_answer(current_message)):
         return ConversationTurn(
             kind=TurnKind.NEED_ENRICHMENT,
             enrichment_snippet=extract_enrichment_snippet(current_message),

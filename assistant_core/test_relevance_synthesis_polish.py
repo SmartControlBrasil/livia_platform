@@ -100,6 +100,40 @@ class FollowupAndSynthesisPolishTests(SimpleTestCase):
         self.assertNotIn("piso", follow.lower())
         self.assertEqual(diag["followup_domain"], "robotics")
 
+    def test_liro_bncc_answer_does_not_ask_cleaning_floor(self):
+        knowledge = chr(10).join(
+            [
+                "[KNOWLEDGE_BASE]",
+                "Conteúdo: Robô interativo para aproximar crianças e jovens da tecnologia por meio de experiências educacionais com comunicação, movimento e interação.",
+                "Conteúdo: O que NÃO prometer sem avaliação: atendimento à BNCC (não documentado nesta fonte).",
+                "[/KNOWLEDGE_BASE]",
+            ]
+        )
+        memory = DialogueMemory(
+            active_entity="LIRO",
+            active_domain="robotics",
+            active_topic="educational_robot",
+            active_application="educational_robotics",
+        )
+        reply = synthesize_deterministic_reply(
+            knowledge,
+            current_message="ele atende a BNCC robótica?",
+            active_domain=memory.active_domain,
+            active_application=memory.active_application,
+        )
+        self.assertIn("BNCC", reply)
+        self.assertIn("não encontrei confirmação", reply.lower())
+        self.assertNotIn("piso", reply.lower())
+
+        final, _ = apply_response_quality_gate(
+            reply=f"{reply} Entendi, isso ajuda a detalhar a necessidade. Qual é o ambiente e o tipo de piso onde a limpeza acontece?",
+            knowledge_context=knowledge,
+            current_message="ele atende a BNCC robótica?",
+            memory=memory,
+        )
+        self.assertNotIn("piso", final.lower())
+        self.assertNotIn("limpeza acontece", final.lower())
+
     def test_mitsubishi_followup_stays_automation(self):
         memory = DialogueMemory(
             active_domain="automation",

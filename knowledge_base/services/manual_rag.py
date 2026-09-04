@@ -13,6 +13,7 @@ from knowledge_base.models import (
     TenantRagDriveFileManifest,
     TenantRagDriveTextStaging,
 )
+from knowledge_base.rag.entity_catalog import extract_document_metadata
 from knowledge_base.rag.google_drive_inventory import compute_text_sha256, normalize_text_for_rag
 
 MANUAL_SOURCE_PREFIX = "manual-knowledge-document"
@@ -84,6 +85,15 @@ def sync_manual_knowledge_document_to_rag(*, document: KnowledgeDocument) -> Man
     now = timezone.now()
     drive_file_id = manual_drive_file_id(document)
 
+    document_metadata = extract_document_metadata(
+        file_name=document.title,
+        mime_type=MANUAL_MIME_TYPE,
+        relative_path=manual_relative_path(document),
+        text=normalized,
+        source_modified_time=document.updated_at,
+    )
+    document_metadata["source_document_id"] = drive_file_id
+
     with transaction.atomic():
         manifest, created = TenantRagDriveFileManifest.objects.select_for_update().get_or_create(
             tenant=document.tenant,
@@ -108,6 +118,7 @@ def sync_manual_knowledge_document_to_rag(*, document: KnowledgeDocument) -> Man
         manifest.relative_path = manual_relative_path(document)
         manifest.drive_modified_time = document.updated_at
         manifest.drive_size_bytes = len(normalized.encode("utf-8"))
+        manifest.document_metadata = document_metadata
         manifest.is_active = True
         manifest.removed_at = None
         manifest.last_seen_at = now

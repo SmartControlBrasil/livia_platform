@@ -180,6 +180,7 @@ class TenantRagDriveFileManifest(models.Model):
     drive_modified_time = models.DateTimeField(null=True, blank=True)
     drive_size_bytes = models.BigIntegerField(null=True, blank=True)
     normalized_text_sha256 = models.CharField(max_length=64, blank=True)
+    document_metadata = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.DISCOVERED)
     is_active = models.BooleanField(default=True)
     first_discovered_at = models.DateTimeField(auto_now_add=True)
@@ -202,6 +203,7 @@ class TenantRagDriveFileManifest(models.Model):
             models.Index(fields=["tenant", "status"]),
             models.Index(fields=["tenant", "is_active"]),
             models.Index(fields=["tenant", "last_seen_at"]),
+            models.Index(fields=["tenant", "updated_at"]),
         ]
 
     def __str__(self):
@@ -267,6 +269,7 @@ class TenantRagDocumentChunk(models.Model):
     byte_count = models.PositiveIntegerField(default=0)
     start_char = models.PositiveIntegerField(default=0)
     end_char = models.PositiveIntegerField(default=0)
+    chunk_metadata = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -546,6 +549,7 @@ class RagRetrievalEvent(models.Model):
     threshold_source = models.CharField(max_length=30, blank=True, default="global_default")
     dry_run = models.BooleanField(default=False)
     hit = models.BooleanField(default=False)
+    retrieval_metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
