@@ -338,7 +338,7 @@ def classify_conversation_turn(*, current_message: str, history, conversation, d
     if is_name_deferred(current_message) or is_contact_deferred(current_message) or wants_consultative_continue(current_message):
         return ConversationTurn(kind=TurnKind.NAME_DEFERRED, continue_commercial_thread=True)
     question_type = detect_question_type(current_message)
-    if question_type:
+    if question_type or is_direct_question(current_message):
         return ConversationTurn(
             kind=TurnKind.DIRECT_QUESTION,
             question_type=question_type,
@@ -367,17 +367,32 @@ def build_name_deferred_reply(lead_draft=None) -> str:
     )
 
 
-def build_enrichment_reply(lead_draft=None, *, snippet: str = "", current_message: str = "") -> str:
+def build_enrichment_reply(
+    lead_draft=None,
+    *,
+    snippet: str = "",
+    current_message: str = "",
+    history=None,
+    followup: str = "",
+) -> str:
     need = str(getattr(lead_draft, "need_summary", "") or "").strip() or str(current_message or "").strip()
     detail = snippet or extract_enrichment_snippet(current_message)
+    next_question = followup or _catalog_or_scope_question(
+        need,
+        history=history,
+        current_message=current_message,
+    )
     if detail and need:
-        return (
-            f"Entendi. Anotei que isso envolve {detail}, no contexto de { _short_need(need) }. "
-            f"{_catalog_or_scope_question(need)}"
-        )
-    if detail:
-        return f"Entendi, você trabalha com {detail}. {_catalog_or_scope_question(need)}"
-    return f"Entendi, isso ajuda a detalhar a necessidade. {_catalog_or_scope_question(need)}"
+        body = f"Entendi. Anotei que isso envolve {detail}, no contexto de {_short_need(need)}."
+    elif looks_like_environment_answer(current_message):
+        body = "Entendi, isso ajuda a detalhar a necessidade."
+    elif detail:
+        body = f"Entendi, você trabalha com {detail}."
+    else:
+        body = "Entendi, isso ajuda a detalhar a necessidade."
+    if next_question:
+        return f"{body} {next_question}".strip()
+    return body
 
 
 def build_direct_question_reply(lead_draft=None, *, question_type: str, current_message: str = "") -> str:
@@ -421,10 +436,38 @@ def _short_need(need: str) -> str:
     return cleaned[:77].rstrip() + "…"
 
 
-def _catalog_or_scope_question(need: str) -> str:
+def _catalog_or_scope_question(need: str, *, history=None, current_message: str = "") -> str:
+    from assistant_core.consultative_slots import (
+        extract_consultative_slots,
+        is_cleaning_consultation,
+        select_cleaning_followup,
+        should_skip_followup_for_answered_slots,
+    )
+    from assistant_core.dialogue_memory import infer_application, infer_domain, infer_topic
+
     normalized = normalize_text(need)
     # Robótica/limpeza/produto SCB antes de heurística genérica de "produto/site".
     if any(marker in normalized for marker in ("duno", "dune", "hygibot", "limpeza", "lavar", "varrer", "aspirar")):
+        class _Memory:
+            active_application = infer_application(need)
+            active_topic = infer_topic(need)
+            active_domain = infer_domain(need)
+
+        if is_cleaning_consultation(memory=_Memory(), need_summary=need, current_message=current_message):
+            slots = extract_consultative_slots(
+                need_summary=need,
+                history=history,
+                current_message=current_message,
+            )
+            followup = select_cleaning_followup(slots=slots, current_message=current_message)
+            if should_skip_followup_for_answered_slots(
+                followup,
+                need_summary=need,
+                history=history,
+                current_message=current_message,
+            ):
+                return ""
+            return followup
         return "Qual é o ambiente e o tipo de piso onde a limpeza acontece?"
     if any(marker in normalized for marker in ("automacao", "automação", "robo", "robô", "robotica", "robótica", "xyron", "mitsubishi", "clp")):
         return "Qual ambiente e objetivo você quer cobrir primeiro?"

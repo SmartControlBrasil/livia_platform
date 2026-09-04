@@ -156,6 +156,8 @@ def _direct_technical_fact_reply(knowledge_context: str, *, current_message: str
         wanted = ("tensao", "tensão", "voltagem", "alimentacao", "alimentação", " v")
     elif any(token in msg_n for token in ("peso", "pesa")):
         wanted = ("peso", " kg")
+    elif any(token in msg_n for token in ("circulando", "pessoas", "fluxo", "transito", "trânsito", "movimento", "noite", "horario", "horário")):
+        wanted = ("fluxo", "pessoas", "horario", "horário", "circula", "operacao", "operação")
     if not wanted:
         return ""
     candidates = []
@@ -357,6 +359,19 @@ def _select_primary_bits(
                 weight += 3
             if any(token in hint_n for token in ("liro", "educacional", "escola", "crianca", "criança")):
                 weight -= 4
+            if any(
+                token in hint_n
+                for token in (
+                    "trabalha com robotica de servico",
+                    "trabalha com robótica de serviço",
+                    "linha xyron robotics",
+                    "visao geral",
+                    "visão geral",
+                    "quais robos",
+                    "quais robôs",
+                )
+            ) and not any(token in hint_n for token in ("hygibot", "dune", "duno", "limpeza profissional")):
+                weight -= 6
         # lexical overlap
         overlap = sum(1 for token in msg_n.split() if len(token) > 3 and token in hint_n)
         weight += min(overlap, 3)
@@ -377,6 +392,8 @@ def _prioritize_answer_sentences(hints: list[str], *, current_message: str = "")
         wanted = ("tensao", "tensão", "voltagem", "alimentacao", "alimentação", "220 v", "380 v")
     elif any(token in msg_n for token in ("peso", "pesa")):
         wanted = ("peso", "kg")
+    elif any(token in msg_n for token in ("circulando", "pessoas", "fluxo", "transito", "trânsito", "movimento", "noite", "horario", "horário")):
+        wanted = ("fluxo", "pessoas", "horario", "horário", "circula", "operacao", "operação")
     elif any(token in msg_n for token in ("garantia", "certificacao", "certificação", "ip67")):
         wanted = ("garantia", "certificacao", "certificação", "ip67")
     if not wanted:

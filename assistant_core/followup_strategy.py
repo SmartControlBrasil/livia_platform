@@ -12,6 +12,7 @@ def select_followup(
     current_message: str = "",
     need_summary: str = "",
     answer_text: str = "",
+    history=None,
     force: bool = False,
 ) -> tuple[str, dict]:
     """
@@ -50,7 +51,25 @@ def select_followup(
     elif topic == "cleaning_robot" or application == "cleaning_robotics" or any(
         token in blob for token in ("duno", "dune", "hygibot", "limpeza")
     ):
-        follow = "Qual é o ambiente e o tipo de piso onde a limpeza acontece?"
+        from assistant_core.consultative_slots import (
+            extract_consultative_slots,
+            select_cleaning_followup,
+            should_skip_followup_for_answered_slots,
+        )
+
+        slots = extract_consultative_slots(
+            need_summary=need_summary,
+            history=history,
+            current_message=current_message,
+        )
+        follow = select_cleaning_followup(slots=slots, current_message=current_message)
+        if should_skip_followup_for_answered_slots(
+            follow,
+            need_summary=need_summary,
+            history=history,
+            current_message=current_message,
+        ):
+            follow = ""
         diagnostics["followup_domain"] = "robotics"
     elif domain == "software_web" or topic == "websites":
         if any(token in blob for token in ("loja virtual", "ecommerce", "e-commerce")):

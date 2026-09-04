@@ -74,6 +74,19 @@ def can_start_new_cycle(conversation, message: str) -> bool:
     return any(marker in normalized for marker in NEW_CYCLE_MARKERS)
 
 
+def _commercial_capture_active(conversation, lead_draft, intent: str = "") -> bool:
+    from assistant_core.consultative_policy import COLLECTION_ACTIVE_KEY, collection_already_active
+
+    data = getattr(lead_draft, "qualification_data", None) or {}
+    if isinstance(data, dict) and data.get(COLLECTION_ACTIVE_KEY):
+        return True
+    if collection_already_active(conversation, lead_draft):
+        return True
+    if intent == "contact_data":
+        return True
+    return False
+
+
 def next_state_after_message(conversation, lead_draft, intent: str = "", extracted_data=None) -> LeadStateSnapshot:
     if lead_draft is None:
         return LeadStateSnapshot(state=get_current_state(conversation))
@@ -81,6 +94,8 @@ def next_state_after_message(conversation, lead_draft, intent: str = "", extract
         return LeadStateSnapshot(state=LeadState.QUALIFIED, is_terminal=True)
     if not str(getattr(lead_draft, "need_summary", "") or "").strip():
         return LeadStateSnapshot(state=LeadState.COLLECT_NEED, next_field="need_summary")
+    if not _commercial_capture_active(conversation, lead_draft, intent):
+        return LeadStateSnapshot(state=LeadState.DISCOVERY)
     if not (
         str(getattr(lead_draft, "name", "") or "").strip()
         or str(getattr(lead_draft, "company", "") or "").strip()
