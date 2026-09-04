@@ -12,14 +12,14 @@ from assistant_core.consultative_slots import (
     select_cleaning_followup,
     should_skip_followup_for_answered_slots,
 )
-from assistant_core.conversation_turns import TurnKind, classify_conversation_turn, is_direct_question
+from assistant_core.conversation_turns import TurnKind, classify_conversation_turn, is_direct_question, normalize_text
 from assistant_core.discovery import analyze_message
 from assistant_core.dialogue_memory import DialogueMemory
 from assistant_core.followup_strategy import select_followup
 from assistant_core.services.deterministic_synthesis import synthesize_deterministic_reply
 from assistant_core.services.livia_decision import LiviaDecisionService
 from assistant_core.state import LeadState, next_state_after_message
-from conversations.models import Conversation
+from conversations.models import Conversation, HandoffRequest
 from knowledge_base.models import KnowledgeDocument, TenantRagConfiguration
 from knowledge_base.rag.indexing import run_index_for_tenant
 from knowledge_base.rag.sync import run_chunk_build_for_tenant
@@ -210,6 +210,14 @@ class ConsultativeFollowupRegressionTests(TestCase):
         self.assertTrue(any(token in synthesized for token in ("hygibot", "dune", "limpeza", "lavar", "varrer")))
         self.assertNotIn("visão geral dos produtos", synthesized)
 
+    def _assert_consultative_state_invariants(self, *, message: str):
+        conversation = Conversation.objects.get(session_id=self.session_id)
+        lead = LeadDraft.objects.get(conversation=conversation)
+        self.assertEqual(conversation.lead_state, LeadState.DISCOVERY, message)
+        self.assertFalse((lead.qualification_data or {}).get("collection_active"), message)
+        self.assertFalse((lead.qualification_data or {}).get("commercial_intent"), message)
+        self.assertEqual(HandoffRequest.objects.filter(conversation=conversation).count(), 0, message)
+
     def test_four_turn_staging_regression_sequence(self):
         messages = (
             "preciso de um robo de limpeza",
@@ -221,17 +229,33 @@ class ConsultativeFollowupRegressionTests(TestCase):
         for message in messages:
             payload = self._chat(message)
             replies.append(payload["reply"])
+            self._assert_consultative_state_invariants(message=message)
 
         self.assertNotIn("educacional", replies[0].lower())
         self.assertNotIn("liro", replies[0].lower())
+        self.assertFalse(
+            replies[0].strip().lower().startswith("entendi, isso ajuda")
+            and not any(token in replies[0].lower() for token in ("hygibot", "dune", "limpeza", "lavar", "varrer", "aspirar")),
+            replies[0],
+        )
         self.assertTrue(
             any(token in replies[0].lower() for token in ("hygibot", "dune", "limpeza", "lavar", "varrer", "aspirar"))
         )
+        self.assertTrue("?" in replies[0])
 
         self.assertNotIn("ambiente e o tipo de piso", replies[1].lower())
 
         self.assertNotIn("ambiente e o tipo de piso", replies[2].lower())
         self.assertNotIn("tipo de piso", replies[2].lower())
+        self.assertNotIn("metragem", replies[2].lower())
+        from assistant_core.services.response_quality_gate import is_acknowledgement_only_reply
+
+        self.assertFalse(is_acknowledgement_only_reply(replies[2]), replies[2])
+        self.assertTrue(
+            any(token in replies[2].lower() for token in ("hygibot", "dune", "limpeza", "lavar", "varrer", "fluxo", "circul", "frequ"))
+            or "?" in replies[2],
+            replies[2],
+        )
 
         reply4 = replies[3].lower()
         self.assertNotIn("ambiente e o tipo de piso", reply4)
@@ -269,30 +293,195 @@ class ConsultativeFollowupRegressionTests(TestCase):
         )
         discovery = analyze_message("preciso de um robo de limpeza")
         grounded = "Apoiar rotinas de limpeza em grandes áreas, com modos de lavar, varrer e aspirar."
-        kb = HYGIBOT_KB + "\n\nA Smart Control Brasil trabalha com robótica de serviço e IA da linha Xyron Robotics."
+        kb = "[KNOWLEDGE_BASE]\n" + HYGIBOT_KB + "\n\nA Smart Control Brasil trabalha com robótica de serviço e IA da linha Xyron Robotics."
+        memory = DialogueMemory(
+            active_domain="robotics",
+            active_topic="cleaning_robot",
+            active_application="cleaning_robotics",
+            active_entity="HygiBot",
+        )
 
-        with patch.object(service, "_should_answer_informatively_from_knowledge", return_value=True):
-            with patch.object(service, "_grounded_informational_followup", return_value=grounded) as grounded_mock:
-                with patch.object(service, "_with_knowledge", wraps=service._with_knowledge) as with_knowledge_mock:
-                    with patch(
-                        "assistant_core.services.deterministic_synthesis.synthesize_deterministic_reply",
-                        wraps=synthesize_deterministic_reply,
-                    ) as synthesize_mock:
-                        reply = service._handle_consultative_conversation(
-                            intent="commercial_interest",
-                            history=[],
-                            current_message="preciso de um robo de limpeza",
-                            conversation=conversation,
-                            discovery=discovery,
-                            assistant_profile=None,
-                            knowledge_context=kb,
-                        )
+        with patch.object(service, "_build_grounded_consultative_reply", return_value=grounded) as compose_mock:
+            with patch.object(service, "_with_knowledge", wraps=service._with_knowledge) as with_knowledge_mock:
+                with patch(
+                    "assistant_core.services.deterministic_synthesis.synthesize_deterministic_reply",
+                    wraps=synthesize_deterministic_reply,
+                ) as synthesize_mock:
+                    reply = service._handle_consultative_conversation(
+                        intent="commercial_interest",
+                        history=[],
+                        current_message="preciso de um robo de limpeza",
+                        conversation=conversation,
+                        discovery=discovery,
+                        assistant_profile=None,
+                        knowledge_context=kb,
+                        dialogue_memory=memory,
+                    )
 
-        grounded_mock.assert_called_once()
+        compose_mock.assert_called_once()
         with_knowledge_mock.assert_not_called()
         self.assertEqual(synthesize_mock.call_count, 0)
         self.assertIn("limpeza", reply.reply.lower())
         self.assertNotIn("visão geral dos produtos", reply.reply.lower())
+
+    def test_same_turn_dialogue_memory_drives_synthesis_before_persist(self):
+        """Memória do turno atual alimenta síntese sem depender de persistência prévia."""
+        service = LiviaDecisionService()
+        tenant = Tenant.objects.create(name="T", slug="t-memory", domain="t.example")
+        conversation = Conversation.objects.create(
+            tenant=tenant,
+            session_id="same-turn-memory",
+            lead_state=LeadState.DISCOVERY,
+        )
+        lead = LeadDraft.objects.create(
+            tenant=tenant,
+            conversation=conversation,
+            need_summary="preciso de um robo de limpeza",
+            qualification_data={},
+        )
+        stale = DialogueMemory(active_domain="", active_topic="", active_application="", active_entity="")
+        current = DialogueMemory(
+            active_domain="robotics",
+            active_topic="cleaning_robot",
+            active_application="cleaning_robotics",
+            active_entity="HygiBot",
+        )
+        kb = "[KNOWLEDGE_BASE]\n" + HYGIBOT_KB
+
+        with patch("assistant_core.dialogue_memory.load_dialogue_memory", return_value=stale) as load_mock:
+            with patch(
+                "assistant_core.services.livia_decision.synthesize_deterministic_reply",
+                wraps=synthesize_deterministic_reply,
+            ) as synth_mock:
+                reply = service._build_grounded_consultative_reply(
+                    lead_draft=lead,
+                    conversation=conversation,
+                    current_message="preciso de um robo de limpeza",
+                    history=[],
+                    knowledge_context=kb,
+                    append_followup=True,
+                    dialogue_memory=current,
+                )
+
+        load_mock.assert_not_called()
+        self.assertGreaterEqual(synth_mock.call_count, 1)
+        first_kwargs = synth_mock.call_args_list[0].kwargs
+        self.assertEqual(first_kwargs.get("active_application"), "cleaning_robotics")
+        synthesis_query = normalize_text(first_kwargs.get("current_message", ""))
+        self.assertTrue(
+            "hygibot" in synthesis_query or "limpeza profissional" in synthesis_query,
+            synthesis_query,
+        )
+        self.assertTrue(
+            any(token in reply.lower() for token in ("hygibot", "dune", "limpeza", "lavar", "varrer", "aspirar")),
+            reply,
+        )
+        self.assertTrue("?" in reply)
+
+    def test_grounded_first_composes_evidence_before_followup(self):
+        service = LiviaDecisionService()
+        memory = DialogueMemory(
+            active_domain="robotics",
+            active_topic="cleaning_robot",
+            active_application="cleaning_robotics",
+            active_entity="HygiBot",
+        )
+        kb = (
+            "[KNOWLEDGE_BASE]\n"
+            + HYGIBOT_KB
+            + "\n\nA Smart Control Brasil trabalha com robótica de serviço e IA da linha Xyron Robotics."
+        )
+        reply = service._build_grounded_consultative_reply(
+            lead_draft=None,
+            conversation=None,
+            current_message="preciso de um robo de limpeza",
+            history=[],
+            knowledge_context=kb,
+            append_followup=True,
+            dialogue_memory=memory,
+        )
+        lowered = reply.lower()
+        self.assertTrue(
+            any(token in lowered for token in ("hygibot", "dune", "limpeza", "lavar", "varrer", "aspirar")),
+            reply,
+        )
+        self.assertNotIn("visão geral dos produtos", lowered)
+        self.assertTrue("?" in reply)
+        from assistant_core.services.response_quality_gate import is_acknowledgement_only_reply
+
+        self.assertFalse(is_acknowledgement_only_reply(reply), reply)
+
+    def test_acknowledgement_only_variants_detected_and_repaired(self):
+        from assistant_core.services.response_quality_gate import (
+            apply_response_quality_gate,
+            is_acknowledgement_only_reply,
+        )
+
+        memory = DialogueMemory(
+            active_domain="robotics",
+            active_topic="cleaning_robot",
+            active_application="cleaning_robotics",
+            active_entity="HygiBot",
+        )
+        ack_variants = (
+            "Entendi.",
+            "Certo.",
+            "Perfeito.",
+            "Entendi, isso ajuda a detalhar a necessidade.",
+        )
+        for ack in ack_variants:
+            with self.subTest(ack=ack):
+                self.assertTrue(is_acknowledgement_only_reply(ack), ack)
+                repaired, diagnostics = apply_response_quality_gate(
+                    reply=ack,
+                    knowledge_context=HYGIBOT_KB,
+                    current_message="3000 m2, piso de concreto",
+                    memory=memory,
+                    need_summary="preciso de um robo de limpeza. um galpão. 3000 m2, piso de concreto",
+                    history=[],
+                    append_followup=False,
+                )
+                self.assertFalse(is_acknowledgement_only_reply(repaired), repaired)
+                self.assertTrue(
+                    diagnostics.get("regrounded")
+                    or any(
+                        token in repaired.lower()
+                        for token in ("limpeza", "hygibot", "lavar", "varrer", "fluxo", "circul", "?")
+                    ),
+                    repaired,
+                )
+
+    def test_substantive_ack_prefix_not_classified_as_ack_only(self):
+        from assistant_core.services.response_quality_gate import is_acknowledgement_only_reply
+
+        substantive = (
+            "Entendi. Para áreas amplas, a solução recuperada na base é adequada a rotinas de "
+            "limpeza com modos de lavar, varrer e aspirar. Qual é o tipo de piso?"
+        )
+        self.assertFalse(is_acknowledgement_only_reply(substantive), substantive)
+
+    def test_quality_gate_rejects_acknowledgement_only_with_knowledge(self):
+        from assistant_core.services.response_quality_gate import (
+            apply_response_quality_gate,
+            is_acknowledgement_only_reply,
+        )
+
+        memory = DialogueMemory(
+            active_domain="robotics",
+            active_topic="cleaning_robot",
+            active_application="cleaning_robotics",
+        )
+        reply, diagnostics = apply_response_quality_gate(
+            reply="Entendi, isso ajuda a detalhar a necessidade.",
+            knowledge_context=HYGIBOT_KB,
+            current_message="3000 m2, piso de concreto",
+            memory=memory,
+            need_summary="preciso de um robo de limpeza. um galpão. 3000 m2, piso de concreto",
+            history=[],
+            append_followup=False,
+        )
+        self.assertFalse(is_acknowledgement_only_reply(reply), reply)
+        self.assertTrue(diagnostics.get("regrounded") or any(token in reply.lower() for token in ("limpeza", "hygibot", "fluxo", "circul")))
 
     def test_anti_repeat_followup_steps_via_slots(self):
         memory = DialogueMemory(
@@ -386,6 +575,7 @@ class ConsultativeFollowupRegressionTests(TestCase):
         budget = self._chat("quero um orçamento")
         lead = LeadDraft.objects.get(conversation__session_id=self.session_id)
         self.assertTrue((lead.qualification_data or {}).get("collection_active"))
+        self.assertTrue((lead.qualification_data or {}).get("commercial_intent"))
         lowered = budget["reply"].lower()
         self.assertTrue(
             any(token in lowered for token in ("nome", "empresa", "telefone", "e-mail", "email", "whatsapp")),

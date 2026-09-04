@@ -104,6 +104,7 @@ class LiviaDecisionService:
         conversation=None,
         assistant_profile=None,
         knowledge_context: str | None = None,
+        dialogue_memory=None,
     ) -> LiviaReply:
         tenant = getattr(conversation, "tenant", None)
         profile_context = AssistantProfileContext.from_profile(assistant_profile, tenant=tenant)
@@ -160,6 +161,7 @@ class LiviaDecisionService:
                 discovery=discovery,
                 assistant_profile=assistant_profile,
                 knowledge_context=knowledge_context,
+                dialogue_memory=dialogue_memory,
             )
 
         if intent == "greeting":
@@ -208,6 +210,7 @@ class LiviaDecisionService:
                         discovery=discovery,
                         assistant_profile=assistant_profile,
                         knowledge_context=knowledge_context,
+                        dialogue_memory=dialogue_memory,
                     )
                     return decision
                 if self._should_ask_profile_discovery(current_message, assistant_profile):
@@ -241,6 +244,7 @@ class LiviaDecisionService:
                     discovery=discovery,
                     assistant_profile=assistant_profile,
                     knowledge_context=knowledge_context,
+                    dialogue_memory=dialogue_memory,
                 )
                 return decision
             if self._should_ask_profile_discovery(current_message, assistant_profile) and collection.trigger == CollectionTrigger.NONE:
@@ -314,6 +318,7 @@ class LiviaDecisionService:
                     discovery=discovery,
                     assistant_profile=assistant_profile,
                     knowledge_context=knowledge_context,
+                    dialogue_memory=dialogue_memory,
                 )
                 return decision
             decision = LiviaReply(
@@ -340,6 +345,7 @@ class LiviaDecisionService:
                     discovery=discovery,
                     assistant_profile=assistant_profile,
                     knowledge_context=knowledge_context,
+                    dialogue_memory=dialogue_memory,
                 )
             return self._handle_qualification(
                 intent="contact_data",
@@ -418,6 +424,7 @@ class LiviaDecisionService:
         discovery,
         assistant_profile,
         knowledge_context: str,
+        dialogue_memory=None,
     ) -> LiviaReply:
         result = None
         if conversation is not None:
@@ -477,7 +484,9 @@ class LiviaDecisionService:
                     current_message=current_message,
                     history=history,
                     knowledge_context=knowledge_context,
+                    enrichment_snippet=turn.enrichment_snippet,
                     append_followup=False,
+                    dialogue_memory=dialogue_memory,
                 )
         else:
             reply = self._build_grounded_consultative_reply(
@@ -488,6 +497,7 @@ class LiviaDecisionService:
                 knowledge_context=knowledge_context,
                 enrichment_snippet=turn.enrichment_snippet,
                 append_followup=True,
+                dialogue_memory=dialogue_memory,
             )
         decision = LiviaReply(intent=intent, reply=reply)
         decision = self._finalize_handoff(decision, conversation, lead_draft, discovery, current_message)
@@ -619,6 +629,7 @@ class LiviaDecisionService:
         conversation=None,
         lead_draft=None,
         current_message: str = "",
+        dialogue_memory=None,
     ) -> str:
         """
         Fundamenta a reply determinística com fatos curados do RAG.
@@ -626,9 +637,7 @@ class LiviaDecisionService:
         Com LIVIA_AI_ENABLED=False, sintetiza 1-2 frases naturais a partir dos
         chunks — sem dump de markdown, score, fonte ou metadados internos.
         """
-        from assistant_core.dialogue_memory import load_dialogue_memory
-
-        memory = load_dialogue_memory(conversation, lead_draft)
+        memory = self._resolve_memory(conversation, lead_draft, dialogue_memory)
         return synthesize_deterministic_reply(
             knowledge_context,
             base_reply=reply,
@@ -636,6 +645,18 @@ class LiviaDecisionService:
             active_domain=memory.active_domain,
             active_application=getattr(memory, "active_application", "") or "",
         )
+
+    def _resolve_memory(self, conversation, lead_draft, dialogue_memory=None):
+        from assistant_core.dialogue_memory import load_dialogue_memory
+
+        if dialogue_memory is not None:
+            return dialogue_memory
+        return load_dialogue_memory(conversation, lead_draft)
+
+    def _consultative_synthesis_query(self, current_message: str, need_summary: str, memory) -> str:
+        from assistant_core.services.response_quality_gate import _consultative_synthesis_query
+
+        return _consultative_synthesis_query(current_message, need_summary, memory)
 
     def _build_grounded_consultative_reply(
         self,
@@ -647,30 +668,41 @@ class LiviaDecisionService:
         knowledge_context: str,
         enrichment_snippet: str = "",
         append_followup: bool = True,
+        dialogue_memory=None,
     ) -> str:
-        from assistant_core.dialogue_memory import load_dialogue_memory
+        from assistant_core.consultative_slots import extract_consultative_slots, is_cleaning_consultation, select_cleaning_followup
+        from assistant_core.conversation_turns import looks_like_environment_answer
         from assistant_core.followup_strategy import select_followup
-        from assistant_core.services.response_quality_gate import apply_response_quality_gate
+        from assistant_core.services.response_quality_gate import (
+            apply_response_quality_gate,
+            has_substantive_consultative_content,
+            is_acknowledgement_only_reply,
+        )
 
-        memory = load_dialogue_memory(conversation, lead_draft)
+        memory = self._resolve_memory(conversation, lead_draft, dialogue_memory)
         need = str(getattr(lead_draft, "need_summary", "") or "").strip()
+        synthesis_query = self._consultative_synthesis_query(current_message, need, memory)
         grounded = synthesize_deterministic_reply(
             knowledge_context,
             base_reply="",
-            current_message=current_message,
+            current_message=synthesis_query,
             active_domain=memory.active_domain,
             active_application=getattr(memory, "active_application", "") or "",
         )
-        if not grounded or is_generic_fallback_reply(grounded):
+        if not has_substantive_consultative_content(grounded) and knowledge_context.strip():
+            grounded = synthesize_deterministic_reply(
+                knowledge_context,
+                base_reply="",
+                current_message=need or synthesis_query,
+                active_domain=memory.active_domain,
+                active_application=getattr(memory, "active_application", "") or "",
+            )
+        if not has_substantive_consultative_content(grounded):
             grounded = self._insufficient_evidence_reply(current_message, knowledge_context, memory=memory)
-
-        from assistant_core.conversation_turns import looks_like_environment_answer
 
         ack = ""
         if enrichment_snippet or looks_like_environment_answer(current_message):
             ack = "Entendi, isso ajuda a detalhar a necessidade."
-        if ack and grounded and normalize_text(ack) in normalize_text(grounded):
-            ack = ""
 
         follow = ""
         if append_followup:
@@ -678,18 +710,37 @@ class LiviaDecisionService:
                 memory=memory,
                 current_message=current_message,
                 need_summary=need,
-                answer_text=grounded,
+                answer_text=grounded or "",
                 history=history,
                 force=False,
             )
+            if not follow and is_cleaning_consultation(memory=memory, need_summary=need, current_message=current_message):
+                slots = extract_consultative_slots(
+                    need_summary=need,
+                    history=history,
+                    current_message=current_message,
+                )
+                follow = select_cleaning_followup(slots=slots, current_message=current_message)
 
-        parts = [part for part in (grounded, ack, follow) if part]
+        parts: list[str] = []
+        if has_substantive_consultative_content(grounded):
+            parts.append(grounded)
+        if follow and follow.lower() not in normalize_text(" ".join(parts)):
+            parts.append(follow)
+        if ack and parts:
+            parts.insert(1 if has_substantive_consultative_content(grounded) else 0, ack)
+
         reply = " ".join(parts).strip()
+        if is_acknowledgement_only_reply(reply) and knowledge_context.strip():
+            reply = " ".join(part for part in (grounded, follow) if part and str(part).strip()).strip()
+
         reply, _ = apply_response_quality_gate(
             reply=reply,
             knowledge_context=knowledge_context,
             current_message=current_message,
             memory=memory,
+            need_summary=need,
+            history=history,
             append_followup=False,
         )
         return reply
@@ -739,6 +790,7 @@ class LiviaDecisionService:
         discovery,
         assistant_profile,
         knowledge_context: str,
+        dialogue_memory=None,
     ) -> LiviaReply:
         lead_draft = None
         if conversation is not None:
@@ -757,6 +809,17 @@ class LiviaDecisionService:
                 conversation=conversation,
                 lead_draft=lead_draft,
                 current_message=current_message,
+                dialogue_memory=dialogue_memory,
+            )
+        elif has_semantic_knowledge_block(knowledge_context):
+            reply = self._build_grounded_consultative_reply(
+                lead_draft=lead_draft,
+                conversation=conversation,
+                current_message=current_message,
+                history=history,
+                knowledge_context=knowledge_context,
+                append_followup=True,
+                dialogue_memory=dialogue_memory,
             )
         elif self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
             reply = self._grounded_informational_followup(
@@ -765,6 +828,7 @@ class LiviaDecisionService:
                 lead_draft=lead_draft,
                 current_message=current_message,
                 history=history,
+                dialogue_memory=dialogue_memory,
             )
         else:
             reply = build_consultative_commercial_reply(
@@ -778,6 +842,7 @@ class LiviaDecisionService:
                 conversation=conversation,
                 lead_draft=lead_draft,
                 current_message=current_message,
+                dialogue_memory=dialogue_memory,
             )
         decision = LiviaReply(intent=intent, reply=reply)
         decision = self._finalize_handoff(decision, conversation, lead_draft, discovery, current_message)
@@ -791,37 +856,18 @@ class LiviaDecisionService:
         lead_draft,
         current_message: str,
         history=None,
+        dialogue_memory=None,
     ) -> str:
         """Grounding RAG + follow-up curto por domínio/aplicação (sem misturar verticais)."""
-        from assistant_core.dialogue_memory import load_dialogue_memory
-        from assistant_core.followup_strategy import select_followup
-        from assistant_core.services.deterministic_synthesis import synthesize_deterministic_reply
-
         conversation = getattr(lead_draft, "conversation", None) if lead_draft is not None else None
-        memory = load_dialogue_memory(conversation, lead_draft)
-        grounded = synthesize_deterministic_reply(
-            knowledge_context,
-            base_reply="",
-            current_message=current_message,
-            active_domain=memory.active_domain,
-            active_application=getattr(memory, "active_application", "") or "",
-        )
-        if grounded and not is_generic_fallback_reply(grounded):
-            follow, _ = select_followup(
-                memory=memory,
-                current_message=current_message,
-                need_summary=str(getattr(lead_draft, "need_summary", "") or ""),
-                answer_text=grounded,
-                history=history,
-                force=False,
-            )
-            if follow and follow.lower() not in grounded.lower():
-                return f"{grounded} {follow}".strip()
-            return grounded
-        return build_consultative_commercial_reply(
+        return self._build_grounded_consultative_reply(
             lead_draft=lead_draft,
+            conversation=conversation,
             current_message=current_message,
-            history=None,
+            history=history,
+            knowledge_context=knowledge_context,
+            append_followup=True,
+            dialogue_memory=dialogue_memory,
         )
 
     def _handle_qualification(

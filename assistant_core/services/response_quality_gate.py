@@ -15,6 +15,45 @@ from assistant_core.followup_strategy import select_followup
 from knowledge_base.rag.content_classification import is_policy_leak_text
 
 
+ACKNOWLEDGEMENT_ONLY_PHRASES = (
+    "entendi",
+    "entendi isso ajuda a detalhar a necessidade",
+    "certo",
+    "perfeito",
+    "ok",
+)
+
+
+def is_acknowledgement_only_reply(text: str) -> bool:
+    """True quando a resposta é só confirmação genérica, sem conteúdo consultivo."""
+    cleaned = normalize_text(str(text or "").strip())
+    if not cleaned:
+        return True
+    if any(token in cleaned for token in ("hygibot", "dune", "duno", "limpeza", "lavar", "varrer", "aspirar", "fluxo", "documentação", "documentacao", "confirmação", "confirmacao")):
+        return False
+    if "?" in str(text or ""):
+        # Pergunta técnica isolada ainda conta como conteúdo útil.
+        if len(cleaned) > len(ACKNOWLEDGEMENT_ONLY_PHRASES[1]) + 8:
+            return False
+    stripped = normalize_text(re.sub(r"[^\w\s]", " ", cleaned))
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    if stripped in ACKNOWLEDGEMENT_ONLY_PHRASES:
+        return True
+    for phrase in ACKNOWLEDGEMENT_ONLY_PHRASES:
+        if stripped == phrase or stripped.startswith(f"{phrase} "):
+            remainder = stripped[len(phrase) :].strip()
+            if not remainder or remainder in ACKNOWLEDGEMENT_ONLY_PHRASES:
+                return True
+    return False
+
+
+def has_substantive_consultative_content(text: str) -> bool:
+    cleaned = str(text or "").strip()
+    if not cleaned or is_generic_fallback_reply(cleaned) or is_acknowledgement_only_reply(cleaned):
+        return False
+    return len(normalize_text(cleaned)) >= 20
+
+
 CROSS_DOMAIN_MARKERS = {
     "robotics": (
         "python",
@@ -162,7 +201,45 @@ def apply_response_quality_gate(
         diagnostics["policy_leak_blocked"] = True
         text = _safe_entity_fallback(memory, current_message)
 
+    if is_acknowledgement_only_reply(text) and knowledge_context.strip():
+        regenerated = synthesize_deterministic_reply(
+            knowledge_context,
+            base_reply="",
+            current_message=_consultative_synthesis_query(current_message, need_summary, memory),
+            active_domain=memory.active_domain,
+            active_application=getattr(memory, "active_application", "") or "",
+        )
+        follow, follow_diag = select_followup(
+            memory=memory,
+            current_message=current_message,
+            need_summary=need_summary,
+            answer_text=regenerated,
+            history=history,
+            force=False,
+        )
+        diagnostics.update(follow_diag)
+        parts = [part for part in (regenerated, follow) if part and str(part).strip()]
+        if parts:
+            text = " ".join(parts).strip()
+            diagnostics["regrounded"] = True
+            diagnostics["followup_strategy"] = follow_diag.get("followup_strategy", diagnostics["followup_strategy"])
+
     return strip_meta_rag_phrasing(text).strip(), diagnostics
+
+
+def _consultative_synthesis_query(current_message: str, need_summary: str, memory: DialogueMemory) -> str:
+    parts = [str(current_message or "").strip()]
+    need = str(need_summary or getattr(memory, "active_need", "") or "").strip()
+    if need and normalize_text(need) not in normalize_text(" ".join(parts)):
+        parts.append(need)
+    blob = normalize_text(" ".join(parts))
+    if getattr(memory, "active_application", "") == "cleaning_robotics" or getattr(memory, "active_topic", "") == "cleaning_robot":
+        if not any(token in blob for token in ("hygibot", "dune", "duno", "limpeza profissional")):
+            entity = str(getattr(memory, "active_entity", "") or "").strip()
+            if entity:
+                parts.append(entity)
+            parts.append("limpeza profissional hygibot")
+    return " ".join(part for part in parts if part)[:500]
 
 
 def detect_entity_in_message(message: str) -> bool:

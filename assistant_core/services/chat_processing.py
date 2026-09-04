@@ -144,6 +144,7 @@ def _persist_chat_processing_state(
             conversation=conversation,
             assistant_profile=_assistant_profile_without_ai(assistant_profile),
             knowledge_context=knowledge_context,
+            dialogue_memory=dialogue_memory,
         )
         decision_ms = int((time.monotonic() - decision_started) * 1000)
         Message.objects.create(
@@ -182,6 +183,7 @@ def _persist_chat_processing_state(
                     knowledge_context=knowledge_context,
                     current_message=user_message,
                     memory=dialogue_memory,
+                    need_summary=str(getattr(lead, "need_summary", "") or "") if lead is not None else "",
                     history=history,
                     append_followup=False if should_skip_consultative_followup(current_message=user_message, memory=dialogue_memory) else None,
                 )
