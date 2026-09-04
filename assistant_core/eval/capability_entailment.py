@@ -16,19 +16,47 @@ class CapabilityEntailmentResult:
     topic: str = ""
 
 
-POSITIVE_CAPABILITY_VERBS = (
-    r"\bpode\b",
-    r"\bconsegue\b",
-    r"\bsuporta\b",
-    r"\boperar\b",
-    r"\bopera\b",
-    r"\bsupera\b",
-    r"\bultrapassa\b",
-    r"\bpossui\b",
-    r"\btem autonomia\b",
-    r"\be (?:adequado|seguro|compativel|compatível)\b",
-    r"\bfoi projetado para\b",
-    r"\bprojetado para operar\b",
+PEOPLE_CONDITIONS = (
+    "pessoas circul",
+    "circulacao de pessoas",
+    "fluxo de pessoas",
+    "ambiente ocupado",
+    "ambientes ocup",
+    "pessoas no local",
+    "pessoas no ambiente",
+    "com pessoas",
+    "gente passando",
+    "ambientes com circul",
+)
+
+PEOPLE_CAPABILITY_MODAL_PATTERN = re.compile(
+    r"(?:^|\b)(?:pode|consegue|suporta|permite|funciona|opera|trabalha|da conta)\b|"
+    r"\be (?:capaz|adequado)\b",
+)
+
+PEOPLE_ACTIONS = (
+    "operar",
+    "trabalhar",
+    "funcionar",
+    "realizar",
+    "executar",
+    "apoiar",
+    "fazer ",
+    "limpeza",
+)
+
+EVALUATION_ONLY_LEADS = (
+    "precisamos avaliar",
+    "a avaliacao ajuda",
+    "avaliacao ajuda",
+    "deve ser avaliad",
+    "precisa ser avaliad",
+    "e necessario verificar",
+    "e necessario avaliar",
+    "cita o fluxo",
+    "fatores da avaliacao",
+    "avaliar para melhorar",
+    "buscar eficiencia",
 )
 
 LIMITATION_MARKERS = (
@@ -58,6 +86,7 @@ CONDITIONAL_KB_MARKERS = (
     "precisa ser avaliad",
     "necessario avaliar",
     "necessário avaliar",
+    "deve ser avaliad",
 )
 
 REPLY_STRENGTHENING_MARKERS = (
@@ -80,16 +109,12 @@ TOPIC_SPECS: tuple[dict, ...] = (
             "circulacao de pessoas",
             "circulação de pessoas",
         ),
-        "reply_claim_patterns": (
-            r"(?:pode|consegue|suporta|e capaz de|é capaz de).{0,50}(?:operar|trabalhar|funcionar).{0,50}(?:pessoas|circul)",
-            r"(?:pode|consegue|suporta).{0,30}operar",
-            r"operar.{0,40}(?:pessoas|circul|ambientes com)",
-        ),
         "kb_direct_patterns": (
-            r"projetado para operar.{0,60}(?:pessoas|circul)",
-            r"(?:pode|consegue|suporta|permite).{0,40}(?:operar|trabalhar).{0,40}(?:pessoas|circul)",
+            r"projetado para.{0,60}(?:operar|apoiar|trabalhar).{0,40}(?:pessoas|circul)",
+            r"(?:pode|consegue|suporta|permite).{0,50}(?:operar|trabalhar|apoiar|realizar|executar).{0,40}(?:pessoas|circul|limpeza)",
             r"operar em ambientes.{0,40}(?:pessoas|circul)",
-            r"(?:circulacao|circulação) de pessoas.{0,40}(?:oper|segur|permit)",
+            r"(?:circulacao|circulação) de pessoas.{0,40}(?:oper|segur|permit|apoi)",
+            r"ambientes com circulacao.{0,40}(?:pessoas|oper|apoi)",
         ),
         "kb_topic_markers": ("fluxo de pessoas", "pessoas", "circul"),
     },
@@ -123,6 +148,26 @@ TOPIC_SPECS: tuple[dict, ...] = (
         ),
         "kb_topic_markers": ("autonomia", "horas", "bateria"),
     },
+    {
+        "topic": "safety_efficiency",
+        "question_markers": ("segur", "eficien", "risco"),
+        "reply_claim_patterns": (
+            r"garant(e|ir).{0,40}(?:segur|eficien)",
+            r"(?:segur|eficien).{0,30}(?:garantid|assegur|confiavel)",
+            r"operacao segura",
+            r"operacao confiavel",
+            r"sem riscos",
+            r"\be seguro\b.{0,30}oper",
+        ),
+        "kb_direct_patterns": (
+            r"operacao segura",
+            r"sistemas documentados.{0,40}(?:segur|oper)",
+            r"areas ocupadas",
+            r"projetado para.{0,40}(?:segur|operacao segura)",
+            r"segur.{0,30}(?:oper|areas ocupadas|documentad)",
+        ),
+        "kb_topic_markers": ("segur", "eficien", "risco"),
+    },
 )
 
 
@@ -142,9 +187,6 @@ def assess_capability_entailment(
     message_norm = _normalize(current_message)
 
     if not reply_norm or _is_primarily_limitation_reply(reply_norm):
-        return CapabilityEntailmentResult()
-
-    if not _reply_has_positive_capability_claim(reply_norm):
         return CapabilityEntailmentResult()
 
     for spec in TOPIC_SPECS:
@@ -189,7 +231,6 @@ def build_grounded_limitation_reply(
 ) -> str:
     """Resposta natural de limitação usando trechos condicionais da KB."""
     kb = extract_knowledge_text(knowledge_context)
-    kb_norm = _normalize(kb)
     message_norm = _normalize(current_message)
     product = str(active_entity or "").strip()
 
@@ -241,14 +282,14 @@ def _is_primarily_limitation_reply(reply_norm: str) -> bool:
     return hits >= 2 or (hits == 1 and not _reply_has_strong_positive_claim(reply_norm))
 
 
-def _reply_has_positive_capability_claim(reply_norm: str) -> bool:
-    return _reply_has_strong_positive_claim(reply_norm)
-
-
 def _reply_has_strong_positive_claim(reply_norm: str) -> bool:
     if reply_norm.startswith("sim,") or reply_norm.startswith("sim "):
         return True
-    return any(re.search(pattern, reply_norm) for pattern in POSITIVE_CAPABILITY_VERBS)
+    if _reply_claims_people_circulation(reply_norm):
+        return True
+    if any(re.search(pattern, reply_norm) for spec in TOPIC_SPECS for pattern in spec.get("reply_claim_patterns", ())):
+        return True
+    return False
 
 
 def _question_targets_topic(message_norm: str, spec: dict) -> bool:
@@ -256,15 +297,36 @@ def _question_targets_topic(message_norm: str, spec: dict) -> bool:
 
 
 def _reply_claims_topic(reply_norm: str, spec: dict) -> bool:
-    return any(re.search(pattern, reply_norm) for pattern in spec["reply_claim_patterns"])
+    topic = spec["topic"]
+    if topic == "people_circulation":
+        return _reply_claims_people_circulation(reply_norm)
+    return any(re.search(pattern, reply_norm) for pattern in spec.get("reply_claim_patterns", ()))
+
+
+def _reply_claims_people_circulation(reply_norm: str) -> bool:
+    has_condition = any(marker in reply_norm for marker in PEOPLE_CONDITIONS)
+    if not has_condition:
+        return False
+    if _is_evaluation_only_reply(reply_norm):
+        return False
+    has_modal = bool(PEOPLE_CAPABILITY_MODAL_PATTERN.search(reply_norm))
+    has_action = any(marker in reply_norm for marker in PEOPLE_ACTIONS)
+    has_operational_context = any(
+        token in reply_norm for token in ("limpeza", "ambiente", "operacao", "trabalhar")
+    )
+    if has_modal and (has_action or has_operational_context or has_condition):
+        return True
+    return has_action and has_condition
+
+
+def _is_evaluation_only_reply(reply_norm: str) -> bool:
+    if not any(lead in reply_norm for lead in EVALUATION_ONLY_LEADS):
+        return False
+    return not bool(PEOPLE_CAPABILITY_MODAL_PATTERN.search(reply_norm))
 
 
 def _kb_directly_supports_topic(kb_norm: str, spec: dict) -> bool:
     return any(re.search(pattern, kb_norm) for pattern in spec["kb_direct_patterns"])
-
-
-def _kb_mentions_topic(kb_norm: str, spec: dict) -> bool:
-    return any(marker in kb_norm for marker in spec["kb_topic_markers"])
 
 
 def _autonomy_numeric_mismatch(reply_norm: str, kb_norm: str, spec: dict) -> bool:
