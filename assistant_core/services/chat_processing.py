@@ -213,6 +213,8 @@ def _persist_chat_processing_state(
         )
 
         observability = {
+            # intent = classificação conversacional da mensagem (discovery).
+            # commercial_intent (memória) = gatilho comercial persistido para coleta/handoff.
             "is_fallback": bool(is_generic_fallback_reply(assistant_reply)),
             "intent": getattr(decision, "intent", "") or "",
             "retrieval_attempted": bool(knowledge_result and knowledge_result.mode in {"semantic", "keyword"}),

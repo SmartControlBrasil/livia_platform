@@ -151,6 +151,28 @@ def apply_response_quality_gate(
     text = cleaned or text
 
     if llm_primary:
+        from assistant_core.eval.capability_entailment import (
+            assess_capability_entailment,
+            build_grounded_limitation_reply,
+        )
+
+        entailment = assess_capability_entailment(
+            reply=text,
+            knowledge_context=knowledge_context,
+            current_message=current_message,
+        )
+        if entailment.unsupported:
+            diagnostics["capability_claim_blocked"] = True
+            diagnostics["capability_entailment_reason"] = entailment.reason
+            diagnostics["capability_entailment_topic"] = entailment.topic
+            text = build_grounded_limitation_reply(
+                knowledge_context=knowledge_context,
+                current_message=current_message,
+                active_entity=getattr(memory, "active_entity", "") or "",
+            )
+            diagnostics["regrounded"] = True
+            diagnostics["followup_strategy"] = "capability_limitation"
+
         text = strip_meta_rag_phrasing(text)
         if text != str(reply or "").strip():
             diagnostics["meta_rag_stripped"] = True

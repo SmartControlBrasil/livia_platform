@@ -232,6 +232,11 @@ def assess_evidence_sufficiency(
     )
 
 
+def extract_knowledge_text(knowledge_context: str) -> str:
+    """Texto factual extraído do bloco KNOWLEDGE_BASE."""
+    return _extract_kb_content(knowledge_context)
+
+
 def parse_chunk_ids_from_context(knowledge_context: str) -> list[int]:
     ids: list[int] = []
     for line in str(knowledge_context or "").splitlines():
