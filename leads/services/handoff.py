@@ -108,6 +108,13 @@ class HandoffService:
             return HandoffDecision(True, HandoffRequest.Reason.EXPLICIT_REQUEST, priority)
 
         if lead_draft is not None and lead_draft.status in {LeadDraft.Status.QUALIFIED, LeadDraft.Status.SENT_TO_CRM}:
+            try:
+                from assistant_core.services.decision_outcome import is_consultative_knowledge_turn
+
+                if is_consultative_knowledge_turn(discovery_result, message) and not self._has_explicit_request(normalized):
+                    return HandoffDecision(False)
+            except Exception:
+                pass
             return HandoffDecision(True, HandoffRequest.Reason.QUALIFIED_LEAD, HandoffRequest.Priority.NORMAL)
 
         if self._is_urgent(normalized):

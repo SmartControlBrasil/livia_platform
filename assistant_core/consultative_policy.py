@@ -243,7 +243,10 @@ def decide_collection(*, current_message: str, conversation=None, lead_draft=Non
         if trigger != CollectionTrigger.NONE:
             return CollectionDecision(True, trigger=trigger, reason="collection_already_active")
         from assistant_core.conversation_turns import is_direct_question, is_need_enrichment
+        from assistant_core.services.decision_outcome import is_consultative_knowledge_turn
 
+        if is_consultative_knowledge_turn(discovery, current_message):
+            return CollectionDecision(False, reason="consultative_knowledge_during_collection")
         if (
             is_consultative_context_answer(current_message)
             or is_need_enrichment(current_message)

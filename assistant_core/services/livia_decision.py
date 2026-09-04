@@ -37,7 +37,8 @@ from assistant_core.services.deterministic_synthesis import (
 )
 from assistant_core.prompts.livia_ai import build_livia_ai_prompt
 from assistant_core.qualification import has_basic_contact
-from assistant_core.state import LeadState, can_start_new_cycle, set_state, should_lock_lead
+from assistant_core.state import LeadState, can_start_new_cycle, set_state, should_block_dialogue_for_locked_lead
+from assistant_core.services.decision_outcome import is_consultative_knowledge_turn
 from leads.services import CRMDispatchService, LeadCaptureService
 from leads.services.handoff import HandoffService
 from integrations.openai.client import OpenAIChatClient
@@ -125,7 +126,7 @@ class LiviaDecisionService:
         has_quote_request = bool(discovery.has_quote_request)
         has_support_request = bool(discovery.has_support_request)
         has_technical_question = bool(discovery.has_technical_question)
-        if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
+        if conversation is not None and should_block_dialogue_for_locked_lead(conversation, current_message, discovery):
             decision = self._locked_lead_reply(intent if intent not in {"unknown", "greeting"} else "commercial_interest")
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         turn = classify_conversation_turn(
@@ -192,7 +193,7 @@ class LiviaDecisionService:
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if intent in {"quote_request", "commercial_interest"}:
-            if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
+            if conversation is not None and should_block_dialogue_for_locked_lead(conversation, current_message, discovery):
                 decision = self._locked_lead_reply(intent)
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             collection = decide_collection(
@@ -328,7 +329,7 @@ class LiviaDecisionService:
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
         if has_basic_contact(current_message) and (has_commercial_interest or has_quote_request):
-            if conversation is not None and should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
+            if conversation is not None and should_block_dialogue_for_locked_lead(conversation, current_message, discovery):
                 decision = self._locked_lead_reply("contact_data")
                 return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
             collection = decide_collection(
@@ -394,6 +395,18 @@ class LiviaDecisionService:
             )
             decision = self._finalize_handoff(decision, conversation, None, discovery, current_message)
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+        if is_consultative_knowledge_turn(discovery, current_message):
+            decision = self._handle_consultative_conversation(
+                intent=intent if intent not in {"unknown", "greeting"} else "commercial_interest",
+                history=history,
+                current_message=current_message,
+                conversation=conversation,
+                discovery=discovery,
+                assistant_profile=assistant_profile,
+                knowledge_context=knowledge_context,
+                dialogue_memory=dialogue_memory,
+            )
+            return decision
         need = ""
         if conversation is not None:
             try:
@@ -835,15 +848,31 @@ class LiviaDecisionService:
         knowledge_context: str,
         dialogue_memory=None,
     ) -> LiviaReply:
+        from assistant_core.services.decision_outcome import (
+            _is_product_information_discovery,
+            is_consultative_knowledge_message,
+        )
+
         lead_draft = None
+        pure_consultative = (
+            is_consultative_knowledge_message(current_message)
+            or _is_product_information_discovery(discovery)
+        ) and not bool(getattr(discovery, "should_collect_lead", False))
         if conversation is not None:
-            result = self.lead_capture_service.capture_from_message(
-                conversation=conversation,
-                message=current_message,
-                history=history,
-            )
-            lead_draft = result.lead_draft
-            set_state(conversation, LeadState.DISCOVERY)
+            try:
+                lead_draft = conversation.lead_draft
+            except Exception:
+                lead_draft = None
+            if not pure_consultative:
+                result = self.lead_capture_service.capture_from_message(
+                    conversation=conversation,
+                    message=current_message,
+                    history=history,
+                )
+                lead_draft = result.lead_draft
+                set_state(conversation, LeadState.DISCOVERY)
+            elif lead_draft is None:
+                set_state(conversation, LeadState.DISCOVERY)
         if is_conceptual_price_question(current_message):
             reply = build_conceptual_price_reply(lead_draft, current_message=current_message)
             reply = self._with_knowledge(
@@ -888,7 +917,8 @@ class LiviaDecisionService:
                 dialogue_memory=dialogue_memory,
             )
         decision = LiviaReply(intent=intent, reply=reply)
-        decision = self._finalize_handoff(decision, conversation, lead_draft, discovery, current_message)
+        if not pure_consultative:
+            decision = self._finalize_handoff(decision, conversation, lead_draft, discovery, current_message)
         return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
 
     def _grounded_informational_followup(
@@ -929,7 +959,7 @@ class LiviaDecisionService:
         if conversation is None:
             decision = LiviaReply(intent=intent, reply=build_contextual_reply(intent=intent))
             return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
-        if should_lock_lead(conversation) and not can_start_new_cycle(conversation, current_message):
+        if should_block_dialogue_for_locked_lead(conversation, current_message, discovery):
             decision = LiviaReply(
                 intent=intent,
                 reply="Perfeito, já encaminhei seus dados para sequência do atendimento. Se for uma nova demanda, me diga que é um novo pedido.",

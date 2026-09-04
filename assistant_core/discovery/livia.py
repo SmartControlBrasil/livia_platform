@@ -176,6 +176,21 @@ def analyze_message(text: str) -> DiscoveryResult:
             reason="short_greeting",
         )
 
+    if _is_product_information_request(normalized):
+        return _result(
+            "commercial_interest",
+            normalized,
+            scenario="product_information",
+            confidence=0.85,
+            should_collect_lead=False,
+            should_answer_contextually=True,
+            should_ask_discovery_question=False,
+            has_commercial_interest=True,
+            has_technical_question=has_technical,
+            has_support_request=has_support,
+            reason="product_information_request",
+        )
+
     if has_support and not has_quote and not _has_visit_or_budget_marker(normalized):
         return _result(
             "support_request",
@@ -355,6 +370,12 @@ def _has_visit_or_budget_marker(normalized_text: str) -> bool:
 def _looks_informational(normalized_text: str) -> bool:
     prefixes = ("como ", "qual ", "quais ", "quando ", "onde ", "posso ", "tem ", "voces tem ", "voces trabalham", "trabalham com", "quanto tempo", "da para", "da pra")
     return normalized_text.endswith("?") or normalized_text.startswith(prefixes)
+
+
+def _is_product_information_request(normalized_text: str) -> bool:
+    from assistant_core.services.decision_outcome import is_consultative_knowledge_message
+
+    return is_consultative_knowledge_message(normalized_text)
 
 
 def _is_greeting(normalized_text: str) -> bool:

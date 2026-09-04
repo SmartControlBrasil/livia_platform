@@ -17,8 +17,19 @@ class DecisionOutcome:
     evidence_reason: str = ""
 
 
+def _is_product_information_discovery(discovery) -> bool:
+    return (
+        getattr(discovery, "scenario", "") == "product_information"
+        or getattr(discovery, "reason", "") == "product_information_request"
+    )
+
+
 def is_informational_knowledge_query(discovery) -> bool:
     normalized = str(getattr(discovery, "normalized_text", "") or "")
+    if is_consultative_knowledge_message(normalized):
+        return True
+    if _is_product_information_discovery(discovery):
+        return True
     if bool(getattr(discovery, "has_quote_request", False)):
         timeline_markers = ("prazo", "entrega", "tempo de", "quanto tempo", "demora")
         if any(marker in normalized for marker in timeline_markers):
@@ -77,6 +88,78 @@ def is_informational_knowledge_query(discovery) -> bool:
         if looks_like_q and not normalized.startswith(("quero ", "preciso ", "gostaria")):
             return True
     return "?" in normalized and not bool(getattr(discovery, "should_collect_lead", False))
+
+
+CONSULTATIVE_KNOWLEDGE_MARKERS = (
+    "quero saber mais",
+    "quero saber sobre",
+    "gostaria de saber mais",
+    "me de mais informac",
+    "me da mais informac",
+    "me dê mais informac",
+    "mais informac",
+    "me conte mais",
+    "me fale mais",
+    "como funciona",
+    "como ele funciona",
+    "como ela funciona",
+    "qual a autonomia",
+    "qual autonomia",
+    "onde pode ser usado",
+    "onde ele pode ser usado",
+    "qual diferenca",
+    "qual diferença",
+    "serve para",
+    "pode atender",
+    "precisa de internet",
+)
+
+
+CONSULTATIVE_QUESTION_PREFIXES = (
+    "como funciona",
+    "como ele funciona",
+    "como ela funciona",
+    "como posso usar",
+    "como posso integrar",
+    "qual a autonomia",
+    "qual autonomia",
+    "qual diferenca",
+    "qual diferença",
+    "quais sao os",
+    "quais são os",
+    "onde pode ser usado",
+    "onde ele pode ser usado",
+    "o que e o",
+    "o que é o",
+    "me explique",
+    "me diga",
+)
+
+
+def is_consultative_knowledge_message(message: str) -> bool:
+    normalized = str(message or "").strip().lower()
+    if not normalized:
+        return False
+    normalized = normalized.replace("ã", "a").replace("ê", "e").replace("é", "e")
+    if any(marker in normalized for marker in CONSULTATIVE_KNOWLEDGE_MARKERS):
+        return True
+    if any(normalized.startswith(prefix) for prefix in CONSULTATIVE_QUESTION_PREFIXES):
+        return True
+    return False
+
+
+def is_consultative_knowledge_turn(discovery, current_message: str = "") -> bool:
+    message = str(current_message or getattr(discovery, "normalized_text", "") or "")
+    if is_consultative_knowledge_message(message):
+        return True
+    if _is_product_information_discovery(discovery):
+        return True
+    if is_informational_knowledge_query(discovery):
+        return True
+    intent = str(getattr(discovery, "intent", "") or "")
+    if intent in {"technical_question", "support_request", "followup"}:
+        return True
+    return False
 
 
 def is_ambiguous_product_query(discovery) -> bool:
@@ -151,7 +234,8 @@ def is_commercial_discovery_with_knowledge(discovery) -> bool:
 
 def resolve_decision_outcome(*, decision, discovery, conversation, knowledge_context: str = "") -> DecisionOutcome:
     if getattr(decision, "handoff_request_id", None):
-        return DecisionOutcome("handoff", False, skip_reason="handoff_active")
+        if not is_consultative_knowledge_turn(discovery):
+            return DecisionOutcome("handoff", False, skip_reason="handoff_active")
 
     intent = str(getattr(decision, "intent", "") or "")
     if intent == "greeting":

@@ -67,6 +67,31 @@ def should_lock_lead(conversation) -> bool:
     }
 
 
+def should_block_dialogue_for_locked_lead(conversation, message: str, discovery=None) -> bool:
+    """Bloqueia só tentativas comerciais duplicadas — não dúvidas consultivas."""
+    if not should_lock_lead(conversation):
+        return False
+    if can_start_new_cycle(conversation, message):
+        return False
+    if discovery is None:
+        from assistant_core.discovery import analyze_message
+
+        discovery = analyze_message(message)
+    from assistant_core.services.decision_outcome import is_consultative_knowledge_turn
+
+    if is_consultative_knowledge_turn(discovery, message):
+        return False
+    from assistant_core.consultative_policy import CollectionTrigger, detect_collection_trigger
+
+    if detect_collection_trigger(message) != CollectionTrigger.NONE:
+        return True
+    if bool(getattr(discovery, "should_collect_lead", False)):
+        return True
+    if getattr(discovery, "intent", "") == "contact_data" and bool(getattr(discovery, "has_contact_data", False)):
+        return True
+    return False
+
+
 def can_start_new_cycle(conversation, message: str) -> bool:
     if not should_lock_lead(conversation):
         return True

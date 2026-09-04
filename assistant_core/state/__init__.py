@@ -6,6 +6,7 @@ from .livia import (
     get_current_state,
     next_state_after_message,
     set_state,
+    should_block_dialogue_for_locked_lead,
     should_lock_lead,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "get_current_state",
     "next_state_after_message",
     "set_state",
+    "should_block_dialogue_for_locked_lead",
     "should_lock_lead",
 ]
