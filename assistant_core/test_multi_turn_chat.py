@@ -8,7 +8,7 @@ from django.test import TestCase, override_settings
 from assistant_core.conversation_turns import is_generic_fallback_reply, lead_has_name_deferred
 from assistant_core.prompts.livia import DEFAULT_REPLY
 from assistant_core.summary import build_conversation_transcript, build_lead_notification_body
-from conversations.models import Conversation, Message
+from conversations.models import Conversation, HandoffRequest, Message
 from integrations.models import OutboxEvent
 from integrations.outbox.handlers import LeadQualifiedHandler
 from integrations.outbox.payloads import SCHEMA_VERSION
@@ -73,6 +73,27 @@ class MultiTurnCommercialConversationTests(TestCase):
         self.assertNotIn("garantia de", lowered)
         self.assertNotIn("stripe", lowered)
         self.assertNotIn("shopify", lowered)
+
+    def test_site_need_then_detail_then_budget_collects_only_on_budget(self):
+        first = self._chat("preciso de um site", session_id="site-three-turn")
+        self.assertEqual(first["intent"], "commercial_interest")
+        self._assert_no_generic_fallback(first["reply"])
+        self._assert_no_name_collection(first["reply"])
+        self.assertFalse(HandoffRequest.objects.filter(conversation__session_id="site-three-turn").exists())
+
+        second = self._chat("é um site institucional para minha empresa", session_id="site-three-turn")
+        self._assert_no_generic_fallback(second["reply"])
+        self._assert_no_name_collection(second["reply"])
+        self.assertFalse(HandoffRequest.objects.filter(conversation__session_id="site-three-turn").exists())
+
+        third = self._chat("quero um orçamento", session_id="site-three-turn")
+        lowered = third["reply"].lower()
+        self.assertTrue(
+            any(token in lowered for token in ("nome", "empresa", "telefone", "e-mail", "email")),
+            third["reply"],
+        )
+        lead = LeadDraft.objects.get(conversation__session_id="site-three-turn")
+        self.assertTrue((lead.qualification_data or {}).get("collection_active"))
 
     def test_consultative_flow_then_explicit_budget_collects(self):
         consultative = [

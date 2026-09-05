@@ -67,6 +67,58 @@ class ConsultativeAfterHandoffTests(TestCase):
             )
         )
 
+
+    def test_need_statement_after_qualified_lead_is_consultative(self):
+        discovery = __import__("assistant_core.discovery", fromlist=["analyze_message"]).analyze_message(
+            "preciso de um site"
+        )
+        self.assertFalse(
+            should_block_dialogue_for_locked_lead(
+                self.conversation,
+                "preciso de um site",
+                discovery,
+            )
+        )
+
+    def test_new_need_after_qualified_lead_does_not_create_handoff(self):
+        kb = (
+            "[KNOWLEDGE_BASE]\nConteúdo:\n"
+            "A Smart Control Brasil desenvolve sites institucionais, catálogos e sistemas web.\n"
+            "[/KNOWLEDGE_BASE]"
+        )
+        initial_leads = LeadDraft.objects.filter(conversation=self.conversation).count()
+        initial_handoffs = HandoffRequest.objects.filter(conversation=self.conversation).count()
+        decision = self.service.generate_reply(
+            [],
+            "preciso de um site",
+            conversation=self.conversation,
+            knowledge_context=kb,
+        )
+        self.assertNotIn(LOCKED_REPLY, decision.reply.lower())
+        self.assertIsNone(decision.handoff_request_id)
+        self.assertEqual(LeadDraft.objects.filter(conversation=self.conversation).count(), initial_leads)
+        self.assertEqual(HandoffRequest.objects.filter(conversation=self.conversation).count(), initial_handoffs)
+
+    def test_existing_handoff_does_not_duplicate_for_natural_new_need(self):
+        HandoffRequest.objects.create(
+            tenant=self.tenant,
+            conversation=self.conversation,
+            lead_draft=self.lead,
+            reason=HandoffRequest.Reason.QUALIFIED_LEAD,
+            status=HandoffRequest.Status.PENDING,
+            visitor_name="Maria",
+            visitor_phone="11999998888",
+        )
+        initial_handoffs = HandoffRequest.objects.filter(conversation=self.conversation).count()
+        decision = self.service.generate_reply(
+            [],
+            "agora preciso automatizar uma máquina",
+            conversation=self.conversation,
+            knowledge_context="[KNOWLEDGE_BASE]\nConteúdo:\nAutomação de máquinas industriais.\n[/KNOWLEDGE_BASE]",
+        )
+        self.assertNotIn(LOCKED_REPLY, decision.reply.lower())
+        self.assertEqual(HandoffRequest.objects.filter(conversation=self.conversation).count(), initial_handoffs)
+
     def test_explicit_quote_on_qualified_lead_still_blocks_duplicate(self):
         discovery = __import__("assistant_core.discovery", fromlist=["analyze_message"]).analyze_message(
             "Quero orçamento de novo"

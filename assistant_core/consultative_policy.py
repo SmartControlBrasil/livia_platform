@@ -82,6 +82,20 @@ PRICE_QUESTION_MARKERS = (
     "qual o valor",
 )
 
+CONSULTATIVE_NEED_MARKERS = (
+    "preciso",
+    "quero",
+    "gostaria",
+    "tenho interesse",
+    "estou procurando",
+    "procuro",
+    "busco",
+    "tenho problema",
+    "tenho um problema",
+    "tenho outra duvida",
+    "outra duvida",
+)
+
 
 class CollectionTrigger(str, Enum):
     NONE = "none"
@@ -164,6 +178,31 @@ def detect_collection_trigger(text: str) -> CollectionTrigger:
 
 def is_explicit_collection_trigger(text: str) -> bool:
     return detect_collection_trigger(text) != CollectionTrigger.NONE
+
+
+def is_consultative_need_discovery(discovery=None, current_message: str = "") -> bool:
+    """Necessidade/interesse inicial não é conversão nem handoff."""
+    message = str(current_message or getattr(discovery, "normalized_text", "") or "")
+    normalized = normalize_text(message)
+    if not normalized:
+        return False
+    if detect_collection_trigger(normalized) != CollectionTrigger.NONE:
+        return False
+    if bool(getattr(discovery, "should_collect_lead", False)):
+        return False
+    if bool(getattr(discovery, "has_contact_data", False)):
+        return False
+    if bool(getattr(discovery, "has_quote_request", False)) and not is_conceptual_price_question(message):
+        return False
+    if any(re.search(rf"\b{re.escape(marker)}\b", normalized) for marker in CONSULTATIVE_NEED_MARKERS):
+        return True
+    return bool(
+        getattr(discovery, "has_commercial_interest", False)
+        and (
+            getattr(discovery, "should_ask_discovery_question", False)
+            or getattr(discovery, "should_answer_contextually", False)
+        )
+    )
 
 
 def is_human_handoff_request(text: str) -> bool:

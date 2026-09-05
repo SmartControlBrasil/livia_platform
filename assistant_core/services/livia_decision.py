@@ -21,6 +21,7 @@ from assistant_core.consultative_policy import (
     build_conceptual_price_reply,
     decide_collection,
     is_conceptual_price_question,
+    is_consultative_need_discovery,
     mark_collection_active,
 )
 from assistant_core.discovery import analyze_message
@@ -854,9 +855,15 @@ class LiviaDecisionService:
         )
 
         lead_draft = None
+        locked_consultative_need = bool(
+            conversation is not None
+            and (getattr(conversation, "is_qualified", False) or getattr(conversation, "lead_state", "") == LeadState.QUALIFIED)
+            and is_consultative_need_discovery(discovery, current_message)
+        )
         pure_consultative = (
             is_consultative_knowledge_message(current_message)
             or _is_product_information_discovery(discovery)
+            or locked_consultative_need
         ) and not bool(getattr(discovery, "should_collect_lead", False))
         if conversation is not None:
             try:

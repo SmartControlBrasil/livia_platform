@@ -109,9 +109,13 @@ class HandoffService:
 
         if lead_draft is not None and lead_draft.status in {LeadDraft.Status.QUALIFIED, LeadDraft.Status.SENT_TO_CRM}:
             try:
+                from assistant_core.consultative_policy import is_consultative_need_discovery
                 from assistant_core.services.decision_outcome import is_consultative_knowledge_turn
 
-                if is_consultative_knowledge_turn(discovery_result, message) and not self._has_explicit_request(normalized):
+                is_consultative_turn = is_consultative_knowledge_turn(
+                    discovery_result, message
+                ) or is_consultative_need_discovery(discovery_result, message)
+                if is_consultative_turn and not self._has_explicit_request(normalized):
                     return HandoffDecision(False)
             except Exception:
                 pass

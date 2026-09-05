@@ -5,6 +5,7 @@ from assistant_core.consultative_policy import (
     detect_collection_trigger,
     is_conceptual_price_question,
     is_explicit_collection_trigger,
+    is_consultative_need_discovery,
 )
 from assistant_core.discovery import analyze_message
 
@@ -13,6 +14,10 @@ class ConsultativePolicyTests(SimpleTestCase):
     def test_commercial_interest_does_not_collect_without_explicit_trigger(self):
         for message in (
             "preciso de um site",
+            "preciso de um sistema web",
+            "preciso automatizar uma máquina",
+            "quero saber sobre robótica",
+            "tenho interesse em um robô",
             "gostaria de uma loja virtual",
             "vendo ferramentas",
             "trabalho com automação",
@@ -20,10 +25,39 @@ class ConsultativePolicyTests(SimpleTestCase):
             "vocês fazem sites?",
             "quanto tempo demora?",
             "como funciona?",
+            "quero",
+            "preciso",
         ):
             discovery = analyze_message(message)
             self.assertFalse(discovery.should_collect_lead, message)
             self.assertFalse(is_explicit_collection_trigger(message), message)
+
+    def test_need_and_interest_are_consultative_discovery(self):
+        for message in (
+            "preciso de um site",
+            "preciso de um sistema web",
+            "preciso automatizar uma máquina",
+            "quero saber sobre robótica",
+            "tenho interesse em um robô",
+            "agora preciso de um site",
+            "também quero automatizar minha empresa",
+            "tenho outra dúvida sobre robôs",
+            "quero",
+            "preciso",
+        ):
+            discovery = analyze_message(message)
+            self.assertTrue(is_consultative_need_discovery(discovery, message), message)
+            self.assertFalse(discovery.should_collect_lead, message)
+
+    def test_explicit_conversion_is_not_consultative_discovery(self):
+        for message in (
+            "quero comprar um robô",
+            "quero um orçamento",
+            "quero proposta",
+            "quero falar com vendedor",
+        ):
+            discovery = analyze_message(message)
+            self.assertFalse(is_consultative_need_discovery(discovery, message), message)
 
     def test_explicit_budget_and_human_triggers(self):
         self.assertEqual(detect_collection_trigger("quero um orçamento para essa loja"), CollectionTrigger.BUDGET)

@@ -77,9 +77,10 @@ def should_block_dialogue_for_locked_lead(conversation, message: str, discovery=
         from assistant_core.discovery import analyze_message
 
         discovery = analyze_message(message)
+    from assistant_core.consultative_policy import is_consultative_need_discovery
     from assistant_core.services.decision_outcome import is_consultative_knowledge_turn
 
-    if is_consultative_knowledge_turn(discovery, message):
+    if is_consultative_knowledge_turn(discovery, message) or is_consultative_need_discovery(discovery, message):
         return False
     from assistant_core.consultative_policy import CollectionTrigger, detect_collection_trigger
 
@@ -96,7 +97,12 @@ def can_start_new_cycle(conversation, message: str) -> bool:
     if not should_lock_lead(conversation):
         return True
     normalized = str(message or "").strip().lower()
-    return any(marker in normalized for marker in NEW_CYCLE_MARKERS)
+    if any(marker in normalized for marker in NEW_CYCLE_MARKERS):
+        return True
+    from assistant_core.consultative_policy import is_consultative_need_discovery
+    from assistant_core.discovery import analyze_message
+
+    return is_consultative_need_discovery(analyze_message(message), message)
 
 
 def _commercial_capture_active(conversation, lead_draft, intent: str = "") -> bool:
