@@ -40,6 +40,7 @@ class _DeterministicChatResult:
 def process_chat_request(*, chat_request, tenant, session_id: str, user_message: str, source_page: str = "") -> dict:
     from assistant_core.consultative_policy import detect_collection_trigger, CollectionTrigger
     from assistant_core.dialogue_memory import (
+        build_collection_slot_context,
         build_contextual_retrieval_query,
         load_dialogue_memory,
         persist_dialogue_memory,
@@ -54,6 +55,7 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
     memory = load_dialogue_memory(conversation_ref)
     discovery_preview = analyze_message(user_message)
     commercial = detect_collection_trigger(user_message) != CollectionTrigger.NONE
+    slot_context = build_collection_slot_context(conversation=conversation_ref, message=user_message)
     memory = update_dialogue_memory_from_turn(
         memory=memory,
         current_message=user_message,
@@ -61,6 +63,7 @@ def process_chat_request(*, chat_request, tenant, session_id: str, user_message:
         need_summary=memory.active_need,
         commercial_trigger=commercial,
         tenant=tenant,
+        slot_context=slot_context,
     )
     original_query, contextual_query = build_contextual_retrieval_query(
         current_message=user_message,

@@ -162,6 +162,154 @@ CONTINUE_CONSULTATIVE_MARKERS = (
     "só quero tirar dúvidas",
 )
 
+EXPLICIT_SUBJECT_CHANGE_MARKERS = (
+    "quero saber sobre",
+    "quero saber do",
+    "quero saber da",
+    "gostaria de saber sobre",
+    "gostaria de saber do",
+    "gostaria de saber da",
+    "fale sobre",
+    "me fale sobre",
+    "me conte sobre",
+    "antes disso",
+    "mudando de assunto",
+    "mas quero saber",
+    "quero saber mais",
+)
+
+
+@dataclass(frozen=True)
+class SlotCollectionContext:
+    collection_active: bool = False
+    expected_slot: str = ""
+    is_slot_value: bool = False
+    preserve_active_subject: bool = False
+
+
+def build_collection_slot_context(*, conversation=None, lead_draft=None, message: str = "") -> SlotCollectionContext:
+    """Infere se o turno atual preenche slot comercial — sem alterar lead."""
+    lead = lead_draft
+    if lead is None and conversation is not None:
+        try:
+            lead = conversation.lead_draft
+        except Exception:
+            lead = None
+    if lead is None:
+        return SlotCollectionContext()
+
+    qd = dict(getattr(lead, "qualification_data", None) or {})
+    collection_active = bool(qd.get("collection_active"))
+    if not collection_active:
+        return SlotCollectionContext()
+
+    from leads.services.commercial import QualificationService
+
+    pending = QualificationService().missing_fields(lead)
+    expected_slot = str(pending[0] if pending else "")
+    if is_explicit_knowledge_subject_change(message):
+        return SlotCollectionContext(
+            collection_active=True,
+            expected_slot=expected_slot,
+            is_slot_value=False,
+            preserve_active_subject=False,
+        )
+
+    is_slot = _message_fits_contact_slot_pattern(message, expected_slot=expected_slot)
+    return SlotCollectionContext(
+        collection_active=True,
+        expected_slot=expected_slot,
+        is_slot_value=is_slot,
+        preserve_active_subject=is_slot,
+    )
+
+
+def is_explicit_knowledge_subject_change(message: str) -> bool:
+    normalized = normalize_text(message)
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in EXPLICIT_SUBJECT_CHANGE_MARKERS):
+        return True
+    if detect_entity_mention(message) and any(
+        marker in normalized
+        for marker in ("quero", "saber", "fale", "conte", "sobre", "duvida", "dúvida", "informac", "informação")
+    ):
+        return True
+    try:
+        from assistant_core.discovery import analyze_message
+        from assistant_core.services.decision_outcome import _is_product_information_discovery
+
+        discovery = analyze_message(message)
+        if _is_product_information_discovery(discovery):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _message_fits_contact_slot_pattern(message: str, *, expected_slot: str = "") -> bool:
+    from assistant_core.qualification import (
+        extract_contact_snapshot,
+        infer_pending_field_values,
+        is_valid_company,
+        is_valid_email,
+        is_valid_name,
+        is_valid_phone,
+    )
+
+    text = str(message or "").strip()
+    if not text or "?" in text or len(text) > 120:
+        return False
+    if is_explicit_knowledge_subject_change(text):
+        return False
+
+    slots = [expected_slot] if expected_slot else []
+    for slot in ("name_or_company", "phone_or_email", "need_summary"):
+        if slot and slot not in slots:
+            slots.append(slot)
+    for slot in slots:
+        if slot and infer_pending_field_values(text, slot):
+            return True
+
+    snapshot = extract_contact_snapshot(text)
+    if snapshot.email and is_valid_email(snapshot.email):
+        return True
+    if snapshot.phone and is_valid_phone(snapshot.phone):
+        return True
+    digits = re.sub(r"\D", "", text)
+    if digits and is_valid_phone(digits):
+        return True
+    if is_valid_company(text):
+        return True
+    if is_valid_name(text) and 1 <= len(text.split()) <= 5:
+        return True
+    return False
+
+
+def should_preserve_knowledge_subject(
+    *,
+    memory: DialogueMemory,
+    message: str,
+    slot_context: SlotCollectionContext | None = None,
+) -> bool:
+    if not memory.active_knowledge_subject:
+        return False
+    if is_explicit_knowledge_subject_change(message):
+        return False
+    slot_context = slot_context or SlotCollectionContext()
+    if slot_context.preserve_active_subject:
+        return True
+    if slot_context.collection_active and _message_fits_contact_slot_pattern(
+        message,
+        expected_slot=slot_context.expected_slot,
+    ):
+        return True
+    if _message_fits_contact_slot_pattern(message) and not message_has_pronoun_reference(message):
+        confidence = float(memory.active_knowledge_subject.get("confidence") or 0.0)
+        if confidence >= 0.55 and not detect_entity_mention(message):
+            return True
+    return False
+
 
 @dataclass
 class DialogueMemory:
@@ -362,9 +510,22 @@ def update_dialogue_memory_from_turn(
     need_summary: str = "",
     commercial_trigger: bool = False,
     tenant=None,
+    slot_context: SlotCollectionContext | None = None,
 ) -> DialogueMemory:
     message = str(current_message or "")
     normalized = normalize_text(message)
+    slot_context = slot_context or SlotCollectionContext()
+    preserve_subject = should_preserve_knowledge_subject(
+        memory=memory,
+        message=message,
+        slot_context=slot_context,
+    )
+    if preserve_subject:
+        memory.notes["slot_value_turn"] = True
+        memory.notes["preserve_active_subject"] = True
+    else:
+        memory.notes.pop("slot_value_turn", None)
+        memory.notes.pop("preserve_active_subject", None)
     history_blob = " ".join(
         str(item.get("content") or "")
         for item in (history or [])
@@ -375,7 +536,7 @@ def update_dialogue_memory_from_turn(
     query_topic = infer_topic(message) or infer_topic(context_blob) or memory.active_topic
     query_application = infer_application(message) or infer_application(context_blob) or memory.active_application
 
-    if tenant is not None:
+    if tenant is not None and not preserve_subject:
         try:
             from knowledge_base.rag.entity_catalog import resolve_knowledge_entity
 
@@ -397,7 +558,7 @@ def update_dialogue_memory_from_turn(
             memory.entity_match = True
             memory.notes.pop("entity_ambiguity_options", None)
 
-    entity = detect_entity_mention(message)
+    entity = None if preserve_subject else detect_entity_mention(message)
     if entity:
         memory.active_entity = entity["canonical"]
         memory.active_domain = entity["domain"]
@@ -411,7 +572,7 @@ def update_dialogue_memory_from_turn(
         memory.active_domain = "robotics"
         memory.active_topic = "robot_lineup"
         memory.active_application = ""
-    else:
+    elif not preserve_subject:
         switched = infer_domain(message)
         topic = infer_topic(message)
         application = infer_application(message)
@@ -588,15 +749,18 @@ def build_contextual_retrieval_query(
         for turn in recent_user[-2:]:
             if message_has_pronoun_reference(turn):
                 continue
+            if _message_fits_contact_slot_pattern(turn):
+                continue
             if len(turn.split()) <= 12:
                 parts.append(turn)
 
     if need_summary and memory.active_topic not in {"websites", "stairs", "robot_lineup"}:
         parts.append(str(need_summary)[:80])
 
-    if original and not (message_has_pronoun_reference(original) and len(original.split()) <= 6):
+    skip_original = bool(memory.notes.get("slot_value_turn")) or _message_fits_contact_slot_pattern(original)
+    if original and not skip_original and not (message_has_pronoun_reference(original) and len(original.split()) <= 6):
         parts.append(original)
-    elif original:
+    elif original and not skip_original:
         parts.append(original)
 
     # Dedup preservando ordem.
