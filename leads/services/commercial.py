@@ -223,18 +223,28 @@ class QualificationService:
 
         pending = self.missing_fields(lead, policy=policy)
         collection_active = bool((lead.qualification_data or {}).get(COLLECTION_ACTIVE_KEY))
-        if pending and collection_active and not is_consultative_context_answer(message):
-            inferred = infer_pending_field_values(message, pending[0])
-            validators = {
-                "name": (normalize_name, is_valid_name),
-                "company": (normalize_name, is_valid_company),
-                "email": (normalize_email, is_valid_email),
-                "phone": (normalize_phone, is_valid_phone),
-                "city": (normalize_city, is_valid_city),
-            }
-            for field_name, value in inferred.items():
-                normalizer, validator = validators[field_name]
-                changed |= self._merge_common(lead, field_name, value, normalizer, validator, invalid_fields)
+        if pending and collection_active:
+            allow_infer = pending[0] == "need_summary" or not is_consultative_context_answer(message)
+            if allow_infer:
+                inferred = infer_pending_field_values(message, pending[0])
+                validators = {
+                    "name": (normalize_name, is_valid_name),
+                    "company": (normalize_name, is_valid_company),
+                    "email": (normalize_email, is_valid_email),
+                    "phone": (normalize_phone, is_valid_phone),
+                    "city": (normalize_city, is_valid_city),
+                }
+                for field_name, value in inferred.items():
+                    if field_name == "need_summary":
+                        changed |= merge_field_value(
+                            lead,
+                            "need_summary",
+                            str(value)[:500],
+                            source=FIELD_SOURCE_EXPLICIT,
+                        )
+                        continue
+                    normalizer, validator = validators[field_name]
+                    changed |= self._merge_common(lead, field_name, value, normalizer, validator, invalid_fields)
 
         need_summary = self._extract_need_summary(history=history, message=message, existing=lead.need_summary)
         if need_summary:
@@ -383,8 +393,12 @@ class QualificationService:
         return " ".join(part for part in parts if part.strip())
 
     def _extract_need_summary(self, *, history, message: str, existing: str = "") -> str:
+        from assistant_core.consultative_policy import is_explicit_human_handoff
+
         current = self._strip_contact_noise(message)
         preserved = str(existing or "").strip()
+        if is_explicit_human_handoff(current):
+            return preserved[:500]
         history_need = ""
         for candidate in [
             self._strip_contact_noise(item.get("content") or "")

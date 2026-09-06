@@ -70,6 +70,18 @@ HUMAN_TRIGGERS = (
     "chama no whatsapp",
     "chama no zap",
     "me passa para um especialista",
+    "entrar em contato",
+    "entrasse em contato",
+    "entre em contato",
+    "entrem em contato",
+    "alguem entre em contato",
+    "alguem entrasse em contato",
+    "gostaria que alguem entrasse em contato",
+    "gostaria que alguém entrasse em contato",
+    "quero que alguem entre em contato",
+    "quero que alguém entre em contato",
+    "quero contato",
+    "preciso de contato",
 )
 
 PRICE_QUESTION_MARKERS = (
@@ -154,6 +166,8 @@ def detect_collection_trigger(text: str) -> CollectionTrigger:
     normalized = normalize_text(text)
     if not normalized:
         return CollectionTrigger.NONE
+    if is_explicit_human_handoff(text):
+        return CollectionTrigger.HUMAN
     looks_like_price_q = (
         ("?" in str(text or "") or normalized.startswith(("quanto ", "qual ", "quais ")))
         and any(marker in normalized for marker in PRICE_QUESTION_MARKERS)
@@ -206,7 +220,58 @@ def is_consultative_need_discovery(discovery=None, current_message: str = "") ->
 
 
 def is_human_handoff_request(text: str) -> bool:
-    return detect_collection_trigger(text) == CollectionTrigger.HUMAN
+    return is_explicit_human_handoff(text)
+
+
+def is_explicit_human_handoff(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+    if any(term in normalized for term in HUMAN_TRIGGERS):
+        return True
+    from leads.services.handoff import EXPLICIT_HANDOFF_PATTERNS
+
+    for pattern in EXPLICIT_HANDOFF_PATTERNS:
+        if " " in pattern or len(pattern) > 10:
+            if pattern in normalized:
+                return True
+        elif re.search(rf"\b{re.escape(pattern)}\b", normalized):
+            return True
+    if re.search(r"\b(entrasse|entre|entrem)\s+em\s+contato\b", normalized):
+        return True
+    if re.search(r"\balguem\s+(?:entrasse|entre|entrem)\s+em\s+contato\b", normalized):
+        return True
+    return False
+
+
+def _is_direct_need_slot_answer(message: str, lead) -> bool:
+    """Resposta curta ao slot need_summary — não reabre coleta para nova descoberta consultiva."""
+    from assistant_core.conversation_turns import is_consultative_context_answer, is_direct_question
+    from assistant_core.qualification.livia import message_fills_pending_slot
+
+    if not message_fills_pending_slot(message, "need_summary"):
+        return False
+    if is_direct_question(message):
+        return False
+    normalized = normalize_text(message)
+    exploratory_markers = (
+        "preciso",
+        "quero",
+        "gostaria",
+        "queria",
+        "tenho interesse",
+        "saber sobre",
+        "saber mais",
+        "na verdade",
+        "tambem",
+        "também",
+    )
+    if any(marker in normalized for marker in exploratory_markers):
+        return False
+    existing = str(getattr(lead, "need_summary", "") or "").strip()
+    if not existing:
+        return is_consultative_context_answer(message) or len(normalized.split()) <= 6
+    return is_consultative_context_answer(message) or len(normalized.split()) <= 6
 
 
 def collection_already_active(conversation, lead_draft=None) -> bool:
@@ -278,9 +343,24 @@ def decide_collection(*, current_message: str, conversation=None, lead_draft=Non
     trigger = detect_collection_trigger(current_message)
     if collection_already_active(conversation, lead_draft=lead_draft):
         from assistant_core.conversation_turns import is_consultative_context_answer
+        from assistant_core.qualification.livia import message_fills_pending_slot
+        from leads.services.commercial import QualificationService
 
         if trigger != CollectionTrigger.NONE:
             return CollectionDecision(True, trigger=trigger, reason="collection_already_active")
+        active_lead = lead_draft
+        if active_lead is None and conversation is not None:
+            try:
+                active_lead = conversation.lead_draft
+            except Exception:
+                active_lead = None
+        if active_lead is not None:
+            pending = QualificationService().missing_fields(active_lead)
+            if pending:
+                if pending[0] == "need_summary" and _is_direct_need_slot_answer(current_message, active_lead):
+                    return CollectionDecision(True, trigger=CollectionTrigger.BUDGET, reason="collection_slot_answer")
+                if pending[0] != "need_summary" and message_fills_pending_slot(current_message, pending[0]):
+                    return CollectionDecision(True, trigger=CollectionTrigger.BUDGET, reason="collection_slot_answer")
         from assistant_core.conversation_turns import is_direct_question, is_need_enrichment
         from assistant_core.services.decision_outcome import is_consultative_knowledge_turn
 

@@ -215,6 +215,23 @@ NEED_CONTEXT_KEYWORDS = (
     "dashboard",
     "crm",
     "agente",
+    "limpar",
+    "limpeza",
+    "galpao",
+    "galpão",
+    "fabrica",
+    "fábrica",
+    "escola",
+    "condominio",
+    "condomínio",
+    "industria",
+    "indústria",
+    "recepcao",
+    "recepção",
+    "deposito",
+    "depósito",
+    "armazem",
+    "armazém",
     # marmoraria / pedras naturais (Pitondo e verticais similares)
     "cozinha",
     "bancada",
@@ -346,11 +363,36 @@ def is_valid_need_summary(value) -> bool:
     if not has_context:
         return False
     if len(cleaned) < 18 and not re.search(
-        r"\b(?:site|loja|clp|ihm|robo|robô|ia|bancada|cozinha|banheiro|escada|granito|marmore|mármore|nicho|gourmet)\b",
+        r"\b(?:site|loja|clp|ihm|robo|robô|ia|bancada|cozinha|banheiro|escada|granito|marmore|mármore|nicho|gourmet|galpao|galpão|limpar|limpeza|escola|fabrica|fábrica|condominio|condomínio|industria|indústria|recepcao|recepção|deposito|depósito|armazem|armazém)\b",
         normalized,
     ):
         return False
     return True
+
+
+def message_fills_pending_slot(message: str, pending_field: str) -> bool:
+    """Indica se a mensagem responde ao slot comercial pendente."""
+    pending = str(pending_field or "").strip()
+    if not pending:
+        return False
+    inferred = infer_pending_field_values(message, pending)
+    if inferred:
+        return True
+    if pending == "need_summary":
+        return is_valid_need_summary(message)
+    if pending == "name_or_company":
+        snapshot = extract_contact_snapshot(message)
+        return bool(
+            (snapshot.name and is_valid_name(snapshot.name))
+            or (snapshot.company and is_valid_company(snapshot.company))
+        )
+    if pending == "phone_or_email":
+        snapshot = extract_contact_snapshot(message)
+        return bool(
+            (snapshot.phone and is_valid_phone(snapshot.phone))
+            or (snapshot.email and is_valid_email(snapshot.email))
+        )
+    return False
 
 
 def minimum_lead_data_met(lead_draft) -> bool:
@@ -383,9 +425,9 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
     if not text or not pending or "?" in text or len(text) > 80:
         return {}
 
-    from assistant_core.conversation_turns import is_consultative_context_answer
+    from assistant_core.conversation_turns import is_consultative_context_answer, is_direct_question
 
-    if is_consultative_context_answer(text):
+    if pending != "need_summary" and is_consultative_context_answer(text):
         return {}
 
     normalized = normalize_text(text)
@@ -445,6 +487,16 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
             and not any(marker in normalize_text(company_candidate) for marker in reject_markers)
         ):
             return {"company": company_candidate}
+        return {}
+
+    if pending == "need_summary":
+        from assistant_core.consultative_policy import is_explicit_human_handoff
+
+        if is_explicit_human_handoff(text) or is_direct_question(text):
+            return {}
+        cleaned = text.strip(" .,-")
+        if is_valid_need_summary(cleaned):
+            return {"need_summary": cleaned[:500]}
         return {}
 
     if pending == "phone_or_email":

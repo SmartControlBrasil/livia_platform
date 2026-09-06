@@ -169,6 +169,7 @@ EXPLICIT_SUBJECT_CHANGE_MARKERS = (
     "gostaria de saber sobre",
     "gostaria de saber do",
     "gostaria de saber da",
+    "queria saber sobre",
     "fale sobre",
     "me fale sobre",
     "me conte sobre",
@@ -176,6 +177,7 @@ EXPLICIT_SUBJECT_CHANGE_MARKERS = (
     "mudando de assunto",
     "mas quero saber",
     "quero saber mais",
+    "na verdade",
 )
 
 
@@ -268,6 +270,15 @@ def _message_fits_contact_slot_pattern(message: str, *, expected_slot: str = "")
         if slot and slot not in slots:
             slots.append(slot)
     for slot in slots:
+        if slot == "need_summary":
+            from assistant_core.consultative_policy import _is_direct_need_slot_answer
+
+            class _NeedLead:
+                need_summary = ""
+
+            if _is_direct_need_slot_answer(text, _NeedLead()):
+                return True
+            continue
         if slot and infer_pending_field_values(text, slot):
             return True
 

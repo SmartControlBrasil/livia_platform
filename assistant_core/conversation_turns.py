@@ -190,6 +190,10 @@ def detect_question_type(text: str) -> str:
 
 
 def is_need_enrichment(text: str) -> bool:
+    from assistant_core.consultative_policy import is_explicit_human_handoff
+
+    if is_explicit_human_handoff(text):
+        return False
     if is_name_deferred(text) or is_direct_question(text):
         return False
     normalized = normalize_text(text)
@@ -344,6 +348,18 @@ def classify_conversation_turn(*, current_message: str, history, conversation, d
             return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=thread)
     if is_name_deferred(current_message) or is_contact_deferred(current_message) or wants_consultative_continue(current_message):
         return ConversationTurn(kind=TurnKind.NAME_DEFERRED, continue_commercial_thread=True)
+    from assistant_core.consultative_policy import collection_already_active, _is_direct_need_slot_answer
+    from assistant_core.qualification.livia import message_fills_pending_slot
+    from leads.services.commercial import QualificationService
+
+    active_lead = _conversation_lead(conversation)
+    if collection_already_active(conversation, active_lead):
+        pending = QualificationService().missing_fields(active_lead) if active_lead is not None else []
+        if pending:
+            if pending[0] == "need_summary" and active_lead is not None and _is_direct_need_slot_answer(current_message, active_lead):
+                return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=True)
+            if pending[0] != "need_summary" and message_fills_pending_slot(current_message, pending[0]):
+                return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=True)
     question_type = detect_question_type(current_message)
     if question_type or is_direct_question(current_message):
         return ConversationTurn(

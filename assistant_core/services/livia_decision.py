@@ -582,6 +582,7 @@ class LiviaDecisionService:
 
 
     def _finalize_handoff(self, decision: LiviaReply, conversation, lead_draft, discovery, current_message: str) -> LiviaReply:
+        from assistant_core.consultative_policy import is_explicit_human_handoff
         from assistant_core.dialogue_memory import is_contact_deferred, wants_consultative_continue
 
         if is_contact_deferred(current_message) or wants_consultative_continue(current_message):
@@ -601,18 +602,24 @@ class LiviaDecisionService:
         )
         if not result.created:
             return decision
-        confirmation = self._handoff_confirmation(result.handoff)
+        confirmation = self._handoff_confirmation(result.handoff, current_message=current_message)
+        if is_explicit_human_handoff(current_message):
+            return replace(decision, reply=confirmation)
         if confirmation.lower() in decision.reply.lower():
             return decision
         return replace(decision, reply=f"{confirmation}\n\n{decision.reply}")
 
-    def _handoff_confirmation(self, handoff) -> str:
+    def _handoff_confirmation(self, handoff, *, current_message: str = "") -> str:
+        from assistant_core.consultative_policy import is_explicit_human_handoff
+
         has_contact = bool(handoff.visitor_phone or handoff.visitor_email)
         name = handoff.visitor_name or handoff.visitor_company
         if has_contact:
             if name:
                 return f"Perfeito, {name}. Registrei o pedido de contato para a equipe retornar com o contexto da conversa."
             return "Perfeito. Registrei o pedido de contato para a equipe retornar com o contexto da conversa."
+        if is_explicit_human_handoff(current_message):
+            return "Claro. Qual telefone ou e-mail prefere usar para o contato?"
         return "Claro. Vou registrar seu pedido para atendimento humano. Para agilizar, me informe seu nome e um telefone ou e-mail de contato."
 
     def _locked_lead_reply(self, intent: str) -> LiviaReply:
@@ -984,12 +991,31 @@ class LiviaDecisionService:
         )
         if activate_collection:
             mark_collection_active(result.lead_draft, reason=collection_reason)
-        reply = self.lead_capture_service.build_next_prompt(result.lead_draft, result.missing_fields, intent=intent, invalid_fields=result.invalid_fields)
+        from assistant_core.consultative_policy import is_explicit_human_handoff
+
+        if is_explicit_human_handoff(current_message):
+            reply = self._human_handoff_collection_reply(result.lead_draft, result.missing_fields)
+        else:
+            reply = self.lead_capture_service.build_next_prompt(
+                result.lead_draft,
+                result.missing_fields,
+                intent=intent,
+                invalid_fields=result.invalid_fields,
+            )
         if result.is_qualified:
             reply = build_contextual_reply(intent=intent, missing_fields=[])
         decision = LiviaReply(intent=intent, reply=reply)
         decision = self._finalize_handoff(decision, conversation, result.lead_draft, discovery, current_message)
         return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
+
+    def _human_handoff_collection_reply(self, lead_draft, missing_fields: list[str]) -> str:
+        missing_fields = list(missing_fields or [])
+        has_contact = self.lead_capture_service._has_phone_or_email(lead_draft)
+        if not has_contact:
+            return ""
+        if "name_or_company" in missing_fields and not self.lead_capture_service._has_name_or_company(lead_draft):
+            return "Ótimo. Para eu dar sequência, qual é o seu nome ou o nome da empresa?"
+        return ""
 
     def _should_answer_informatively_from_knowledge(self, discovery, knowledge_context: str) -> bool:
         return has_semantic_knowledge_block(knowledge_context) and is_informational_knowledge_query(discovery)

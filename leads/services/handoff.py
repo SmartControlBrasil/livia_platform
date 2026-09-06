@@ -39,6 +39,11 @@ EXPLICIT_HANDOFF_PATTERNS = (
     "me ligue",
     "liga pra mim",
     "entrar em contato",
+    "entrasse em contato",
+    "entre em contato",
+    "entrem em contato",
+    "alguem entre em contato",
+    "alguem entrasse em contato",
     "quero contato",
     "pessoa de verdade",
 )
@@ -265,7 +270,9 @@ class HandoffService:
         return "business_rule"
 
     def _has_explicit_request(self, normalized: str) -> bool:
-        return any(pattern in normalized for pattern in EXPLICIT_HANDOFF_PATTERNS)
+        from assistant_core.consultative_policy import is_explicit_human_handoff
+
+        return is_explicit_human_handoff(normalized)
 
     def _is_urgent(self, normalized: str) -> bool:
         return any(pattern in normalized for pattern in URGENT_PATTERNS)
