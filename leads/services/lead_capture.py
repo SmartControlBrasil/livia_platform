@@ -29,7 +29,7 @@ from assistant_core.state import LeadState, next_state_after_message
 from conversations.models import Conversation
 
 from ..models import LeadDraft
-from .commercial import QualificationPolicy, QualificationService
+from .commercial import QualificationPolicy, QualificationService, name_or_company_satisfied
 
 logger = logging.getLogger(__name__)
 
@@ -149,9 +149,11 @@ class LeadCaptureService:
     ) -> str:
         invalid_fields = invalid_fields or []
         missing_fields = skip_name_prompt_fields(missing_fields, lead_draft)
-        if "name" in invalid_fields:
+        if name_or_company_satisfied(lead_draft):
+            invalid_fields = [field for field in invalid_fields if field not in {"name", "company"}]
+        if "name" in invalid_fields and "name_or_company" in missing_fields:
             return "Para eu registrar certinho, me passa seu nome real, por favor."
-        if "company" in invalid_fields:
+        if "company" in invalid_fields and "name_or_company" in missing_fields:
             return "Pode me passar o nome real da empresa? Assim eu deixo o atendimento bem encaminhado."
         if "phone" in invalid_fields:
             return "Esse telefone ficou incompleto. Me envia um WhatsApp com DDD, por favor."

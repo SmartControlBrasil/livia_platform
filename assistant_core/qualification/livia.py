@@ -312,6 +312,10 @@ def is_valid_phone(value) -> bool:
 def is_valid_name(value) -> bool:
     cleaned = strip_repetition_noise(value)
     normalized = normalize_text(cleaned)
+    from leads.services.commercial import is_collection_deferral_phrase
+
+    if is_collection_deferral_phrase(cleaned):
+        return False
     if is_generic_value(cleaned):
         return False
     if any(snippet in normalized for snippet in INVALID_NAME_SNIPPETS):
@@ -333,7 +337,10 @@ def is_valid_company(value) -> bool:
     cleaned = strip_repetition_noise(value)
     normalized = normalize_text(cleaned)
     from assistant_core.conversation_turns import looks_like_environment_answer
+    from leads.services.commercial import is_collection_deferral_phrase
 
+    if is_collection_deferral_phrase(cleaned):
+        return False
     if looks_like_environment_answer(normalized):
         return False
     if any(marker in normalized for marker in NEED_STATEMENT_MARKERS):
@@ -390,8 +397,9 @@ def message_fills_pending_slot(message: str, pending_field: str) -> bool:
         return is_valid_need_summary(message)
     if pending == "name_or_company":
         from assistant_core.conversation_turns import is_consultative_context_answer
+        from leads.services.commercial import is_collection_deferral_phrase
 
-        if is_consultative_context_answer(message):
+        if is_consultative_context_answer(message) or is_collection_deferral_phrase(message):
             return False
         snapshot = extract_contact_snapshot(message)
         return bool(
@@ -439,7 +447,7 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
 
     from assistant_core.conversation_turns import is_consultative_context_answer, is_direct_question
 
-    if pending != "need_summary" and is_consultative_context_answer(text):
+    if pending == "need_summary" and is_consultative_context_answer(text):
         return {}
 
     normalized = normalize_text(text)
@@ -466,11 +474,15 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
     )
     if pending == "name_or_company":
         from assistant_core.services.decision_outcome import is_consultative_knowledge_message
+        from leads.services.commercial import is_collection_deferral_phrase
 
         if is_consultative_knowledge_message(text):
             return {}
+        if is_collection_deferral_phrase(text):
+            return {}
         if _extract_email(text) or _extract_phone(text):
             return {}
+        bare = text.strip(" .,-")
         company_markers = ("empresa", "sou da", "trabalho na", "da empresa")
         has_company_marker = any(marker in normalized for marker in company_markers)
         if not has_company_marker and any(marker in normalized for marker in reject_markers):
@@ -494,15 +506,20 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
         company_from_pattern = _normalize_company_candidate(text)
         if company_from_pattern and is_valid_company(company_from_pattern):
             return {"company": company_from_pattern}
-        if is_valid_name(name_candidate) and 1 <= len(name_candidate.split()) <= 4:
+        if is_valid_name(name_candidate) and 1 <= len(name_candidate.split()) <= 2:
             return {"name": name_candidate}
-        # Resposta nua curta sem marcadores comerciais: pode ser empresa (ex.: "Ferragens Silva").
         if (
             is_valid_company(company_candidate)
-            and 1 <= len(company_candidate.split()) <= 4
+            and 1 <= len(company_candidate.split()) <= 6
             and not any(marker in normalize_text(company_candidate) for marker in reject_markers)
         ):
             return {"company": company_candidate}
+        if is_valid_company(bare) and len(bare.split()) >= 3:
+            return {"company": bare[:120]}
+        if is_valid_name(name_candidate) and 1 <= len(name_candidate.split()) <= 4:
+            return {"name": name_candidate}
+        if is_valid_company(bare) and 1 <= len(bare.split()) <= 6:
+            return {"company": bare[:120]}
         return {}
 
     if pending == "need_summary":

@@ -275,12 +275,9 @@ def _is_direct_need_slot_answer(message: str, lead) -> bool:
 
 
 def collection_already_active(conversation, lead_draft=None) -> bool:
-    lead = lead_draft
-    if lead is None and conversation is not None:
-        try:
-            lead = conversation.lead_draft
-        except Exception:
-            lead = None
+    from leads.services.commercial import resolve_lead_draft
+
+    lead = resolve_lead_draft(conversation, lead_draft)
     if lead is not None:
         data = getattr(lead, "qualification_data", None) or {}
         if isinstance(data, dict):
@@ -356,12 +353,9 @@ def decide_collection(*, current_message: str, conversation=None, lead_draft=Non
 
         if is_consultative_knowledge_message(current_message):
             return CollectionDecision(False, reason="consultative_knowledge_during_collection")
-        active_lead = lead_draft
-        if active_lead is None and conversation is not None:
-            try:
-                active_lead = conversation.lead_draft
-            except Exception:
-                active_lead = None
+        from leads.services.commercial import resolve_lead_draft
+
+        active_lead = resolve_lead_draft(conversation, lead_draft)
         if active_lead is not None:
             pending = QualificationService().missing_fields(active_lead)
             if pending:

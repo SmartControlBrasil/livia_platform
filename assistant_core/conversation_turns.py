@@ -67,6 +67,8 @@ STOPWORDS = {
 ENVIRONMENT_MARKERS = (
     "galpao",
     "galpão",
+    "condominio",
+    "condomínio",
     "armazem",
     "armazém",
     "deposito",
@@ -450,10 +452,9 @@ def skip_name_prompt_fields(missing_fields: list[str], lead_draft, *, current_me
 def _conversation_lead(conversation):
     if conversation is None:
         return None
-    try:
-        return conversation.lead_draft
-    except Exception:
-        return None
+    from leads.services.commercial import resolve_lead_draft
+
+    return resolve_lead_draft(conversation)
 
 
 def _short_need(need: str) -> str:

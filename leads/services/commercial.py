@@ -56,6 +56,54 @@ FIELD_SOURCE_DERIVED = "derived"
 FIELD_SOURCE_INFERRED = "inferred"
 FIELD_SOURCE_UNKNOWN = "unknown"
 
+COLLECTION_DEFERRAL_PHRASES = frozenset(
+    {
+        "ja passei",
+        "já passei",
+        "ja falei",
+        "já falei",
+        "ja informei",
+        "já informei",
+        "ja disse",
+        "já disse",
+        "ja dei",
+        "já dei",
+        "ja mandei",
+        "já mandei",
+    }
+)
+
+
+def is_collection_deferral_phrase(text: str) -> bool:
+    normalized = normalize_text(text)
+    return normalized in COLLECTION_DEFERRAL_PHRASES
+
+
+def name_or_company_satisfied(lead: LeadDraft | None) -> bool:
+    if lead is None:
+        return False
+    return bool(
+        (str(getattr(lead, "name", "") or "").strip() and is_valid_name(getattr(lead, "name", "")))
+        or (str(getattr(lead, "company", "") or "").strip() and is_valid_company(getattr(lead, "company", "")))
+    )
+
+
+def resolve_lead_draft(conversation=None, lead_draft=None) -> LeadDraft | None:
+    """Retorna lead atualizado do banco — evita cache stale em conversation.lead_draft."""
+    if lead_draft is not None and getattr(lead_draft, "pk", None):
+        try:
+            lead_draft.refresh_from_db()
+            return lead_draft
+        except Exception:
+            pass
+    if conversation is None:
+        return lead_draft
+    try:
+        return LeadDraft.objects.filter(conversation=conversation).first()
+    except Exception:
+        return None
+
+
 ACTION_LEAD_CREATED = "lead.created"
 ACTION_LEAD_UPDATED = "lead.updated"
 ACTION_QUALIFICATION_PROGRESSED = "qualification.progressed"
@@ -283,6 +331,9 @@ class QualificationService:
                     data["consultative_floor_surface"] = True
                 lead.qualification_data = data
                 changed = True
+
+        if name_or_company_satisfied(lead):
+            invalid_fields = [field for field in invalid_fields if field not in {"name", "company"}]
 
         changed |= self._merge_custom_fields(lead, policy=policy, message=message)
         lead.qualification_policy = policy.slug

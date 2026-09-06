@@ -741,7 +741,9 @@ class LiviaDecisionService:
     ) -> str:
         from assistant_core.consultative_slots import extract_consultative_slots, is_cleaning_consultation, select_cleaning_followup
         from assistant_core.conversation_turns import looks_like_environment_answer
+        from assistant_core.dialogue_memory import should_skip_consultative_followup
         from assistant_core.followup_strategy import select_followup
+        from assistant_core.services.decision_outcome import is_consultative_knowledge_message
         from assistant_core.services.response_quality_gate import (
             apply_response_quality_gate,
             has_substantive_consultative_content,
@@ -751,6 +753,11 @@ class LiviaDecisionService:
         memory = self._resolve_memory(conversation, lead_draft, dialogue_memory)
         need = str(getattr(lead_draft, "need_summary", "") or "").strip()
         synthesis_query = self._consultative_synthesis_query(current_message, need, memory)
+        skip_followup = (
+            not append_followup
+            or is_consultative_knowledge_message(current_message)
+            or should_skip_consultative_followup(current_message=current_message, memory=memory)
+        )
         grounded = synthesize_deterministic_reply(
             knowledge_context,
             base_reply="",
@@ -774,7 +781,7 @@ class LiviaDecisionService:
             ack = "Entendi, isso ajuda a detalhar a necessidade."
 
         follow = ""
-        if append_followup:
+        if not skip_followup:
             follow, _ = select_followup(
                 memory=memory,
                 current_message=current_message,
@@ -884,6 +891,7 @@ class LiviaDecisionService:
             is_consultative_knowledge_turn,
         )
         from assistant_core.consultative_policy import collection_already_active
+        from leads.services.commercial import resolve_lead_draft
 
         lead_draft = None
         locked_consultative_need = bool(
@@ -892,10 +900,7 @@ class LiviaDecisionService:
             and is_consultative_need_discovery(discovery, current_message)
         )
         if conversation is not None:
-            try:
-                lead_draft = conversation.lead_draft
-            except Exception:
-                lead_draft = None
+            lead_draft = resolve_lead_draft(conversation, lead_draft)
         knowledge_during_collection = bool(
             conversation is not None
             and collection_already_active(conversation, lead_draft)
@@ -907,10 +912,7 @@ class LiviaDecisionService:
         )
         if conversation is not None:
             if lead_draft is None:
-                try:
-                    lead_draft = conversation.lead_draft
-                except Exception:
-                    lead_draft = None
+                lead_draft = resolve_lead_draft(conversation)
             if not pure_consultative and not knowledge_during_collection:
                 result = self.lead_capture_service.capture_from_message(
                     conversation=conversation,
@@ -939,7 +941,7 @@ class LiviaDecisionService:
                 current_message=current_message,
                 history=history,
                 knowledge_context=knowledge_context,
-                append_followup=not resume_collection,
+                append_followup=not resume_collection and not knowledge_during_collection,
                 dialogue_memory=dialogue_memory,
             )
             if resume_collection and lead_draft is not None:
