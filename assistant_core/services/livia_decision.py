@@ -165,6 +165,28 @@ class LiviaDecisionService:
                 knowledge_context=knowledge_context,
                 dialogue_memory=dialogue_memory,
             )
+        from assistant_core.consultative_policy import collection_already_active
+        from assistant_core.services.decision_outcome import is_consultative_knowledge_message
+
+        if (
+            conversation is not None
+            and collection_already_active(conversation)
+            and not collection_gate.should_collect
+            and (
+                is_consultative_knowledge_message(current_message)
+                or is_consultative_knowledge_turn(discovery, current_message)
+            )
+        ):
+            return self._handle_consultative_conversation(
+                intent=discovery.intent if discovery.intent not in {"unknown", "greeting"} else "commercial_interest",
+                history=history,
+                current_message=current_message,
+                conversation=conversation,
+                discovery=discovery,
+                assistant_profile=assistant_profile,
+                knowledge_context=knowledge_context,
+                dialogue_memory=dialogue_memory,
+            )
 
         if intent == "greeting":
             decision = LiviaReply(intent=intent, reply=profile_context.initial_message)
@@ -859,7 +881,9 @@ class LiviaDecisionService:
         from assistant_core.services.decision_outcome import (
             _is_product_information_discovery,
             is_consultative_knowledge_message,
+            is_consultative_knowledge_turn,
         )
+        from assistant_core.consultative_policy import collection_already_active
 
         lead_draft = None
         locked_consultative_need = bool(
@@ -867,17 +891,27 @@ class LiviaDecisionService:
             and (getattr(conversation, "is_qualified", False) or getattr(conversation, "lead_state", "") == LeadState.QUALIFIED)
             and is_consultative_need_discovery(discovery, current_message)
         )
-        pure_consultative = (
-            is_consultative_knowledge_message(current_message)
-            or _is_product_information_discovery(discovery)
-            or locked_consultative_need
-        ) and not bool(getattr(discovery, "should_collect_lead", False))
         if conversation is not None:
             try:
                 lead_draft = conversation.lead_draft
             except Exception:
                 lead_draft = None
-            if not pure_consultative:
+        knowledge_during_collection = bool(
+            conversation is not None
+            and collection_already_active(conversation, lead_draft)
+            and is_consultative_knowledge_turn(discovery, current_message)
+        )
+        pure_consultative = knowledge_during_collection or (
+            (is_consultative_knowledge_message(current_message) or _is_product_information_discovery(discovery) or locked_consultative_need)
+            and not bool(getattr(discovery, "should_collect_lead", False))
+        )
+        if conversation is not None:
+            if lead_draft is None:
+                try:
+                    lead_draft = conversation.lead_draft
+                except Exception:
+                    lead_draft = None
+            if not pure_consultative and not knowledge_during_collection:
                 result = self.lead_capture_service.capture_from_message(
                     conversation=conversation,
                     message=current_message,
@@ -885,7 +919,7 @@ class LiviaDecisionService:
                 )
                 lead_draft = result.lead_draft
                 set_state(conversation, LeadState.DISCOVERY)
-            elif lead_draft is None:
+            elif lead_draft is None and not knowledge_during_collection:
                 set_state(conversation, LeadState.DISCOVERY)
         if is_conceptual_price_question(current_message):
             reply = build_conceptual_price_reply(lead_draft, current_message=current_message)
@@ -898,15 +932,28 @@ class LiviaDecisionService:
                 dialogue_memory=dialogue_memory,
             )
         elif has_semantic_knowledge_block(knowledge_context):
+            resume_collection = collection_already_active(conversation, lead_draft)
             reply = self._build_grounded_consultative_reply(
                 lead_draft=lead_draft,
                 conversation=conversation,
                 current_message=current_message,
                 history=history,
                 knowledge_context=knowledge_context,
-                append_followup=True,
+                append_followup=not resume_collection,
                 dialogue_memory=dialogue_memory,
             )
+            if resume_collection and lead_draft is not None:
+                from leads.services.commercial import QualificationService
+
+                pending = QualificationService().missing_fields(lead_draft)
+                if pending and pending[0] != "need_summary":
+                    resume = self.lead_capture_service.build_next_prompt(
+                        lead_draft,
+                        pending,
+                        invalid_fields=[],
+                    )
+                    if resume and resume.lower() not in reply.lower():
+                        reply = f"{reply.rstrip()} {resume}".strip()
         elif self._should_answer_informatively_from_knowledge(discovery, knowledge_context):
             reply = self._grounded_informational_followup(
                 assistant_profile=assistant_profile,
@@ -931,7 +978,7 @@ class LiviaDecisionService:
                 dialogue_memory=dialogue_memory,
             )
         decision = LiviaReply(intent=intent, reply=reply)
-        if not pure_consultative:
+        if not pure_consultative and not knowledge_during_collection:
             decision = self._finalize_handoff(decision, conversation, lead_draft, discovery, current_message)
         return self._finalize_ai_response(decision, conversation, assistant_profile, discovery, current_message, history, knowledge_context)
 

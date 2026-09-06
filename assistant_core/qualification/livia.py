@@ -340,6 +340,10 @@ def is_valid_company(value) -> bool:
         return False
     if any(snippet in normalized for snippet in PRODUCT_CONTEXT_SNIPPETS):
         return False
+    if any(marker in normalized for marker in OPERATIONAL_NUMBER_CONTEXT_MARKERS):
+        return False
+    if re.search(r"\b\d+\s*(?:m2|m²|metros?\s+quadrados?|funcionarios?|funcionários?|turnos?)\b", normalized):
+        return False
     return _is_valid_company_or_city(cleaned, allow_numbers=True, invalid_values={"empresa", "minha empresa", "teste"})
 
 
@@ -372,6 +376,10 @@ def is_valid_need_summary(value) -> bool:
 
 def message_fills_pending_slot(message: str, pending_field: str) -> bool:
     """Indica se a mensagem responde ao slot comercial pendente."""
+    from assistant_core.services.decision_outcome import is_consultative_knowledge_message
+
+    if is_consultative_knowledge_message(message):
+        return False
     pending = str(pending_field or "").strip()
     if not pending:
         return False
@@ -381,6 +389,10 @@ def message_fills_pending_slot(message: str, pending_field: str) -> bool:
     if pending == "need_summary":
         return is_valid_need_summary(message)
     if pending == "name_or_company":
+        from assistant_core.conversation_turns import is_consultative_context_answer
+
+        if is_consultative_context_answer(message):
+            return False
         snapshot = extract_contact_snapshot(message)
         return bool(
             (snapshot.name and is_valid_name(snapshot.name))
@@ -453,6 +465,10 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
         "valor",
     )
     if pending == "name_or_company":
+        from assistant_core.services.decision_outcome import is_consultative_knowledge_message
+
+        if is_consultative_knowledge_message(text):
+            return {}
         if _extract_email(text) or _extract_phone(text):
             return {}
         company_markers = ("empresa", "sou da", "trabalho na", "da empresa")
@@ -500,15 +516,18 @@ def infer_pending_field_values(message: str, pending_field: str) -> dict[str, st
         return {}
 
     if pending == "phone_or_email":
+        if not message_is_plausible_phone_candidate(text) and not _extract_email(text):
+            return {}
         email = _extract_email(text)
         if email and is_valid_email(email):
             return {"email": email}
-        phone = _extract_phone(text)
-        if phone and is_valid_phone(phone):
-            return {"phone": phone}
-        digits = re.sub(r"\D", "", text)
-        if digits and is_valid_phone(digits):
-            return {"phone": digits}
+        if message_is_plausible_phone_candidate(text):
+            phone = _extract_phone(text)
+            if phone and is_valid_phone(phone):
+                return {"phone": phone}
+            digits = re.sub(r"\D", "", text)
+            if digits and is_valid_phone(digits):
+                return {"phone": digits}
         return {}
 
     if pending in {"name", "company", "email", "phone", "city"}:
@@ -546,14 +565,88 @@ def looks_like_invalid_email(text: str) -> bool:
     return bool(re.search(r"\b(?:email|e-mail|mail)\b", raw, re.IGNORECASE) or re.search(r"\S+@\S*", raw))
 
 
+OPERATIONAL_NUMBER_CONTEXT_MARKERS = (
+    "metro",
+    "metragem",
+    "m2",
+    "m²",
+    "metro quadrado",
+    "metros quadrados",
+    "funcionario",
+    "funcionários",
+    "funcionarios",
+    "turno",
+    "turnos",
+    "hora",
+    "horas",
+    "24 horas",
+    "galpao",
+    "galpão",
+    "area",
+    "área",
+    "ambiente",
+    "piso",
+    "epoxi",
+    "epóxi",
+    "concreto",
+    "operacao",
+    "operação",
+    "industria",
+    "indústria",
+    "fabrica",
+    "fábrica",
+    "armazem",
+    "armazém",
+    "deposito",
+    "depósito",
+)
+
+PHONE_EXPLICIT_MARKERS = (
+    "telefone",
+    "whatsapp",
+    "celular",
+    "fone",
+    "zap",
+    "ddd",
+    "me liga",
+    "me ligue",
+)
+
+
+def message_is_plausible_phone_candidate(text: str) -> bool:
+    """Telefone só é candidato forte quando a mensagem tem forma ou marcador compatível."""
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    normalized = normalize_text(raw)
+    digits = re.sub(r"\D", "", raw)
+    has_phone_marker = any(marker in normalized for marker in PHONE_EXPLICIT_MARKERS)
+    has_operational_context = any(marker in normalized for marker in OPERATIONAL_NUMBER_CONTEXT_MARKERS)
+    if has_operational_context and not has_phone_marker:
+        return False
+    if is_valid_phone(digits):
+        return True
+    if has_phone_marker and digits:
+        return True
+    if re.search(r"\(?\d{2}\)?\s*\d{4,5}[\s.-]?\d{4}", raw):
+        return True
+    if re.search(r"\+?\d{2,3}[\s.-]?\(?\d{2}\)?", raw) and len(digits) >= 10:
+        return True
+    if re.fullmatch(r"[\d\s().+-]+", raw) and len(digits) in {10, 11}:
+        return True
+    if re.fullmatch(r"[\d\s().+-]+", raw) and 3 <= len(digits) <= 9:
+        return True
+    return False
+
+
 def looks_like_invalid_phone(text: str) -> bool:
+    if not message_is_plausible_phone_candidate(text):
+        return False
     raw = str(text or "")
     digits = re.sub(r"\D", "", raw)
     if is_valid_phone(digits):
         return False
-    if re.fullmatch(r"\D*\d{3,9}\D*", raw.strip()):
-        return True
-    return bool(digits and len(digits) < 10 and re.search(r"\b(?:telefone|whatsapp|celular|fone)\b", raw, re.IGNORECASE))
+    return True
 
 
 def _extract_email(text: str) -> str:
@@ -601,8 +694,19 @@ def _extract_company(text: str) -> str:
     match = re.search(r"(?:empresa|companhia)\s*(?:é|e|:)?\s+([^,;]+)", text, re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    match = re.search(r"\b(?:da|de|do)\s+([A-ZÀ-Ý0-9][A-Za-zÀ-ÿ0-9 .&'-]{1,80})", text)
-    return match.group(1).strip() if match else ""
+    match = re.search(
+        r"\b(?:da|de|do)\s+(?!um\b|uma\b|uns\b|umas\b|o\b|a\b)([A-ZÀ-Ý][A-Za-zÀ-ÿ0-9 .&'-]{1,60})",
+        text,
+    )
+    if not match:
+        return ""
+    candidate = match.group(1).strip()
+    if re.match(r"^\d", candidate):
+        return ""
+    words = candidate.split()
+    if len(words) > 6:
+        candidate = " ".join(words[:6])
+    return candidate
 
 
 def _extract_city(text: str) -> str:

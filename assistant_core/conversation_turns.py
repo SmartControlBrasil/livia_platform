@@ -343,9 +343,10 @@ def classify_conversation_turn(*, current_message: str, history, conversation, d
     if is_explicit_collection_trigger(current_message):
         # Explicit budget/hire/human handoff must reach the qualification path.
         return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=True)
-    if not is_explicit_collection_trigger(current_message) and not bool(getattr(discovery, "should_collect_lead", False)):
-        if is_consultative_knowledge_message(current_message) or _is_product_information_discovery(discovery):
-            return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=thread)
+    from assistant_core.services.decision_outcome import is_consultative_knowledge_turn
+
+    if is_consultative_knowledge_message(current_message):
+        return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=thread)
     if is_name_deferred(current_message) or is_contact_deferred(current_message) or wants_consultative_continue(current_message):
         return ConversationTurn(kind=TurnKind.NAME_DEFERRED, continue_commercial_thread=True)
     from assistant_core.consultative_policy import collection_already_active, _is_direct_need_slot_answer
@@ -367,6 +368,11 @@ def classify_conversation_turn(*, current_message: str, history, conversation, d
             question_type=question_type,
             continue_commercial_thread=True,
         )
+    if not is_explicit_collection_trigger(current_message) and not bool(getattr(discovery, "should_collect_lead", False)):
+        if _is_product_information_discovery(discovery):
+            return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=thread)
+    if is_consultative_knowledge_turn(discovery, current_message):
+        return ConversationTurn(kind=TurnKind.OTHER, continue_commercial_thread=thread)
     if thread and (is_need_enrichment(current_message) or is_consultative_context_answer(current_message)):
         return ConversationTurn(
             kind=TurnKind.NEED_ENRICHMENT,

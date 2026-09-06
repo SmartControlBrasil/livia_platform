@@ -36,6 +36,7 @@ from assistant_core.qualification import (
     is_valid_phone,
     looks_like_invalid_email,
     looks_like_invalid_phone,
+    message_is_plausible_phone_candidate,
     normalize_text,
 )
 from audit.services import record_audit_event
@@ -255,10 +256,33 @@ class QualificationService:
             _append_once(invalid_fields, "email")
         elif looks_like_invalid_email(message):
             _append_once(invalid_fields, "email")
-        if current_snapshot.phone and not is_valid_phone(current_snapshot.phone):
+        if (
+            current_snapshot.phone
+            and message_is_plausible_phone_candidate(message)
+            and not is_valid_phone(current_snapshot.phone)
+        ):
             _append_once(invalid_fields, "phone")
         elif looks_like_invalid_phone(message):
             _append_once(invalid_fields, "phone")
+
+        if collection_active and is_consultative_context_answer(message):
+            from assistant_core.consultative_slots import extract_consultative_slots
+
+            slots = extract_consultative_slots(
+                need_summary=lead.need_summary,
+                history=history,
+                current_message=message,
+            )
+            if slots.environment_type or slots.area_size or slots.floor_surface:
+                data = dict(lead.qualification_data or {})
+                if slots.environment_type:
+                    data["consultative_environment"] = True
+                if slots.area_size:
+                    data["consultative_area_size"] = True
+                if slots.floor_surface:
+                    data["consultative_floor_surface"] = True
+                lead.qualification_data = data
+                changed = True
 
         changed |= self._merge_custom_fields(lead, policy=policy, message=message)
         lead.qualification_policy = policy.slug

@@ -257,7 +257,9 @@ def _message_fits_contact_slot_pattern(message: str, *, expected_slot: str = "")
         is_valid_email,
         is_valid_name,
         is_valid_phone,
+        message_is_plausible_phone_candidate,
     )
+    from assistant_core.qualification.livia import _extract_phone
 
     text = str(message or "").strip()
     if not text or "?" in text or len(text) > 120:
@@ -285,11 +287,13 @@ def _message_fits_contact_slot_pattern(message: str, *, expected_slot: str = "")
     snapshot = extract_contact_snapshot(text)
     if snapshot.email and is_valid_email(snapshot.email):
         return True
-    if snapshot.phone and is_valid_phone(snapshot.phone):
-        return True
-    digits = re.sub(r"\D", "", text)
-    if digits and is_valid_phone(digits):
-        return True
+    if message_is_plausible_phone_candidate(text):
+        phone = _extract_phone(text)
+        if phone and is_valid_phone(phone):
+            return True
+        digits = re.sub(r"\D", "", text)
+        if digits and is_valid_phone(digits):
+            return True
     if is_valid_company(text):
         return True
     if is_valid_name(text) and 1 <= len(text.split()) <= 5:

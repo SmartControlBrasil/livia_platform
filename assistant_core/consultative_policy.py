@@ -348,6 +348,14 @@ def decide_collection(*, current_message: str, conversation=None, lead_draft=Non
 
         if trigger != CollectionTrigger.NONE:
             return CollectionDecision(True, trigger=trigger, reason="collection_already_active")
+        from assistant_core.conversation_turns import is_direct_question, is_need_enrichment
+        from assistant_core.services.decision_outcome import (
+            is_consultative_knowledge_message,
+            is_consultative_knowledge_turn,
+        )
+
+        if is_consultative_knowledge_message(current_message):
+            return CollectionDecision(False, reason="consultative_knowledge_during_collection")
         active_lead = lead_draft
         if active_lead is None and conversation is not None:
             try:
@@ -361,17 +369,16 @@ def decide_collection(*, current_message: str, conversation=None, lead_draft=Non
                     return CollectionDecision(True, trigger=CollectionTrigger.BUDGET, reason="collection_slot_answer")
                 if pending[0] != "need_summary" and message_fills_pending_slot(current_message, pending[0]):
                     return CollectionDecision(True, trigger=CollectionTrigger.BUDGET, reason="collection_slot_answer")
-        from assistant_core.conversation_turns import is_direct_question, is_need_enrichment
-        from assistant_core.services.decision_outcome import is_consultative_knowledge_turn
+        from assistant_core.conversation_turns import is_consultative_context_answer, is_direct_question, is_need_enrichment
 
-        if is_consultative_knowledge_turn(discovery, current_message):
-            return CollectionDecision(False, reason="consultative_knowledge_during_collection")
         if (
             is_consultative_context_answer(current_message)
             or is_need_enrichment(current_message)
             or is_direct_question(current_message)
         ):
             return CollectionDecision(False, reason="consultative_context_during_collection")
+        if is_consultative_knowledge_turn(discovery, current_message):
+            return CollectionDecision(False, reason="consultative_knowledge_during_collection")
         return CollectionDecision(True, trigger=CollectionTrigger.BUDGET, reason="collection_already_active")
     if trigger != CollectionTrigger.NONE:
         return CollectionDecision(True, trigger=trigger, reason=f"explicit_{trigger.value}")
